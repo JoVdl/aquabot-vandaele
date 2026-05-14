@@ -73,6 +73,8 @@ function saveSimState() {
     plannedPath:    state.plannedPath,
     completedCells: completedIdxs,
     speed:          state.sim.speed,
+    workMode:       params.workMode,
+    miniCycles:     params.miniCycles,
     lastUpdate:     Date.now(),
   }).catch(e => console.warn('simState save:', e.message));
 }
@@ -141,10 +143,23 @@ function subscribeSimState(pondId) {
         if (speedEl) { speedEl.value = sim.speed; setText('speedValue', sim.speed + '×'); }
       }
 
-      // LED indicator
-      if (sim.state === 'running')      setLED('green',  'En travail (autre appareil)');
-      else if (sim.state === 'paused')  setLED('yellow', 'En pause');
-      else                              setLED('blue',   'Simulation');
+      // Sync work mode params so effectiveMiniCycles() returns the right value
+      if (sim.workMode) params.workMode  = sim.workMode;
+      if (sim.miniCycles) params.miniCycles = sim.miniCycles;
+
+      // LED + boutons + texte pause
+      if (sim.state === 'running') {
+        setLED('green', 'En travail');
+        const btnPause = document.getElementById('btnPause');
+        if (btnPause) btnPause.textContent = '⏸ Pause';
+      } else if (sim.state === 'paused') {
+        setLED('yellow', 'En pause');
+        const btnPause = document.getElementById('btnPause');
+        if (btnPause) btnPause.textContent = '▶ Reprendre';
+      } else {
+        setLED('blue', 'Simulation');
+      }
+      updateButtonStates();
 
       // Save ghost progress
       if (sim.state === 'running' && offlineMs > 3000) saveWork();
@@ -1413,7 +1428,8 @@ function updateStatus(main, sub) {
 }
 
 function updateButtonStates() {
-  const running = state.sim.running;
+  // running = local sim loop OR robot is active on another device
+  const running = state.sim.running || ['moving', 'pumping'].includes(state.robot.state);
   const hasPond = !!state.pond;
   const stopped = state.robot.state === 'stopped';
   document.getElementById('btnStart').disabled  = running || !hasPond;
