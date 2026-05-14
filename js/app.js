@@ -137,7 +137,7 @@ function subscribeSimState(pondId) {
       if (sim.plannedPath?.length) state.plannedPath = sim.plannedPath;
       if (sim.speed && sim.speed !== state.sim.speed) {
         state.sim.speed = sim.speed;
-        const speedEl = document.getElementById('simSpeed');
+        const speedEl = document.getElementById('speedSlider');
         if (speedEl) { speedEl.value = sim.speed; setText('speedValue', sim.speed + '×'); }
       }
 
@@ -1177,7 +1177,6 @@ function simulationTick() {
 
     case 'idle': {
       robot.state = 'moving';
-      updateStatus('Déplacement', `Case ${robot.currentCellIdx + 1}/${path.length}`);
       const dx = targetCell.cx - robot.x, dy = targetCell.cy - robot.y;
       const d  = Math.sqrt(dx * dx + dy * dy);
       if (d < 0.05) {
@@ -1196,9 +1195,6 @@ function simulationTick() {
     }
 
     case 'descending': {
-      // Descend all the way into the mud
-      updateStatus('Descente pompe',
-        `Cible: ${fullDepth.toFixed(2)}m — cycle ${robot.miniCyclesDone + 1}/${nbCycles}`);
       robot.pumpDepth = Math.min(fullDepth, robot.pumpDepth + params.pumpDescentSpeed * dt);
       if (robot.pumpDepth >= fullDepth - 0.005) {
         robot.pumpDepth = fullDepth;
@@ -1209,8 +1205,6 @@ function simulationTick() {
     }
 
     case 'pumping': {
-      updateStatus('Pompage actif',
-        `Cycle ${robot.miniCyclesDone + 1}/${nbCycles} — case ${robot.currentCellIdx + 1}/${path.length}`);
       robot.pumpTimer    += dt;
       robot.volumePumped += (params.pumpFlow / 60) * rawDt * state.sim.speed;
       if (robot.pumpTimer >= params.pumpTime) {
@@ -1227,9 +1221,6 @@ function simulationTick() {
     }
 
     case 'partial_ascending': {
-      // Rise back to just above the mud (waterDepth), then descend again
-      updateStatus('Remontée partielle',
-        `Prochain cycle ${robot.miniCyclesDone + 1}/${nbCycles}`);
       robot.pumpDepth = Math.max(partialDepth, robot.pumpDepth - params.pumpAscentSpeed * dt);
       if (robot.pumpDepth <= partialDepth + 0.005) {
         robot.pumpDepth = partialDepth;
@@ -1240,9 +1231,7 @@ function simulationTick() {
     }
 
     case 'ascending': {
-      // Full ascent to surface (depth = 0)
       robot.state = 'moving';
-      updateStatus('Remontée pompe', '');
       robot.pumpDepth = Math.max(0, robot.pumpDepth - params.pumpAscentSpeed * dt);
       if (robot.pumpDepth <= 0.005) {
         robot.pumpDepth      = 0;
@@ -1259,9 +1248,9 @@ function simulationTick() {
     }
   }
 
-  // Periodic Firestore save (every 500ms) for near-real-time mirror on other devices
+  // Periodic Firestore save (every 200ms) for near-real-time mirror on other devices
   const nowMs = Date.now();
-  if (USE_CLOUD && nowMs - state.sim.lastSimSave > 500) {
+  if (USE_CLOUD && nowMs - state.sim.lastSimSave > 200) {
     state.sim.lastSimSave = nowMs;
     saveSimState();
   }
@@ -1397,6 +1386,24 @@ function updateUI() {
   if (pondBarEl) pondBarEl.style.width = pondPct + '%';
 
   updateCableDisplay();
+
+  // Derive and set status text — works on both active device and observers
+  const nc = effectiveMiniCycles();
+  const statusMap = {
+    idle:              ['Déplacement',        `Case ${robot.currentCellIdx + 1}/${total || '?'}`],
+    descending:        ['Descente pompe',     `Cible: ${(params.waterDepth + params.mudDepth).toFixed(2)}m — cycle ${robot.miniCyclesDone + 1}/${nc}`],
+    pumping:           ['Pompage actif',      `Cycle ${robot.miniCyclesDone + 1}/${nc} — case ${robot.currentCellIdx + 1}/${total || '?'}`],
+    partial_ascending: ['Remontée partielle', `Prochain cycle ${robot.miniCyclesDone + 1}/${nc}`],
+    ascending:         ['Remontée pompe',     ''],
+  };
+  if (robot.state === 'stopped') {
+    updateStatus('Arrêté', 'Prêt à démarrer');
+  } else if (robot.state === 'paused') {
+    updateStatus('En pause', 'Cliquez Reprendre');
+  } else {
+    const [main, sub] = statusMap[robot.pumpState] || ['En cours', ''];
+    updateStatus(main, sub);
+  }
 }
 
 function updateStatus(main, sub) {
