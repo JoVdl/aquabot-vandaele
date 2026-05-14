@@ -67,6 +67,7 @@ function saveSimState() {
     currentCellIdx: state.robot.currentCellIdx,
     pumpState:      state.robot.pumpState,
     pumpDepth:      state.robot.pumpDepth,
+    miniCyclesDone: state.robot.miniCyclesDone,
     elapsedSec:     state.robot.elapsedSec,
     volumePumped:   state.robot.volumePumped,
     plannedPath:    state.plannedPath,
@@ -120,22 +121,30 @@ function subscribeSimState(pondId) {
         if (added > 0) showToast(`Reprise : ~${added} cases traitées hors ligne`, 'success');
       }
 
-      // Apply to local cells
+      // Apply full robot state to local
       state.cells.forEach((c, i) => { c.completed = completedSet.has(i); });
       state.robot.completedCells = completedSet.size;
-      state.robot.elapsedSec  = sim.elapsedSec + (sim.state === 'running' ? offlineSec : 0);
-      state.robot.volumePumped = sim.volumePumped || 0;
-      state.robot.x         = sim.x ?? state.robot.x;
-      state.robot.y         = sim.y ?? state.robot.y;
-      state.robot.pumpDepth  = sim.pumpDepth || 0;
-      state.robot.pumpState  = sim.state === 'running' ? (sim.pumpState || 'idle') : 'idle';
+      state.robot.elapsedSec   = sim.elapsedSec + (sim.state === 'running' ? offlineSec : 0);
+      state.robot.volumePumped  = sim.volumePumped || 0;
+      state.robot.x             = sim.x ?? state.robot.x;
+      state.robot.y             = sim.y ?? state.robot.y;
+      state.robot.pumpDepth     = sim.pumpDepth || 0;
+      state.robot.pumpState     = sim.state === 'running' ? (sim.pumpState || 'idle') : 'idle';
+      state.robot.miniCyclesDone = sim.miniCyclesDone || 0;
+      state.robot.currentCellIdx = sim.currentCellIdx || 0;
 
-      // Show planned path from remote
-      if (sim.plannedPath?.length && !state.plannedPath.length) state.plannedPath = sim.plannedPath;
+      // Always sync planned path and speed
+      if (sim.plannedPath?.length) state.plannedPath = sim.plannedPath;
+      if (sim.speed && sim.speed !== state.sim.speed) {
+        state.sim.speed = sim.speed;
+        const speedEl = document.getElementById('simSpeed');
+        if (speedEl) { speedEl.value = sim.speed; setText('speedValue', sim.speed + '×'); }
+      }
 
       // LED indicator
       if (sim.state === 'running')      setLED('green',  'En travail (autre appareil)');
       else if (sim.state === 'paused')  setLED('yellow', 'En pause');
+      else                              setLED('blue',   'Simulation');
 
       // Save ghost progress
       if (sim.state === 'running' && offlineMs > 3000) saveWork();
@@ -1250,9 +1259,9 @@ function simulationTick() {
     }
   }
 
-  // Periodic Firestore save (every 2s) so other devices and ghost resume stay up to date
+  // Periodic Firestore save (every 500ms) for near-real-time mirror on other devices
   const nowMs = Date.now();
-  if (USE_CLOUD && nowMs - state.sim.lastSimSave > 2000) {
+  if (USE_CLOUD && nowMs - state.sim.lastSimSave > 500) {
     state.sim.lastSimSave = nowMs;
     saveSimState();
   }
@@ -1414,6 +1423,7 @@ function handleStop()   { stopSimulation(); }
 function handleSpeedChange(v) {
   state.sim.speed = parseFloat(v);
   setText('speedValue', v + '×');
+  saveSimState();
 }
 
 function triggerKMLImport() { document.getElementById('kmlInput').click(); }
@@ -1451,6 +1461,7 @@ function planRoute() {
   const wm = WORK_MODES[params.workMode];
   setText('dashCellsTotal', path.length);
   renderAllPondCanvases();
+  saveSimState();
   showToast(
     `Parcours planifié : ${base.length} cases × ${totalPasses} passe(s) × ${effectiveMiniCycles()} cycle(s) — Mode : ${wm?.label}`,
     'success'
