@@ -35,6 +35,10 @@ function pondToFirestore(pond) {
       volumePumped:   pond.work?.volumePumped   || 0,
       elapsedSec:     pond.work?.elapsedSec     || 0,
     },
+    // Live selection state (so other devices see which cells are highlighted)
+    currentSelectedIndices: (pond.cells || [])
+      .map((c,i) => c.selected ? i : -1)
+      .filter(i => i !== -1),
     // Store selections as sparse index arrays (far smaller than boolean arrays)
     selections: (pond.selections || []).map(s => ({
       id:        s.id,
@@ -48,11 +52,108 @@ function pondToFirestore(pond) {
   };
 }
 
+// ============================================================
+// REAL-TIME STATE SYNC
+// ============================================================
+
+// Save robot/simulation state to aquabot_sim/{pondId}
+function saveSimState() {
+  if (!USE_CLOUD || !state.pond) return;
+  const completedIdxs = state.cells.map((c,i) => c.completed ? i : -1).filter(i => i !== -1);
+  window.db.collection('aquabot_sim').doc(state.pond.id).set({
+    state:          state.robot.state,
+    x:              state.robot.x,
+    y:              state.robot.y,
+    currentCellIdx: state.robot.currentCellIdx,
+    pumpState:      state.robot.pumpState,
+    pumpDepth:      state.robot.pumpDepth,
+    elapsedSec:     state.robot.elapsedSec,
+    volumePumped:   state.robot.volumePumped,
+    plannedPath:    state.plannedPath,
+    completedCells: completedIdxs,
+    speed:          state.sim.speed,
+    lastUpdate:     Date.now(),
+  }).catch(e => console.warn('simState save:', e.message));
+}
+
+// Debounced save of current cell selection (called after user changes selection)
+function debouncedSaveSelection() {
+  if (!USE_CLOUD || !state.pond) return;
+  _localSelChanging = true;
+  clearTimeout(_selDebounce);
+  _selDebounce = setTimeout(() => {
+    const indices = state.cells.map((c,i) => c.selected ? i : -1).filter(i => i !== -1);
+    window.db.collection('aquabot_ponds').doc(state.pond.id)
+      .update({ currentSelectedIndices: indices, lastUsed: Date.now() })
+      .catch(e => console.warn('selSync:', e.message));
+    // Keep flag for 2s to absorb our own echo from onSnapshot
+    setTimeout(() => { _localSelChanging = false; }, 2000);
+  }, 500);
+}
+
+// Listen to real-time robot state for the active pond
+function subscribeSimState(pondId) {
+  if (_simUnsubscribe) { _simUnsubscribe(); _simUnsubscribe = null; }
+  if (!USE_CLOUD) return;
+  _simUnsubscribe = window.db.collection('aquabot_sim').doc(pondId)
+    .onSnapshot(doc => {
+      if (!doc.exists || state.sim.running) return;
+      const sim = doc.data();
+      if (!sim) return;
+
+      const offlineMs  = Date.now() - (sim.lastUpdate || Date.now());
+      const offlineSec = (offlineMs / 1000) * (sim.speed || 1);
+
+      // Build completed set, extending with ghost cells if app was closed mid-sim
+      const completedSet = new Set(sim.completedCells || []);
+      if (sim.state === 'running' && offlineMs > 3000) {
+        const doneBefore = sim.completedCells?.length || 0;
+        if (doneBefore > 0 && sim.elapsedSec > 0) {
+          const secPerCell = sim.elapsedSec / doneBefore;
+          const ghostCells = Math.floor(offlineSec / secPerCell);
+          const path = sim.plannedPath || [];
+          for (let i = doneBefore; i < Math.min(doneBefore + ghostCells, path.length); i++) {
+            if (path[i] !== undefined) completedSet.add(path[i]);
+          }
+        }
+        const added = completedSet.size - (sim.completedCells?.length || 0);
+        if (added > 0) showToast(`Reprise : ~${added} cases traitées hors ligne`, 'success');
+      }
+
+      // Apply to local cells
+      state.cells.forEach((c, i) => { c.completed = completedSet.has(i); });
+      state.robot.completedCells = completedSet.size;
+      state.robot.elapsedSec  = sim.elapsedSec + (sim.state === 'running' ? offlineSec : 0);
+      state.robot.volumePumped = sim.volumePumped || 0;
+      state.robot.x         = sim.x ?? state.robot.x;
+      state.robot.y         = sim.y ?? state.robot.y;
+      state.robot.pumpDepth  = sim.pumpDepth || 0;
+      state.robot.pumpState  = sim.state === 'running' ? (sim.pumpState || 'idle') : 'idle';
+
+      // Show planned path from remote
+      if (sim.plannedPath?.length && !state.plannedPath.length) state.plannedPath = sim.plannedPath;
+
+      // LED indicator
+      if (sim.state === 'running')      setLED('green',  'En travail (autre appareil)');
+      else if (sim.state === 'paused')  setLED('yellow', 'En pause');
+
+      // Save ghost progress
+      if (sim.state === 'running' && offlineMs > 3000) saveWork();
+
+      renderAllPondCanvases();
+      renderSectionCanvas();
+      updateUI();
+    }, e => console.warn('simState listener:', e.message));
+}
+
 // Rebuild a full local pond object from a Firestore document
 function pondFromFirestore(data) {
   const cells = generateGrid(data.polygon);
   const completedSet = new Set(data.work?.completedCells || []);
   cells.forEach((c, i) => { c.completed = completedSet.has(i); });
+  // Restore live selection state from remote
+  const selectedSet = new Set(data.currentSelectedIndices || []);
+  if (selectedSet.size > 0) cells.forEach((c, i) => { c.selected = selectedSet.has(i); });
   return {
     ...data,
     cells,
@@ -96,7 +197,7 @@ const state = {
     miniCyclesDone: 0,   // mini-cycles completed at current cell
     passNumber: 1,       // for double-pass modes
   },
-  sim: { running: false, speed: 1, intervalId: null, lastTick: 0, sessionElapsedAtStart: 0 },
+  sim: { running: false, speed: 1, intervalId: null, lastTick: 0, sessionElapsedAtStart: 0, lastSimSave: 0 },
   view: { offsetX: 0, offsetY: 0, scale: 10 },
   drag: { active: false, mode: 'add' }, // for drag-select
 };
@@ -317,6 +418,7 @@ function loadPond(pond) {
   state.robot.elapsedSec     = pond.work.elapsedSec    || 0;
   state.plannedPath = [];
 
+  subscribeSimState(pond.id);
   resizeSectionCanvas();
   requestAnimationFrame(() => fitPond());
   renderSectionCanvas();
@@ -447,12 +549,14 @@ function selectAllCells() {
   if (!state.cells.length) return;
   state.cells.forEach(c => { c.selected = true; });
   renderAllPondCanvases();
+  debouncedSaveSelection();
   showToast(`${state.cells.length} cases sélectionnées`);
 }
 
 function deselectAllCells() {
   state.cells.forEach(c => { c.selected = false; });
   renderAllPondCanvases();
+  debouncedSaveSelection();
 }
 
 function selectRemainingCells() {
@@ -463,6 +567,7 @@ function selectRemainingCells() {
     if (!c.completed) count++;
   });
   renderAllPondCanvases();
+  debouncedSaveSelection();
   showToast(`${count} cases restantes sélectionnées`);
 }
 
@@ -489,6 +594,9 @@ function savePonds() {
 }
 
 let _cloudFirstSnapshot = true;
+let _simUnsubscribe    = null;
+let _selDebounce       = null;
+let _localSelChanging  = false;
 
 function loadPonds() {
   if (USE_CLOUD) {
@@ -499,7 +607,7 @@ function loadPonds() {
         updateCloudStatus('online');
         state.ponds = snapshot.docs.map(doc => pondFromFirestore(doc.data()));
 
-        // Sync active pond's work progress when another user makes changes
+        // Sync active pond when another user makes changes
         if (state.pond && !state.sim.running) {
           const remote = state.ponds.find(p => p.id === state.pond.id);
           if (remote) {
@@ -508,6 +616,11 @@ function loadPonds() {
             state.robot.volumePumped   = remote.work.volumePumped || 0;
             state.robot.elapsedSec     = remote.work.elapsedSec   || 0;
             state.pond.selections      = remote.selections;
+            // Sync live selection from other device (skip if we have pending local changes)
+            if (!_localSelChanging && remote.currentSelectedIndices !== undefined) {
+              const selSet = new Set(remote.currentSelectedIndices);
+              state.cells.forEach((c, i) => { c.selected = selSet.has(i); });
+            }
             renderSelectionHistory();
             renderAllPondCanvases();
           }
@@ -985,6 +1098,7 @@ function startSimulation() {
   }
   state.robot.state = 'moving';
   state.sim.running = true;
+  state.sim.lastSimSave = Date.now();
   setLED('green', 'En travail');
   updateButtonStates();
   updateStatus('En cours...', 'Déplacement');
@@ -993,6 +1107,7 @@ function startSimulation() {
     state.sim.lastTick = performance.now();
     state.sim.intervalId = setInterval(simulationTick, SIM_TICK_MS);
   }
+  saveSimState();
 }
 
 function pauseSimulation() {
@@ -1006,6 +1121,7 @@ function pauseSimulation() {
   updateStatus('En pause', 'Cliquez Reprendre');
   document.getElementById('btnPause').textContent = '▶ Reprendre';
   saveWork();
+  saveSimState();
 }
 
 function stopSimulation() {
@@ -1022,6 +1138,7 @@ function stopSimulation() {
   updateStatus('Arrêté', 'Prêt à démarrer');
   document.getElementById('btnPause').textContent = '⏸ Pause';
   saveWork();
+  saveSimState();
   renderAllPondCanvases();
   renderSectionCanvas();
 }
@@ -1133,6 +1250,13 @@ function simulationTick() {
     }
   }
 
+  // Periodic Firestore save (every 2s) so other devices and ghost resume stay up to date
+  const nowMs = Date.now();
+  if (USE_CLOUD && nowMs - state.sim.lastSimSave > 2000) {
+    state.sim.lastSimSave = nowMs;
+    saveSimState();
+  }
+
   updateUI();
   renderAllPondCanvases();
   renderSectionCanvas();
@@ -1151,6 +1275,7 @@ function finishSimulation() {
   saveWork();
   updatePondsList();
   showToast('Curage terminé ! Résultats enregistrés.', 'success');
+  saveSimState();
   renderAllPondCanvases();
   renderSectionCanvas();
 }
@@ -1435,6 +1560,7 @@ function initCanvasEvents() {
     });
 
     canvas.addEventListener('mouseup', () => {
+      if (state.drag.active && state.view.mode === 'select') debouncedSaveSelection();
       isPanning = false; anchorDragging = -1; state.drag.active = false;
       canvas.style.cursor = state.view.mode === 'view' ? 'grab' : 'crosshair';
     });
@@ -1494,7 +1620,10 @@ function initCanvasEvents() {
       }
     }, { passive: false });
 
-    canvas.addEventListener('touchend', () => { touchDragActive = false; lastTouchDist = 0; });
+    canvas.addEventListener('touchend', () => {
+      if (touchDragActive && state.view.mode === 'select') debouncedSaveSelection();
+      touchDragActive = false; lastTouchDist = 0;
+    });
   }
 }
 
