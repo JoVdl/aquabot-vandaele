@@ -61,7 +61,8 @@ function saveSimState() {
   if (!USE_CLOUD || !state.pond) return;
   const completedIdxs = state.cells.map((c,i) => c.completed ? i : -1).filter(i => i !== -1);
   window.db.collection('aquabot_sim').doc(state.pond.id).set({
-    state:          state.robot.state,
+    robotState:     state.robot.state,
+    simRunning:     state.sim.running,
     x:              state.robot.x,
     y:              state.robot.y,
     currentCellIdx: state.robot.currentCellIdx,
@@ -109,7 +110,7 @@ function subscribeSimState(pondId) {
 
       // Build completed set, extending with ghost cells if app was closed mid-sim
       const completedSet = new Set(sim.completedCells || []);
-      if (sim.state === 'running' && offlineMs > 3000) {
+      if (sim.simRunning && offlineMs > 3000) {
         const doneBefore = sim.completedCells?.length || 0;
         if (doneBefore > 0 && sim.elapsedSec > 0) {
           const secPerCell = sim.elapsedSec / doneBefore;
@@ -125,15 +126,16 @@ function subscribeSimState(pondId) {
 
       // Apply full robot state to local
       state.cells.forEach((c, i) => { c.completed = completedSet.has(i); });
+      state.robot.state          = sim.robotState  || 'stopped';
       state.robot.completedCells = completedSet.size;
-      state.robot.elapsedSec   = sim.elapsedSec + (sim.state === 'running' ? offlineSec : 0);
-      state.robot.volumePumped  = sim.volumePumped || 0;
-      state.robot.x             = sim.x ?? state.robot.x;
-      state.robot.y             = sim.y ?? state.robot.y;
-      state.robot.pumpDepth     = sim.pumpDepth || 0;
-      state.robot.pumpState     = sim.state === 'running' ? (sim.pumpState || 'idle') : 'idle';
+      state.robot.elapsedSec     = sim.elapsedSec + (sim.simRunning ? offlineSec : 0);
+      state.robot.volumePumped   = sim.volumePumped || 0;
+      state.robot.x              = sim.x ?? state.robot.x;
+      state.robot.y              = sim.y ?? state.robot.y;
+      state.robot.pumpDepth      = sim.pumpDepth  ?? 0;
+      state.robot.pumpState      = sim.simRunning ? (sim.pumpState || 'idle') : 'idle';
       state.robot.miniCyclesDone = sim.miniCyclesDone || 0;
-      state.robot.currentCellIdx = sim.currentCellIdx || 0;
+      state.robot.currentCellIdx = sim.currentCellIdx  || 0;
 
       // Always sync planned path and speed
       if (sim.plannedPath?.length) state.plannedPath = sim.plannedPath;
@@ -148,21 +150,21 @@ function subscribeSimState(pondId) {
       if (sim.miniCycles) params.miniCycles = sim.miniCycles;
 
       // LED + boutons + texte pause
-      if (sim.state === 'running') {
+      const btnPause = document.getElementById('btnPause');
+      if (sim.simRunning) {
         setLED('green', 'En travail');
-        const btnPause = document.getElementById('btnPause');
         if (btnPause) btnPause.textContent = '⏸ Pause';
-      } else if (sim.state === 'paused') {
+      } else if (sim.robotState === 'paused') {
         setLED('yellow', 'En pause');
-        const btnPause = document.getElementById('btnPause');
         if (btnPause) btnPause.textContent = '▶ Reprendre';
       } else {
         setLED('blue', 'Simulation');
+        if (btnPause) btnPause.textContent = '⏸ Pause';
       }
       updateButtonStates();
 
       // Save ghost progress
-      if (sim.state === 'running' && offlineMs > 3000) saveWork();
+      if (sim.simRunning && offlineMs > 3000) saveWork();
 
       renderAllPondCanvases();
       renderSectionCanvas();
