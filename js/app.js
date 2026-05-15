@@ -974,7 +974,7 @@ function renderPondCanvas(canvas) {
   // Grid cells
   if (cpx > 1.2) {
     for (const cell of state.cells) {
-      const sx = worldToScreen(cell.cx - cs/2, cell.cy - cs/2);
+      const sx = worldToScreen(cell.cx - cs/2, cell.cy + cs/2);
       if (cell.completed)    ctx.fillStyle = 'rgba(16,185,129,0.72)';
       else if (cell.selected) ctx.fillStyle = cpx > 4 ? 'rgba(14,165,233,0.28)' : 'rgba(14,165,233,0.18)';
       else                    ctx.fillStyle = 'rgba(255,255,255,0.04)';
