@@ -603,10 +603,13 @@ function saveWork() {
 }
 
 function resetWork(pondId) {
+  if (!confirm('Remettre à zéro toute la progression de cet étang ?\nCette action est irréversible.')) return;
   const pond = state.ponds.find(p => p.id === pondId);
   if (!pond) return;
   pond.work = { completedCells: [], volumePumped: 0, elapsedSec: 0 };
-  pond.cells.forEach(c => { c.completed = false; });
+  pond.cells?.forEach(c => { c.completed = false; });
+  pond.lastUsed = Date.now();
+
   if (state.pond?.id === pondId) {
     state.cells.forEach(c => { c.completed = false; });
     state.robot.completedCells = 0;
@@ -616,9 +619,29 @@ function resetWork(pondId) {
     renderAllPondCanvases();
     updateUI();
   }
+
+  // Persiste la progression dans aquabot_ponds
   savePonds();
+
+  // Réinitialise aussi aquabot_sim pour éviter que subscribeSimState restaure l'ancienne progression
+  if (USE_CLOUD) {
+    window.db.collection('aquabot_sim').doc(pondId).set({
+      robotState:     'stopped',
+      simRunning:     false,
+      completedCells: [],
+      volumePumped:   0,
+      elapsedSec:     0,
+      pumpDepth:      0,
+      pumpState:      'idle',
+      miniCyclesDone: 0,
+      currentCellIdx: 0,
+      plannedPath:    [],
+      lastUpdate:     Date.now(),
+    }).catch(e => console.warn('resetWork sim:', e.message));
+  }
+
   updatePondsList();
-  showToast('Travail remis à zéro', 'success');
+  showToast('Progression remise à zéro', 'success');
 }
 
 // ============================================================
@@ -685,6 +708,7 @@ function selectAllCells() {
   if (!state.cells.length) return;
   state.cells.forEach(c => { c.selected = true; });
   renderAllPondCanvases();
+  if (_satModeDash) _rebuildCellLayersDash();
   debouncedSaveSelection();
   showToast(`${state.cells.length} cases sélectionnées`);
 }
@@ -692,6 +716,7 @@ function selectAllCells() {
 function deselectAllCells() {
   state.cells.forEach(c => { c.selected = false; });
   renderAllPondCanvases();
+  if (_satModeDash) _rebuildCellLayersDash();
   debouncedSaveSelection();
 }
 
@@ -703,6 +728,7 @@ function selectRemainingCells() {
     if (!c.completed) count++;
   });
   renderAllPondCanvases();
+  if (_satModeDash) _rebuildCellLayersDash();
   debouncedSaveSelection();
   showToast(`${count} cases restantes sélectionnées`);
 }
