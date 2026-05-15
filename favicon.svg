@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- V gauche -->
+  <path d="M6 8 L32 54" stroke="#1a5c34" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- V droite -->
+  <path d="M58 8 L32 54" stroke="#1a5c34" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Feuille sur le bras droit -->
+  <path d="M58 8 C62 1 68 -1 64 7 C61 13 57 13 58 8 Z" fill="#2ea84a"/>
+  <!-- Petite feuille sur le bras gauche -->
+  <path d="M6 8 C2 1 -4 -1 0 7 C3 13 7 13 6 8 Z" fill="#4ade80"/>
+</svg>
