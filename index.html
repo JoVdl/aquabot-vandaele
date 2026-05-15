@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>AquaBot Vandaele — Curage Autonome 2026</title>
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
 </head>
 <body>
 <div class="app">
@@ -296,21 +297,31 @@
           <div class="toolbar-group">
             <button class="btn btn-primary btn-sm" onclick="triggerKMLImport()">
               <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
-              Importer KML
+              KML
+            </button>
+          </div>
+          <!-- Vue Schéma / Satellite -->
+          <div class="toolbar-group view-toggle-group">
+            <button class="view-toggle-btn active" id="btnSchemaView" onclick="toggleSatelliteView(false)">📐 Schéma</button>
+            <button class="view-toggle-btn" id="btnSatView" onclick="toggleSatelliteView(true)">🛰 Satellite</button>
+          </div>
+          <div class="toolbar-group">
+            <button class="btn btn-secondary btn-sm" id="btnCalibrate" onclick="startCalibration()" style="display:none">
+              ⚓ Calibrer ancres
             </button>
           </div>
           <div class="toolbar-group">
             <button class="btn btn-secondary btn-sm" onclick="selectAllCells()">☑ Toutes</button>
-            <button class="btn btn-secondary btn-sm" onclick="selectRemainingCells()">☑ Restantes</button>
             <button class="btn btn-secondary btn-sm" onclick="deselectAllCells()">☐ Aucune</button>
             <button class="btn btn-accent btn-sm" onclick="planRoute()">↪ Planifier</button>
           </div>
           <div class="toolbar-group toolbar-group-right">
             <span class="scale-badge" id="scaleInfoMap">—</span>
-            <button class="btn btn-ghost btn-sm" onclick="fitPond()">⊡ Centrer</button>
+            <button class="btn btn-ghost btn-sm" id="btnFitMap" onclick="fitPond()">⊡</button>
           </div>
         </div>
 
+        <!-- Vue Schéma (canvas existant) -->
         <div class="canvas-wrap" id="canvasWrap">
           <canvas id="pondCanvas"></canvas>
           <div class="canvas-empty-state" id="canvasEmptyState">
@@ -330,6 +341,9 @@
             <button class="mode-btn" id="btnModeViewMap" onclick="setMode('view')">✋ Vue</button>
           </div>
         </div>
+
+        <!-- Vue Satellite (Leaflet) -->
+        <div id="leaflet-container"></div>
 
         <div class="cable-panel" id="cablePanelMap" style="display:none">
           <div class="cable-panel-title">Câbles (m)</div>
@@ -473,7 +487,51 @@
 
   <div id="toast" class="toast" style="display:none"></div>
 
+  <!-- ===== CALIBRATION MODAL ===== -->
+  <div id="calibModal" class="calib-modal-overlay" style="display:none" onclick="event.target===this&&closeCalibration()">
+    <div class="calib-modal">
+      <div class="calib-header">
+        <div>
+          <div class="calib-title">Calibration des ancres</div>
+          <div class="calib-subtitle">Placez chaque ancre sur la carte satellite</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="closeCalibration()">✕</button>
+      </div>
+      <div class="calib-steps-row">
+        <div class="calib-dot-row">
+          <div id="calibDot0" class="calib-dot active"></div>
+          <div class="calib-dot-line"></div>
+          <div id="calibDot1" class="calib-dot"></div>
+          <div class="calib-dot-line"></div>
+          <div id="calibDot2" class="calib-dot"></div>
+          <div class="calib-dot-line"></div>
+          <div id="calibDot3" class="calib-dot"></div>
+        </div>
+        <div class="calib-step-label">Ancre <span id="calibStep">1 / 4</span></div>
+      </div>
+      <div class="calib-body">
+        <div class="calib-anchor-badge" id="calibAnchorName">AV-G (avant gauche)</div>
+        <p class="calib-instruction">
+          <strong>Option 1 :</strong> Cliquez sur la carte à l'emplacement exact de cette ancre.<br>
+          <strong>Option 2 :</strong> Marchez jusqu'à l'ancre et appuyez sur <em>Ma position GPS</em>.
+        </p>
+        <div class="calib-actions">
+          <button class="btn btn-primary" onclick="captureAnchorByGPS()">
+            <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/></svg>
+            Ma position GPS
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="skipCalibAnchor()">Ignorer</button>
+        </div>
+      </div>
+      <div class="calib-footer">
+        <button class="btn btn-danger btn-sm" onclick="closeCalibration()">Annuler</button>
+        <div class="calib-hint">👆 Ou cliquez directement sur la carte</div>
+      </div>
+    </div>
+  </div>
+
 </div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <!-- Firebase v9 compat SDK -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>

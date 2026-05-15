@@ -552,6 +552,7 @@ function loadPond(pond) {
 
   subscribeSimState(pond.id);
   if (state.robotMode === 'real') subscribeRobotTelemetry(pond.id);
+  if (_satMode && _leafletMap) updateLeafletOverlay();
   resizeSectionCanvas();
   requestAnimationFrame(() => fitPond());
   renderSectionCanvas();
@@ -1399,6 +1400,7 @@ function simulationTick() {
   updateUI();
   renderAllPondCanvases();
   renderSectionCanvas();
+  if (_satMode) updateRobotMarker();
 }
 
 function finishSimulation() {
@@ -1810,26 +1812,36 @@ function updatePondsList() {
     const total    = p.cells?.length || 0;
     const done     = p.work?.completedCells?.length || 0;
     const pct      = total > 0 ? Math.round((done/total)*100) : 0;
-    const area     = p.area?.toFixed(0) || '—';
-    const lastUsed = p.lastUsed ? new Date(p.lastUsed).toLocaleDateString('fr-FR') : '—';
+    const area     = p.area ? (p.area >= 10000 ? (p.area/10000).toFixed(2)+' ha' : p.area.toFixed(0)+' m²') : '—';
+    const lastUsed = p.lastUsed ? new Date(p.lastUsed).toLocaleDateString('fr-FR', {day:'2-digit',month:'short',year:'numeric'}) : '—';
     const active   = state.pond?.id === p.id;
+    const hasGPS   = !!(p.origin?.lat || p.origin?.lng);
+    const statusClass = done === 0 ? 'pond-status-new' : done >= total ? 'pond-status-done' : 'pond-status-progress';
+    const statusLabel = done === 0 ? 'Non commencé' : done >= total ? 'Terminé' : 'En cours';
     return `
       <div class="pond-card ${active?'active-pond':''}" onclick="loadPondById('${p.id}')">
         <canvas id="thumb-${p.id}" class="pond-thumb" width="72" height="54"></canvas>
         <div class="pond-info">
-          <div class="pond-name">${p.name}</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+            <div class="pond-name" style="margin:0">${p.name}</div>
+            <span class="pond-status-badge ${statusClass}">${statusLabel}</span>
+            <span class="pond-gps-badge ${hasGPS?'has-gps':''}">
+              ${hasGPS ? '📍 GPS' : '📍 Sans GPS'}
+            </span>
+          </div>
           <div class="pond-meta">
-            <span class="pond-meta-item">Surface : <strong>${area} m²</strong></span>
-            <span class="pond-meta-item">Cases : <strong>${total}</strong></span>
-            <span class="pond-meta-item">Dernier usage : <strong>${lastUsed}</strong></span>
+            <span class="pond-meta-item">Surface : <strong>${area}</strong></span>
+            <span class="pond-meta-item"><strong>${total}</strong> cases</span>
+            <span class="pond-meta-item">Modifié : <strong>${lastUsed}</strong></span>
           </div>
           <div class="pond-progress">
-            <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-            <span class="pond-progress-pct">${pct}% (${done}/${total})</span>
+            <div class="progress-bar" style="flex:1"><div class="progress-fill" style="width:${pct}%"></div></div>
+            <span class="pond-progress-pct">${pct}% — ${done}/${total}</span>
           </div>
         </div>
         <div class="pond-actions">
           <button class="btn btn-primary btn-sm"    onclick="event.stopPropagation();loadPondById('${p.id}')">Charger</button>
+          ${hasGPS ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();loadPondById('${p.id}');setActiveTab('map');toggleSatelliteView(true);startCalibration()">⚓ Calibrer</button>` : ''}
           <button class="btn btn-secondary btn-sm"  onclick="event.stopPropagation();resetWork('${p.id}')">↺ RAZ</button>
           <button class="btn btn-danger btn-sm"     onclick="event.stopPropagation();deletePond('${p.id}')">✕</button>
         </div>
@@ -1909,10 +1921,15 @@ function setActiveTab(tab) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `panel-${tab}`));
   if (tab === 'map') {
     requestAnimationFrame(() => {
-      const c = document.getElementById('pondCanvas'), w = document.getElementById('canvasWrap');
-      if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
-      renderPondCanvas(document.getElementById('pondCanvas'));
-      if (state.pond) { document.getElementById('modeToggle').style.display = 'flex'; }
+      if (_satMode) {
+        if (!_leafletMap) initLeafletMap();
+        else { updateLeafletOverlay(); setTimeout(() => _leafletMap.invalidateSize(), 100); }
+      } else {
+        const c = document.getElementById('pondCanvas'), w = document.getElementById('canvasWrap');
+        if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
+        renderPondCanvas(document.getElementById('pondCanvas'));
+        if (state.pond) { document.getElementById('modeToggle').style.display = 'flex'; }
+      }
     });
   }
 }
@@ -1965,6 +1982,235 @@ function showToast(msg, type='') {
   el.style.display = 'block';
   clearTimeout(toastTimeout);
   toastTimeout = setTimeout(() => el.style.display='none', 3200);
+}
+
+// ============================================================
+// COORDINATE CONVERSION — local ↔ GPS
+// ============================================================
+function metersToLatLng(x, y) {
+  if (!state.pond?.origin) return null;
+  const { lat: lat0, lng: lng0 } = state.pond.origin;
+  if (!lat0 && !lng0) return null;
+  return {
+    lat: lat0 + y / 110540,
+    lng: lng0 + x / (Math.cos(lat0 * Math.PI / 180) * 111320),
+  };
+}
+
+// ============================================================
+// LEAFLET SATELLITE MAP
+// ============================================================
+let _leafletMap      = null;
+let _leafletLayers   = [];
+let _robotMarkerLeaf = null;
+let _satMode         = false;
+
+function initLeafletMap() {
+  if (_leafletMap) { setTimeout(() => _leafletMap.invalidateSize(), 50); return; }
+  const container = document.getElementById('leaflet-container');
+  if (!container || typeof L === 'undefined') return;
+
+  _leafletMap = L.map('leaflet-container', { zoomControl: false });
+
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution: '© Esri World Imagery', maxZoom: 21, maxNativeZoom: 19 }
+  ).addTo(_leafletMap);
+
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    { attribution: '', maxZoom: 21, maxNativeZoom: 19, opacity: 0.65 }
+  ).addTo(_leafletMap);
+
+  L.control.zoom({ position: 'bottomright' }).addTo(_leafletMap);
+  updateLeafletOverlay();
+}
+
+function clearLeafletLayers() {
+  for (const l of _leafletLayers) { try { _leafletMap.removeLayer(l); } catch {} }
+  _leafletLayers = [];
+  _robotMarkerLeaf = null;
+}
+
+function updateLeafletOverlay() {
+  if (!_leafletMap || !state.pond) return;
+  clearLeafletLayers();
+
+  const origin = state.pond.origin;
+  if (!origin || (!origin.lat && !origin.lng)) return;  // étang démo sans coords GPS
+
+  const renderer = L.canvas({ padding: 0.5 });
+
+  // Polygone de l'étang
+  const polyLL = state.pond.polygon.map(p => { const ll = metersToLatLng(p.x, p.y); return [ll.lat, ll.lng]; });
+  const poly = L.polygon(polyLL, {
+    color: '#0ea5e9', weight: 2, fillColor: '#0ea5e9', fillOpacity: 0.07
+  }).addTo(_leafletMap);
+  _leafletLayers.push(poly);
+
+  // Cases (canvas renderer pour performance)
+  const cs = params.cellSize;
+  for (const cell of state.cells) {
+    const sw = metersToLatLng(cell.cx - cs/2, cell.cy - cs/2);
+    const ne = metersToLatLng(cell.cx + cs/2, cell.cy + cs/2);
+    if (!sw || !ne) continue;
+    const color   = cell.completed ? '#10b981' : cell.selected ? '#0ea5e9' : '#ffffff';
+    const opacity = cell.completed ? 0.55 : cell.selected ? 0.2 : 0.04;
+    const rect = L.rectangle([[sw.lat, sw.lng],[ne.lat, ne.lng]], {
+      renderer, color, weight: 0.5, fillColor: color, fillOpacity: opacity, opacity: opacity * 0.5,
+    }).addTo(_leafletMap);
+    _leafletLayers.push(rect);
+  }
+
+  // Ancres — déplaçables
+  const anchorLabels = ['AV-G','AV-D','AR-G','AR-D'];
+  state.pond.anchors.forEach((anchor, i) => {
+    const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
+    const icon = L.divIcon({ html: `<div class="anchor-marker">${anchorLabels[i]}</div>`, className: '', iconSize: [48,24], iconAnchor: [24,12] });
+    const marker = L.marker([ll.lat, ll.lng], { icon, draggable: true }).addTo(_leafletMap);
+    marker.on('dragend', e => {
+      const pos = e.target.getLatLng();
+      const local = latLngToMeters(pos.lat, pos.lng, origin.lat, origin.lng);
+      state.pond.anchors[i] = { ...state.pond.anchors[i], x: local.x, y: local.y };
+      const idx = state.ponds.findIndex(p => p.id === state.pond.id);
+      if (idx !== -1) state.ponds[idx] = state.pond;
+      savePonds();
+      renderAllPondCanvases();
+      showToast(`Ancre ${anchorLabels[i]} repositionnée`, 'success');
+    });
+    _leafletLayers.push(marker);
+  });
+
+  // Robot
+  const robotLL = metersToLatLng(state.robot.x, state.robot.y);
+  if (robotLL) {
+    const icon = L.divIcon({ html: '<div class="robot-marker-leaf"></div>', className: '', iconSize: [16,16], iconAnchor: [8,8] });
+    _robotMarkerLeaf = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(_leafletMap);
+    _leafletLayers.push(_robotMarkerLeaf);
+  }
+
+  _leafletMap.fitBounds(poly.getBounds(), { padding: [40,40] });
+}
+
+function updateRobotMarker() {
+  if (!_robotMarkerLeaf || !_satMode) return;
+  const ll = metersToLatLng(state.robot.x, state.robot.y);
+  if (ll) _robotMarkerLeaf.setLatLng([ll.lat, ll.lng]);
+}
+
+function toggleSatelliteView(on) {
+  _satMode = on;
+  document.getElementById('btnSatView')?.classList.toggle('active', on);
+  document.getElementById('btnSchemaView')?.classList.toggle('active', !on);
+  document.getElementById('btnFitMap').style.display = on ? 'none' : '';
+
+  const canvasWrap    = document.getElementById('canvasWrap');
+  const leafletDiv    = document.getElementById('leaflet-container');
+  const zoomControls  = document.querySelector('#panel-map .zoom-controls');
+  const modeToggleMap = document.getElementById('modeToggle');
+  const calibBtn      = document.getElementById('btnCalibrate');
+  const scaleInfo     = document.getElementById('scaleInfoMap');
+
+  if (on) {
+    if (canvasWrap)    canvasWrap.style.display = 'none';
+    if (zoomControls)  zoomControls.style.display = 'none';
+    if (modeToggleMap) modeToggleMap.style.display = 'none';
+    if (scaleInfo)     scaleInfo.style.display = 'none';
+    if (leafletDiv)    leafletDiv.style.display = 'block';
+    // Bouton calibration visible seulement si l'étang a des coords GPS
+    if (calibBtn)      calibBtn.style.display = (state.pond && state.pond.origin?.lat) ? 'inline-flex' : 'none';
+    if (!_leafletMap) initLeafletMap();
+    else { updateLeafletOverlay(); setTimeout(() => _leafletMap.invalidateSize(), 100); }
+  } else {
+    if (leafletDiv)    leafletDiv.style.display = 'none';
+    if (canvasWrap)    canvasWrap.style.display = '';
+    if (zoomControls)  zoomControls.style.display = '';
+    if (modeToggleMap && state.pond) modeToggleMap.style.display = 'flex';
+    if (scaleInfo)     scaleInfo.style.display = '';
+    if (calibBtn)      calibBtn.style.display = 'none';
+    requestAnimationFrame(() => {
+      const c = document.getElementById('pondCanvas'), w = document.getElementById('canvasWrap');
+      if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
+      renderPondCanvas(document.getElementById('pondCanvas'));
+    });
+  }
+}
+
+// ============================================================
+// CALIBRATION WIZARD
+// ============================================================
+let _calibIdx = 0;
+let _calibClickHandler = null;
+const _calibLabels = ['AV-G (avant gauche)', 'AV-D (avant droite)', 'AR-G (arrière gauche)', 'AR-D (arrière droite)'];
+
+function startCalibration() {
+  if (!state.pond) { showToast('Chargez un étang d\'abord', 'error'); return; }
+  if (!state.pond.origin?.lat && !state.pond.origin?.lng) {
+    showToast('Cet étang n\'a pas de coordonnées GPS (étang démo)', 'error'); return;
+  }
+  _calibIdx = 0;
+  updateCalibUI();
+  document.getElementById('calibModal').style.display = 'flex';
+  if (!_leafletMap) initLeafletMap();
+  if (_calibClickHandler) _leafletMap.off('click', _calibClickHandler);
+  _calibClickHandler = e => captureAnchorByClick(e.latlng);
+  setTimeout(() => _leafletMap?.on('click', _calibClickHandler), 200);
+}
+
+function updateCalibUI() {
+  setText('calibAnchorName', _calibLabels[_calibIdx] || '');
+  setText('calibStep', `${_calibIdx + 1} / 4`);
+  for (let i = 0; i < 4; i++) {
+    const dot = document.getElementById(`calibDot${i}`);
+    if (dot) dot.className = 'calib-dot' + (i < _calibIdx ? ' done' : i === _calibIdx ? ' active' : '');
+  }
+}
+
+function captureAnchorByClick(latlng) {
+  if (!state.pond) return;
+  const { lat: lat0, lng: lng0 } = state.pond.origin;
+  const local = latLngToMeters(latlng.lat, latlng.lng, lat0, lng0);
+  state.pond.anchors[_calibIdx] = { ...state.pond.anchors[_calibIdx], x: local.x, y: local.y };
+  showToast(`Ancre ${['AV-G','AV-D','AR-G','AR-D'][_calibIdx]} placée sur la carte`, 'success');
+  advanceCalib();
+}
+
+function captureAnchorByGPS() {
+  if (!navigator.geolocation) { showToast('GPS non disponible sur cet appareil', ''); return; }
+  showToast('Lecture GPS en cours…', '');
+  navigator.geolocation.getCurrentPosition(pos => {
+    const { lat: lat0, lng: lng0 } = state.pond.origin;
+    const local = latLngToMeters(pos.coords.latitude, pos.coords.longitude, lat0, lng0);
+    state.pond.anchors[_calibIdx] = { ...state.pond.anchors[_calibIdx], x: local.x, y: local.y };
+    showToast(`Ancre ${['AV-G','AV-D','AR-G','AR-D'][_calibIdx]} capturée (±${Math.round(pos.coords.accuracy)}m)`, 'success');
+    advanceCalib();
+  }, err => { showToast('Erreur GPS : ' + err.message, 'error'); },
+  { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+}
+
+function skipCalibAnchor() { advanceCalib(); }
+
+function advanceCalib() {
+  updateLeafletOverlay();
+  renderAllPondCanvases();
+  _calibIdx++;
+  if (_calibIdx >= 4) finishCalibration();
+  else updateCalibUI();
+}
+
+function finishCalibration() {
+  if (_calibClickHandler) { _leafletMap?.off('click', _calibClickHandler); _calibClickHandler = null; }
+  document.getElementById('calibModal').style.display = 'none';
+  const idx = state.ponds.findIndex(p => p.id === state.pond.id);
+  if (idx !== -1) state.ponds[idx] = state.pond;
+  savePonds();
+  renderAllPondCanvases();
+  showToast('Calibration des ancres enregistrée !', 'success');
+}
+
+function closeCalibration() {
+  if (_calibClickHandler) { _leafletMap?.off('click', _calibClickHandler); _calibClickHandler = null; }
+  document.getElementById('calibModal').style.display = 'none';
 }
 
 // ============================================================

@@ -614,6 +614,123 @@ svg { display: block; }
 @keyframes toastIn { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
 
 /* ============================================================
+   SATELLITE / LEAFLET MAP
+   ============================================================ */
+#leaflet-container {
+  flex: 1;
+  display: none;
+  position: relative;
+  z-index: 1;
+  min-height: 0;
+}
+.leaflet-container { background: #0a1a2e !important; font-family: inherit !important; }
+.leaflet-control-zoom a { background: var(--bg-card) !important; color: var(--text-1) !important; border-color: var(--border) !important; }
+.leaflet-control-zoom a:hover { background: var(--bg-card-2) !important; color: var(--accent) !important; }
+.leaflet-control-attribution { background: rgba(10,15,30,0.7) !important; color: var(--text-3) !important; font-size: 9px !important; }
+
+/* Satellite / Schema toggle */
+.view-toggle-group { background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 2px; display: flex; gap: 2px; }
+.view-toggle-btn {
+  padding: 4px 10px; border: none; background: transparent;
+  border-radius: 4px; font-size: 11px; font-weight: 600;
+  color: var(--text-2); cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.view-toggle-btn.active { background: var(--accent); color: #fff; box-shadow: 0 1px 4px rgba(14,165,233,0.4); }
+.view-toggle-btn:hover:not(.active) { color: var(--text-1); background: var(--border); }
+
+/* Custom Leaflet markers */
+.anchor-marker {
+  background: #f59e0b; color: #000;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.3px;
+  padding: 3px 7px; border-radius: 5px;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  white-space: nowrap; cursor: move;
+  transition: transform 0.1s;
+}
+.anchor-marker:hover { transform: scale(1.1); }
+.robot-marker-leaf {
+  width: 16px; height: 16px;
+  background: #0ea5e9; border-radius: 50%;
+  border: 3px solid #fff;
+  box-shadow: 0 0 14px rgba(14,165,233,0.8);
+  animation: ledPulse 2s ease-in-out infinite;
+}
+
+/* ============================================================
+   CALIBRATION MODAL
+   ============================================================ */
+.calib-modal-overlay {
+  position: fixed; inset: 0; z-index: 3000;
+  background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.calib-modal {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  width: 100%; max-width: 480px;
+  box-shadow: 0 -8px 40px rgba(0,0,0,0.6);
+  animation: slideUp 0.22s cubic-bezier(0.34,1.56,0.64,1);
+}
+@keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.calib-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  padding: 16px 20px 12px; border-bottom: 1px solid var(--border);
+}
+.calib-title { font-size: 15px; font-weight: 700; color: var(--text-1); }
+.calib-subtitle { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+.calib-steps-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 20px; background: var(--bg-card-2); border-bottom: 1px solid var(--border);
+}
+.calib-dot-row { display: flex; align-items: center; gap: 0; }
+.calib-dot {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  background: var(--bg-input); border: 2px solid var(--text-3);
+  transition: all 0.25s;
+}
+.calib-dot.active { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); transform: scale(1.2); }
+.calib-dot.done   { background: var(--success); border-color: var(--success); }
+.calib-dot-line { width: 24px; height: 2px; background: var(--border); flex-shrink: 0; }
+.calib-step-label { font-size: 12px; color: var(--text-2); font-weight: 600; }
+.calib-body { padding: 16px 20px; }
+.calib-anchor-badge {
+  display: inline-block;
+  background: var(--accent-glow); border: 1px solid var(--accent);
+  border-radius: 20px; padding: 4px 14px;
+  font-size: 13px; font-weight: 700; color: var(--accent);
+  margin-bottom: 12px;
+}
+.calib-instruction { font-size: 12px; color: var(--text-2); line-height: 1.6; margin-bottom: 14px; }
+.calib-instruction strong { color: var(--text-1); }
+.calib-instruction em { color: var(--accent); font-style: normal; }
+.calib-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.calib-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 20px 14px; border-top: 1px solid var(--border);
+}
+.calib-hint { font-size: 11px; color: var(--text-3); }
+
+/* ============================================================
+   POND CARDS — improved
+   ============================================================ */
+.pond-status-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 20px;
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 5px;
+}
+.pond-status-new      { background: rgba(148,163,184,0.12); color: var(--text-2); border: 1px solid var(--border); }
+.pond-status-progress { background: rgba(14,165,233,0.15);  color: var(--accent);  border: 1px solid var(--accent); }
+.pond-status-done     { background: rgba(16,185,129,0.15);  color: var(--success); border: 1px solid var(--success); }
+.pond-gps-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 9px; color: var(--text-3); padding: 1px 6px;
+  background: var(--bg-input); border-radius: 10px; border: 1px solid var(--border);
+}
+.pond-gps-badge.has-gps { color: var(--success); border-color: rgba(16,185,129,0.3); }
+
+/* ============================================================
    RESPONSIVE — mobile
    ============================================================ */
 @media (max-width: 820px) {
