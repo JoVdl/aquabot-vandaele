@@ -168,8 +168,9 @@ function subscribeSimState(pondId) {
       }
       updateButtonStates();
 
-      // Save ghost progress
-      if (sim.simRunning && offlineMs > 3000) saveWork();
+      // Save ghost progress (jamais si un reset a eu lieu dans les 30 dernières secondes)
+      const resetRecent = pondResetAt && (Date.now() - pondResetAt < 30000);
+      if (simPostReset && sim.simRunning && offlineMs > 3000 && !resetRecent) saveWork();
 
       renderAllPondCanvases();
       renderSectionCanvas();
@@ -616,6 +617,15 @@ function resetWork(pondId) {
   if (!confirm('Remettre à zéro toute la progression de cet étang ?\nCette action est irréversible.')) return;
   const pond = state.ponds.find(p => p.id === pondId);
   if (!pond) return;
+
+  // Arrêter la simulation locale en premier pour éviter que saveWork() réécrive les données
+  if (state.sim.running && state.pond?.id === pondId) {
+    state.sim.running = false;
+    clearInterval(state.sim.intervalId);
+    state.sim.intervalId = null;
+    state.robot.state = 'stopped';
+  }
+
   pond.work = { completedCells: [], volumePumped: 0, elapsedSec: 0 };
   pond.cells?.forEach(c => { c.completed = false; });
   pond.lastResetAt = Date.now();
@@ -629,6 +639,7 @@ function resetWork(pondId) {
     state.plannedPath = [];
     renderAllPondCanvases();
     updateUI();
+    updateButtonStates();
   }
 
   // Persiste la progression dans aquabot_ponds
