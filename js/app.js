@@ -106,6 +106,14 @@ function subscribeSimState(pondId) {
       const sim = doc.data();
       if (!sim) return;
 
+      // Ignore sim data that predates the last reset — prevents stale Firestore cache
+      // from overwriting a freshly-reset pond on page reload
+      const pondResetAt = state.pond?.lastResetAt || 0;
+      if (pondResetAt > 0 && (sim.lastUpdate || 0) < pondResetAt) {
+        console.log('[simState] Données ignorées : antérieures au dernier RAZ');
+        return;
+      }
+
       const offlineMs  = Date.now() - (sim.lastUpdate || Date.now());
       const offlineSec = (offlineMs / 1000) * (sim.speed || 1);
 
@@ -631,6 +639,8 @@ function resetWork(pondId) {
   pond.lastUsed    = Date.now();
 
   if (state.pond?.id === pondId) {
+    state.pond.lastResetAt = pond.lastResetAt;
+    state.pond.work        = pond.work;
     state.cells.forEach(c => { c.completed = false; });
     state.robot.completedCells = 0;
     state.robot.volumePumped   = 0;
@@ -801,6 +811,8 @@ function loadPonds() {
             state.robot.completedCells = remote.work.completedCells?.length || 0;
             state.robot.volumePumped   = remote.work.volumePumped || 0;
             state.robot.elapsedSec     = remote.work.elapsedSec   || 0;
+            state.pond.lastResetAt     = remote.lastResetAt || 0;
+            state.pond.work            = remote.work;
             state.pond.selections      = remote.selections;
             // Sync live selection from other device (skip if we have pending local changes)
             if (!_localSelChanging && remote.currentSelectedIndices !== undefined) {
