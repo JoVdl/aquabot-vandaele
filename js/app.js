@@ -2004,6 +2004,75 @@ function metersToLatLng(x, y) {
 // ============================================================
 // LEAFLET SATELLITE MAP
 // ============================================================
+
+// Fonds de carte disponibles
+const MAP_STYLES = {
+  esri: {
+    label: 'Esri',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    labels: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    attribution: '© Esri World Imagery',
+    maxNativeZoom: 19,
+  },
+  ign_ortho: {
+    label: 'IGN Photo',
+    url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image%2Fjpeg',
+    labels: null,
+    attribution: '© IGN Géoportail',
+    maxNativeZoom: 21,
+  },
+  ign_plan: {
+    label: 'IGN Plan',
+    url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image%2Fpng',
+    labels: null,
+    attribution: '© IGN Géoportail',
+    maxNativeZoom: 19,
+  },
+};
+
+let _currentMapStyle   = 'esri';
+let _baseTileLayer     = null;   // onglet Carte
+let _labelsLayer       = null;
+let _baseTileLayerDash = null;   // tableau de bord
+let _labelsLayerDash   = null;
+
+function setMapStyle(styleKey) {
+  _currentMapStyle = styleKey;
+  const style = MAP_STYLES[styleKey];
+  if (!style) return;
+
+  // Mettre à jour tous les boutons .map-style-btn
+  document.querySelectorAll('.map-style-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.style === styleKey)
+  );
+
+  // Fonction utilitaire pour changer le fond sur une map Leaflet
+  function applyStyle(lmap, tileRef, labelsRef) {
+    if (!lmap) return { tile: tileRef, labels: labelsRef };
+    if (tileRef)   { lmap.removeLayer(tileRef);   tileRef   = null; }
+    if (labelsRef) { lmap.removeLayer(labelsRef); labelsRef = null; }
+    tileRef = L.tileLayer(style.url, {
+      attribution: style.attribution, maxZoom: 21, maxNativeZoom: style.maxNativeZoom,
+    }).addTo(lmap);
+    tileRef.bringToBack();
+    if (style.labels) {
+      labelsRef = L.tileLayer(style.labels, {
+        attribution: '', maxZoom: 21, maxNativeZoom: style.maxNativeZoom, opacity: 0.65,
+      }).addTo(lmap);
+    }
+    return { tile: tileRef, labels: labelsRef };
+  }
+
+  if (_leafletMap) {
+    const r = applyStyle(_leafletMap, _baseTileLayer, _labelsLayer);
+    _baseTileLayer = r.tile; _labelsLayer = r.labels;
+  }
+  if (_leafletMapDash) {
+    const r = applyStyle(_leafletMapDash, _baseTileLayerDash, _labelsLayerDash);
+    _baseTileLayerDash = r.tile; _labelsLayerDash = r.labels;
+  }
+}
+
 let _leafletMap      = null;
 let _leafletLayers   = [];
 let _robotMarkerLeaf = null;
@@ -2022,15 +2091,11 @@ function initLeafletMap() {
 
   _leafletMap = L.map('leaflet-container', { zoomControl: false });
 
-  L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    { attribution: '© Esri World Imagery', maxZoom: 21, maxNativeZoom: 19 }
-  ).addTo(_leafletMap);
-
-  L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-    { attribution: '', maxZoom: 21, maxNativeZoom: 19, opacity: 0.65 }
-  ).addTo(_leafletMap);
+  const style = MAP_STYLES[_currentMapStyle];
+  _baseTileLayer = L.tileLayer(style.url, { attribution: style.attribution, maxZoom: 21, maxNativeZoom: style.maxNativeZoom }).addTo(_leafletMap);
+  if (style.labels) {
+    _labelsLayer = L.tileLayer(style.labels, { attribution: '', maxZoom: 21, maxNativeZoom: style.maxNativeZoom, opacity: 0.65 }).addTo(_leafletMap);
+  }
 
   L.control.zoom({ position: 'bottomright' }).addTo(_leafletMap);
   updateLeafletOverlay();
@@ -2230,10 +2295,12 @@ function initLeafletMapDash() {
   if (!container || typeof L === 'undefined') return;
 
   _leafletMapDash = L.map('leaflet-container-dash', { zoomControl: false });
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    { attribution: '© Esri', maxZoom: 21, maxNativeZoom: 19 }).addTo(_leafletMapDash);
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-    { attribution: '', maxZoom: 21, maxNativeZoom: 19, opacity: 0.65 }).addTo(_leafletMapDash);
+
+  const styleDash = MAP_STYLES[_currentMapStyle];
+  _baseTileLayerDash = L.tileLayer(styleDash.url, { attribution: styleDash.attribution, maxZoom: 21, maxNativeZoom: styleDash.maxNativeZoom }).addTo(_leafletMapDash);
+  if (styleDash.labels) {
+    _labelsLayerDash = L.tileLayer(styleDash.labels, { attribution: '', maxZoom: 21, maxNativeZoom: styleDash.maxNativeZoom, opacity: 0.65 }).addTo(_leafletMapDash);
+  }
   L.control.zoom({ position: 'bottomright' }).addTo(_leafletMapDash);
 
   _rebuildBaseLayersDash();
@@ -2262,18 +2329,21 @@ function toggleSatelliteViewDash(on) {
   const leafletDiv  = document.getElementById('leaflet-container-dash');
   const schemaZoom  = document.getElementById('dashSchemaZoom');
 
+  const styleGroupDash = document.getElementById('dashMapStyleGroup');
+
   if (on) {
-    if (canvas)     canvas.style.visibility = 'hidden';
-    if (leafletDiv) leafletDiv.style.display = 'block';
-    if (schemaZoom) schemaZoom.style.display = 'none';
-    // Applique le mode courant au curseur Leaflet
+    if (canvas)          canvas.style.visibility = 'hidden';
+    if (leafletDiv)      leafletDiv.style.display = 'block';
+    if (schemaZoom)      schemaZoom.style.display = 'none';
+    if (styleGroupDash)  styleGroupDash.style.display = '';
     if (_leafletMapDash) _applyModeToLeafletDash();
     if (!_leafletMapDash) initLeafletMapDash();
     else { updateLeafletOverlayDash(); setTimeout(() => _leafletMapDash.invalidateSize(), 100); }
   } else {
-    if (leafletDiv) leafletDiv.style.display = 'none';
-    if (canvas)     canvas.style.visibility = '';
-    if (schemaZoom) schemaZoom.style.display = '';
+    if (leafletDiv)     leafletDiv.style.display = 'none';
+    if (canvas)         canvas.style.visibility = '';
+    if (schemaZoom)     schemaZoom.style.display = '';
+    if (styleGroupDash) styleGroupDash.style.display = 'none';
   }
 }
 
@@ -2300,6 +2370,7 @@ function toggleSatelliteView(on) {
   const modeToggleMap = document.getElementById('modeToggle');
   const calibBtn      = document.getElementById('btnCalibrate');
   const scaleInfo     = document.getElementById('scaleInfoMap');
+  const styleGroup    = document.getElementById('mapMapStyleGroup');
 
   if (on) {
     if (canvasWrap)    canvasWrap.style.display = 'none';
@@ -2307,7 +2378,7 @@ function toggleSatelliteView(on) {
     if (modeToggleMap) modeToggleMap.style.display = 'none';
     if (scaleInfo)     scaleInfo.style.display = 'none';
     if (leafletDiv)    leafletDiv.style.display = 'block';
-    // Bouton calibration visible seulement si l'étang a des coords GPS
+    if (styleGroup)    styleGroup.style.display = '';
     if (calibBtn)      calibBtn.style.display = (state.pond && state.pond.origin?.lat) ? 'inline-flex' : 'none';
     if (!_leafletMap) initLeafletMap();
     else { updateLeafletOverlay(); setTimeout(() => _leafletMap.invalidateSize(), 100); }
@@ -2317,6 +2388,7 @@ function toggleSatelliteView(on) {
     if (zoomControls)  zoomControls.style.display = '';
     if (modeToggleMap && state.pond) modeToggleMap.style.display = 'flex';
     if (scaleInfo)     scaleInfo.style.display = '';
+    if (styleGroup)    styleGroup.style.display = 'none';
     if (calibBtn)      calibBtn.style.display = 'none';
     requestAnimationFrame(() => {
       const c = document.getElementById('pondCanvas'), w = document.getElementById('canvasWrap');

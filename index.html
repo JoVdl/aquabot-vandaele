@@ -164,6 +164,11 @@
               <button class="view-toggle-btn active" id="btnSchemaViewDash" onclick="toggleSatelliteViewDash(false)">📐 Schéma</button>
               <button class="view-toggle-btn" id="btnSatViewDash" onclick="toggleSatelliteViewDash(true)">🛰 Satellite</button>
             </div>
+            <div class="toolbar-group map-style-group" id="dashMapStyleGroup" style="display:none">
+              <button class="map-style-btn active" data-style="esri"      onclick="setMapStyle('esri')">Esri</button>
+              <button class="map-style-btn"         data-style="ign_ortho" onclick="setMapStyle('ign_ortho')">IGN Photo</button>
+              <button class="map-style-btn"         data-style="ign_plan"  onclick="setMapStyle('ign_plan')">IGN Plan</button>
+            </div>
             <div class="toolbar-group" id="dashSchemaTools">
               <button class="mode-btn active" id="btnModeSelect" onclick="setMode('select')">✏ Sélection</button>
               <button class="mode-btn" id="btnModeView" onclick="setMode('view')">✋ Vue</button>
@@ -309,6 +314,11 @@
           <div class="toolbar-group view-toggle-group">
             <button class="view-toggle-btn active" id="btnSchemaView" onclick="toggleSatelliteView(false)">📐 Schéma</button>
             <button class="view-toggle-btn" id="btnSatView" onclick="toggleSatelliteView(true)">🛰 Satellite</button>
+          </div>
+          <div class="toolbar-group map-style-group" id="mapMapStyleGroup" style="display:none">
+            <button class="map-style-btn active" data-style="esri"      onclick="setMapStyle('esri')">Esri</button>
+            <button class="map-style-btn"         data-style="ign_ortho" onclick="setMapStyle('ign_ortho')">IGN Photo</button>
+            <button class="map-style-btn"         data-style="ign_plan"  onclick="setMapStyle('ign_plan')">IGN Plan</button>
           </div>
           <div class="toolbar-group">
             <button class="btn btn-secondary btn-sm" id="btnCalibrate" onclick="startCalibration()" style="display:none">
