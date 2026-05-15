@@ -172,6 +172,111 @@ function subscribeSimState(pondId) {
     }, e => console.warn('simState listener:', e.message));
 }
 
+// ============================================================
+// MODE ROBOT RÉEL
+// ============================================================
+
+// Bascule simulation ↔ robot réel
+function setRobotMode(mode) {
+  state.robotMode = mode;
+  const isReal = mode === 'real';
+  document.getElementById('modeSimBtn')?.classList.toggle('active', !isReal);
+  document.getElementById('modeRealBtn')?.classList.toggle('active',  isReal);
+  const speedCard = document.getElementById('speedControlCard');
+  if (speedCard) speedCard.style.opacity = isReal ? '0.4' : '1';
+  setText('ledLabel', isReal ? 'Robot réel' : 'Simulation');
+
+  if (isReal && state.pond) {
+    subscribeRobotTelemetry(state.pond.id);
+  } else if (_telemetryUnsubscribe) {
+    _telemetryUnsubscribe();
+    _telemetryUnsubscribe = null;
+  }
+  updateButtonStates();
+}
+
+// Envoyer une commande vers le robot via Firestore
+function sendRobotCommand(cmd) {
+  if (!USE_CLOUD || !state.pond) return;
+  const doc = {
+    command:   cmd,
+    originLat: state.pond.origin?.lat || 0,
+    originLng: state.pond.origin?.lng || 0,
+    timestamp: Date.now(),
+  };
+  if (cmd === 'start' && state.plannedPath.length) {
+    doc.plannedPath = state.plannedPath.map(idx => {
+      const c = state.cells[idx];
+      return { x: c.cx, y: c.cy };
+    });
+    doc.anchors = state.pond.anchors.map(a => ({ x: a.x, y: a.y }));
+    doc.pumpTime         = params.pumpTime;
+    doc.waterDepth       = params.waterDepth;
+    doc.mudDepth         = params.mudDepth;
+    doc.pumpDescentSpeed = params.pumpDescentSpeed;
+    doc.pumpAscentSpeed  = params.pumpAscentSpeed;
+    doc.miniCycles       = params.miniCycles;
+  }
+  window.db.collection('aquabot_commands').doc(state.pond.id)
+    .set(doc)
+    .catch(e => console.warn('Robot command error:', e));
+  showToast(`Commande "${cmd}" envoyée au robot`, 'success');
+}
+
+// Écouter la télémétrie GPS du robot en temps réel
+function subscribeRobotTelemetry(pondId) {
+  if (_telemetryUnsubscribe) { _telemetryUnsubscribe(); _telemetryUnsubscribe = null; }
+  if (!USE_CLOUD) return;
+  _telemetryUnsubscribe = window.db.collection('aquabot_telemetry').doc(pondId)
+    .onSnapshot(doc => {
+      if (!doc.exists) return;
+      const t = doc.data();
+
+      // Position robot depuis GPS réel
+      state.robot.x         = t.x          ?? state.robot.x;
+      state.robot.y         = t.y          ?? state.robot.y;
+      state.robot.state     = t.robotState ?? 'stopped';
+      state.robot.pumpState = t.pumpState  ?? 'idle';
+      state.robot.pumpDepth = t.pumpDepth  ?? 0;
+      state.robot.miniCyclesDone = t.miniCyclesDone ?? 0;
+      state.robot.currentCellIdx = t.currentCellIdx ?? 0;
+
+      // Longueurs câbles réelles
+      for (let i = 0; i < 4; i++) {
+        const v = t[`cable${i}`];
+        if (v !== undefined) {
+          const s = v.toFixed(1);
+          setText(`rtCable${i}`,   s);
+          setText(`cableLen${i}`,  s);
+          setText(`cableLen${i}map`, s);
+        }
+      }
+
+      // Statut GPS
+      setText('gpsFixLabel',   t.fixLabel  || '—');
+      setText('gpsAccuracy',   t.accuracy !== undefined ? `±${(t.accuracy * 100).toFixed(0)} cm` : '—');
+
+      // Cases complétées depuis le robot
+      if (t.currentCellIdx > 0 && state.plannedPath.length) {
+        for (let i = 0; i < Math.min(t.currentCellIdx, state.plannedPath.length); i++) {
+          const idx = state.plannedPath[i];
+          if (state.cells[idx]) state.cells[idx].completed = true;
+        }
+        state.robot.completedCells = t.currentCellIdx;
+      }
+
+      // LED selon état robot réel
+      if (t.simRunning)              setLED('green',  'En travail');
+      else if (t.robotState === 'paused') setLED('yellow', 'En pause');
+      else                            setLED('blue',   'Robot réel');
+
+      updateButtonStates();
+      renderAllPondCanvases();
+      renderSectionCanvas();
+      updateUI();
+    }, e => console.warn('Telemetry listener:', e));
+}
+
 // Rebuild a full local pond object from a Firestore document
 function pondFromFirestore(data) {
   const cells = generateGrid(data.polygon);
@@ -203,7 +308,8 @@ const CANVAS_IDS  = ['dashPondCanvas', 'pondCanvas'];
 // STATE
 // ============================================================
 const state = {
-  activeTab: 'dashboard',
+  activeTab:  'dashboard',
+  robotMode:  'simulation',   // 'simulation' | 'real'
   pond: null,
   ponds: [],
   cells: [],
@@ -445,6 +551,7 @@ function loadPond(pond) {
   state.plannedPath = [];
 
   subscribeSimState(pond.id);
+  if (state.robotMode === 'real') subscribeRobotTelemetry(pond.id);
   resizeSectionCanvas();
   requestAnimationFrame(() => fitPond());
   renderSectionCanvas();
@@ -620,9 +727,10 @@ function savePonds() {
 }
 
 let _cloudFirstSnapshot = true;
-let _simUnsubscribe    = null;
-let _selDebounce       = null;
-let _localSelChanging  = false;
+let _simUnsubscribe       = null;
+let _selDebounce          = null;
+let _localSelChanging     = false;
+let _telemetryUnsubscribe = null;
 
 function loadPonds() {
   if (USE_CLOUD) {
@@ -1110,6 +1218,16 @@ function updateCableDisplay() {
 // ============================================================
 function startSimulation() {
   if (!state.pond) { showToast('Sélectionnez un étang d\'abord', 'error'); return; }
+  if (state.robotMode === 'real') {
+    if (!state.plannedPath.length) {
+      const path = planPath(state.cells);
+      if (!path.length) { showToast('Sélectionnez des cases non terminées', 'error'); return; }
+      state.plannedPath = path;
+      renderAllPondCanvases();
+    }
+    sendRobotCommand('start');
+    return;
+  }
   if (state.plannedPath.length === 0) {
     const path = planPath(state.cells);
     if (!path.length) { showToast('Sélectionnez des cases non terminées', 'error'); return; }
@@ -1137,6 +1255,11 @@ function startSimulation() {
 }
 
 function pauseSimulation() {
+  if (state.robotMode === 'real') {
+    const cmd = state.robot.state === 'paused' ? 'resume' : 'pause';
+    sendRobotCommand(cmd);
+    return;
+  }
   if (state.robot.state === 'paused') {
     startSimulation(); return;
   }
@@ -1151,6 +1274,7 @@ function pauseSimulation() {
 }
 
 function stopSimulation() {
+  if (state.robotMode === 'real') { sendRobotCommand('stop'); return; }
   state.sim.running = false;
   state.robot.state = 'stopped';
   clearInterval(state.sim.intervalId);
