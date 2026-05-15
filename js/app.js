@@ -109,30 +109,33 @@ function subscribeSimState(pondId) {
       const offlineMs  = Date.now() - (sim.lastUpdate || Date.now());
       const offlineSec = (offlineMs / 1000) * (sim.speed || 1);
 
-      // Si les données sim sont antérieures au dernier RAZ, ne pas restaurer la progression
-      const pondResetAt  = state.pond?.lastResetAt || 0;
-      const simPostReset = !pondResetAt || (sim.lastUpdate || 0) >= pondResetAt;
-
-      // Build completed set (ignoré si données antérieures au RAZ)
-      const completedSet = simPostReset ? new Set(sim.completedCells || []) : new Set();
-      if (simPostReset && sim.simRunning && offlineMs > 3000) {
-        const doneBefore = sim.completedCells?.length || 0;
-        if (doneBefore > 0 && sim.elapsedSec > 0) {
-          const secPerCell = sim.elapsedSec / doneBefore;
-          const ghostCells = Math.floor(offlineSec / secPerCell);
-          const path = sim.plannedPath || [];
-          for (let i = doneBefore; i < Math.min(doneBefore + ghostCells, path.length); i++) {
-            if (path[i] !== undefined) completedSet.add(path[i]);
+      // Règle simple : completedCells de aquabot_sim n'est utilisé QUE si la sim tourne
+      // En mode arrêté, la source de vérité est aquabot_ponds (chargé par loadPond)
+      if (sim.simRunning) {
+        const completedSet = new Set(sim.completedCells || []);
+        // Ghost cells si reprise hors-ligne
+        if (offlineMs > 3000) {
+          const doneBefore = sim.completedCells?.length || 0;
+          if (doneBefore > 0 && sim.elapsedSec > 0) {
+            const secPerCell = sim.elapsedSec / doneBefore;
+            const ghostCells = Math.floor(offlineSec / secPerCell);
+            const path = sim.plannedPath || [];
+            for (let i = doneBefore; i < Math.min(doneBefore + ghostCells, path.length); i++) {
+              if (path[i] !== undefined) completedSet.add(path[i]);
+            }
+            const added = completedSet.size - doneBefore;
+            if (added > 0) showToast(`Reprise : ~${added} cases traitées hors ligne`, 'success');
           }
         }
-        const added = completedSet.size - (sim.completedCells?.length || 0);
-        if (added > 0) showToast(`Reprise : ~${added} cases traitées hors ligne`, 'success');
+        state.cells.forEach((c, i) => { c.completed = completedSet.has(i); });
+        state.robot.completedCells = completedSet.size;
+        if (offlineMs > 3000) saveWork();
+      } else {
+        // Sim arrêtée : ne pas toucher aux cells — garder l'état de aquabot_ponds
+        state.robot.completedCells = state.pond?.work?.completedCells?.length || 0;
       }
 
-      // Apply full robot state to local
-      state.cells.forEach((c, i) => { c.completed = completedSet.has(i); });
       state.robot.state          = sim.robotState  || 'stopped';
-      state.robot.completedCells = completedSet.size;
       state.robot.elapsedSec     = sim.elapsedSec + (sim.simRunning ? offlineSec : 0);
       state.robot.volumePumped   = sim.volumePumped || 0;
       state.robot.x              = sim.x ?? state.robot.x;
@@ -167,10 +170,6 @@ function subscribeSimState(pondId) {
         if (btnPause) btnPause.textContent = '⏸ Pause';
       }
       updateButtonStates();
-
-      // Save ghost progress (jamais si un reset a eu lieu dans les 30 dernières secondes)
-      const resetRecent = pondResetAt && (Date.now() - pondResetAt < 30000);
-      if (simPostReset && sim.simRunning && offlineMs > 3000 && !resetRecent) saveWork();
 
       renderAllPondCanvases();
       renderSectionCanvas();
