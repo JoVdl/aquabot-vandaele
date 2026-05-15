@@ -29,7 +29,8 @@ function pondToFirestore(pond) {
     anchors:  pond.anchors,
     area:     pond.area     || 0,
     bbox:     pond.bbox,
-    lastUsed: pond.lastUsed || Date.now(),
+    lastUsed:   pond.lastUsed   || Date.now(),
+    lastResetAt: pond.lastResetAt || 0,
     work: {
       completedCells: pond.work?.completedCells || [],
       volumePumped:   pond.work?.volumePumped   || 0,
@@ -104,6 +105,10 @@ function subscribeSimState(pondId) {
       if (!doc.exists || state.sim.running) return;
       const sim = doc.data();
       if (!sim) return;
+
+      // Si les données sim sont antérieures au dernier RAZ, les ignorer entièrement
+      const pondResetAt = state.pond?.lastResetAt || 0;
+      if (pondResetAt > 0 && (sim.lastUpdate || 0) < pondResetAt) return;
 
       const offlineMs  = Date.now() - (sim.lastUpdate || Date.now());
       const offlineSec = (offlineMs / 1000) * (sim.speed || 1);
@@ -293,6 +298,7 @@ function pondFromFirestore(data) {
   return {
     ...data,
     cells,
+    lastResetAt: data.lastResetAt || 0,
     work: data.work || { completedCells: [], volumePumped: 0, elapsedSec: 0 },
     selections: (data.selections || []).map(s => {
       const set = new Set(s.selectedIndices || []);
@@ -612,7 +618,8 @@ function resetWork(pondId) {
   if (!pond) return;
   pond.work = { completedCells: [], volumePumped: 0, elapsedSec: 0 };
   pond.cells?.forEach(c => { c.completed = false; });
-  pond.lastUsed = Date.now();
+  pond.lastResetAt = Date.now();
+  pond.lastUsed    = Date.now();
 
   if (state.pond?.id === pondId) {
     state.cells.forEach(c => { c.completed = false; });
