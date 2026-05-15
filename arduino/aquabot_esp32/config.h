@@ -31,6 +31,24 @@ const uint8_t MOTOR_EN[4]   = { 27, 15,  5, 23 };
 #define PUMP_PIN  4        // HIGH = pompe ON, LOW = pompe OFF
 #define PUMP_ACTIVE_HIGH true
 
+// ── 5ème moteur : descente/remontée pompe (BTS7960) ───────────────────
+// ⚠ Broches à confirmer selon câblage réel
+#define PUMP_MOTOR_RPWM  13   // descente (RPWM → lâcher cable portique)
+#define PUMP_MOTOR_LPWM  12   // remontée (LPWM → enrouler cable portique)
+#define PUMP_MOTOR_EN    14
+
+// Capteur de courant (GPIO 34 = entrée ADC uniquement, 0–4095 sur ESP32)
+#define PUMP_CURRENT_PIN         34
+#define PUMP_USE_CURRENT_SENSING true   // false = uniquement time-based
+#define PUMP_I_THRESHOLD_DESCENT  800   // ADC raw → fond détecté (descente)
+#define PUMP_I_THRESHOLD_ASCENT   900   // ADC raw → haut détecté (remontée)
+
+// PWM rampe pompe 8 bits (0–255), calqué sur ancien code 10-bit /4
+#define PUMP_PWM_START    75    // démarrage doux (≈ 300/1023*255)
+#define PUMP_PWM_DESCENT 150    // max descente   (≈ 600/1023*255)
+#define PUMP_PWM_ASCENT  255    // max remontée   (pleine puissance)
+#define PUMP_PWM_STEP      2    // incrément par tick (≈ 10/1023*255, mode normal)
+
 // ── GPS ZED-F9P (I2C) ─────────────────────────────────────────────────
 #define GPS_SDA  21
 #define GPS_SCL  22

@@ -5,7 +5,9 @@
  * Matériel :
  *   - ESP32 (cerveau principal)
  *   - ZED-F9P GPS RTK (I2C) + antenne GNSS multi-bande
- *   - 4× BTS7960 (drivers moteurs treuils)
+ *   - 4× BTS7960 (drivers moteurs treuils câbles)
+ *   - 1× BTS7960 (moteur descente/remontée pompe)
+ *   - Capteur courant (GPIO 34) pour détection fond/haut
  *   - Relais SSR 230V (pompe)
  *   - Hotspot 4G (WiFi vers Firebase + Centipède NTRIP)
  *
@@ -80,6 +82,12 @@ float pumpTimer      = 0;
 int   miniCyclesDone = 0;
 bool  pumpFullAscent = false;
 
+// ── Moteur descente pompe (5ème moteur, BTS7960) ──────────────────────
+// Canaux LEDC 8-9 (0-7 occupés par les 4 moteurs câbles)
+#define PUMP_MOTOR_CH_R  8
+#define PUMP_MOTOR_CH_L  9
+int   pumpMotorPwm   = 0;   // PWM courant (rampe progressive)
+
 // ── Paramètres reçus depuis l'app ─────────────────────────────────────
 float p_pumpTime         = 30.0f;
 float p_waterDepth       = 2.0f;
@@ -108,8 +116,8 @@ Vec2 gpsToLocal(double lat, double lng) {
 // ─────────────────────────────────────────────────────────────────────
 void motorSetup() {
   for (int i = 0; i < 4; i++) {
-    ledcSetup(i * 2,     5000, 8);   // canal RPWM
-    ledcSetup(i * 2 + 1, 5000, 8);   // canal LPWM
+    ledcSetup(i * 2,     5000, 8);
+    ledcSetup(i * 2 + 1, 5000, 8);
     ledcAttachPin(MOTOR_RPWM[i], i * 2);
     ledcAttachPin(MOTOR_LPWM[i], i * 2 + 1);
     pinMode(MOTOR_EN[i], OUTPUT);
@@ -117,6 +125,19 @@ void motorSetup() {
     ledcWrite(i * 2,     0);
     ledcWrite(i * 2 + 1, 0);
   }
+  // 5ème moteur : descente/remontée pompe
+  ledcSetup(PUMP_MOTOR_CH_R, 5000, 8);
+  ledcSetup(PUMP_MOTOR_CH_L, 5000, 8);
+  ledcAttachPin(PUMP_MOTOR_RPWM, PUMP_MOTOR_CH_R);
+  ledcAttachPin(PUMP_MOTOR_LPWM, PUMP_MOTOR_CH_L);
+  pinMode(PUMP_MOTOR_EN, OUTPUT);
+  digitalWrite(PUMP_MOTOR_EN, HIGH);
+  ledcWrite(PUMP_MOTOR_CH_R, 0);
+  ledcWrite(PUMP_MOTOR_CH_L, 0);
+
+  // Capteur courant (ADC)
+  pinMode(PUMP_CURRENT_PIN, INPUT);
+
   pinMode(PUMP_PIN, OUTPUT);
   digitalWrite(PUMP_PIN, LOW);
 }
@@ -140,10 +161,42 @@ void motorStop(int i) {
 
 void stopAllMotors() {
   for (int i = 0; i < 4; i++) motorStop(i);
+  pumpMotorStop();
 }
 
 void pumpOn()  { digitalWrite(PUMP_PIN, PUMP_ACTIVE_HIGH ? HIGH : LOW); }
 void pumpOff() { digitalWrite(PUMP_PIN, PUMP_ACTIVE_HIGH ? LOW : HIGH); }
+
+// ── Moteur descente/remontée pompe ────────────────────────────────────
+// Rampe progressive : pumpMotorPwm monte de PUMP_PWM_START vers targetPwm
+// par pas de PUMP_PWM_STEP à chaque appel. Protège les réducteurs portail.
+
+void pumpMotorDescend(int targetPwm) {
+  if (pumpMotorPwm < PUMP_PWM_START) pumpMotorPwm = PUMP_PWM_START;
+  else pumpMotorPwm = min(pumpMotorPwm + PUMP_PWM_STEP, targetPwm);
+  ledcWrite(PUMP_MOTOR_CH_R, pumpMotorPwm);
+  ledcWrite(PUMP_MOTOR_CH_L, 0);
+}
+
+void pumpMotorAscend(int targetPwm) {
+  if (pumpMotorPwm < PUMP_PWM_START) pumpMotorPwm = PUMP_PWM_START;
+  else pumpMotorPwm = min(pumpMotorPwm + PUMP_PWM_STEP, targetPwm);
+  ledcWrite(PUMP_MOTOR_CH_R, 0);
+  ledcWrite(PUMP_MOTOR_CH_L, pumpMotorPwm);
+}
+
+void pumpMotorStop() {
+  pumpMotorPwm = 0;
+  ledcWrite(PUMP_MOTOR_CH_R, 0);
+  ledcWrite(PUMP_MOTOR_CH_L, 0);
+}
+
+// Lecture courant : moyenne 4 échantillons pour lisser le bruit ADC
+int readPumpCurrent() {
+  int sum = 0;
+  for (int i = 0; i < 4; i++) sum += analogRead(PUMP_CURRENT_PIN);
+  return sum / 4;
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // CONTRÔLE DE POSITION PAR CÂBLES (GPS comme feedback)
@@ -445,15 +498,25 @@ void robotTick(float dt) {
     }
 
     // ── Descente pompe dans la vase ────────────────────────────────
+    // Moteur descend jusqu'à détection courant (fond) ou profondeur max
     case STATE_DESCENDING: {
+      pumpMotorDescend(PUMP_PWM_DESCENT);
       pumpDepth = min(fullDepth, pumpDepth + p_pumpDescentSpeed * dt);
-      if (pumpDepth >= fullDepth - 0.005f) {
+
+      bool bottomDetected = false;
+      if (PUMP_USE_CURRENT_SENSING) {
+        bottomDetected = (readPumpCurrent() > PUMP_I_THRESHOLD_DESCENT);
+      }
+      // Fond atteint : par courant OU par profondeur max
+      if (bottomDetected || pumpDepth >= fullDepth - 0.005f) {
+        pumpMotorStop();
         pumpDepth  = fullDepth;
         pumpTimer  = 0;
         pumpFullAscent = false;
         pumpOn();
         robotState = STATE_PUMPING;
-        Serial.println("[POMPE] ON — cycle " + String(miniCyclesDone + 1) + "/" + String(p_miniCycles));
+        Serial.println("[POMPE] ON — cycle " + String(miniCyclesDone + 1) + "/" + String(p_miniCycles)
+                       + (bottomDetected ? " (courant)" : " (profondeur)"));
       }
       break;
     }
@@ -464,10 +527,8 @@ void robotTick(float dt) {
       if (pumpTimer >= p_pumpTime) {
         miniCyclesDone++;
         if (miniCyclesDone < p_miniCycles) {
-          // Mini-cycle : remontée partielle puis redescente
           pumpFullAscent = false;
         } else {
-          // Tous les cycles terminés : remontée complète
           pumpFullAscent = true;
           miniCyclesDone = 0;
           pumpOff();
@@ -479,14 +540,24 @@ void robotTick(float dt) {
     }
 
     // ── Remontée pompe ─────────────────────────────────────────────
+    // Moteur remonte jusqu'à détection courant (haut) ou profondeur cible
     case STATE_ASCENDING: {
       float targetDepth = pumpFullAscent ? 0.0f : partialDepth;
+      pumpMotorAscend(PUMP_PWM_ASCENT);
       pumpDepth = max(targetDepth, pumpDepth - p_pumpAscentSpeed * dt);
 
-      if (pumpDepth <= targetDepth + 0.005f) {
+      bool topDetected = false;
+      if (PUMP_USE_CURRENT_SENSING && pumpFullAscent) {
+        // Détection haut seulement pour la remontée complète
+        topDetected = (readPumpCurrent() > PUMP_I_THRESHOLD_ASCENT);
+      }
+
+      if (topDetected || pumpDepth <= targetDepth + 0.005f) {
+        pumpMotorStop();
         pumpDepth = targetDepth;
+        if (topDetected) Serial.println("[POMPE] Haut détecté (courant)");
+
         if (pumpFullAscent) {
-          // Case terminée → case suivante
           currentCellIdx++;
           if (currentCellIdx >= (int)plannedPath.size()) {
             robotState = STATE_DONE;
@@ -497,7 +568,6 @@ void robotTick(float dt) {
             robotState = STATE_MOVING;
           }
         } else {
-          // Mini-cycle : redescente
           pumpTimer  = 0;
           robotState = STATE_DESCENDING;
         }
