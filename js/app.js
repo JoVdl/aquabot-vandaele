@@ -552,7 +552,8 @@ function loadPond(pond) {
 
   subscribeSimState(pond.id);
   if (state.robotMode === 'real') subscribeRobotTelemetry(pond.id);
-  if (_satMode && _leafletMap) updateLeafletOverlay();
+  if (_satMode     && _leafletMap)     updateLeafletOverlay();
+  if (_satModeDash && _leafletMapDash) updateLeafletOverlayDash();
   resizeSectionCanvas();
   requestAnimationFrame(() => fitPond());
   renderSectionCanvas();
@@ -1400,7 +1401,8 @@ function simulationTick() {
   updateUI();
   renderAllPondCanvases();
   renderSectionCanvas();
-  if (_satMode) updateRobotMarker();
+  if (_satMode)     updateRobotMarker();
+  if (_satModeDash) updateRobotMarkerDash();
 }
 
 function finishSimulation() {
@@ -2005,6 +2007,11 @@ let _leafletLayers   = [];
 let _robotMarkerLeaf = null;
 let _satMode         = false;
 
+let _leafletMapDash      = null;
+let _leafletLayersDash   = [];
+let _robotMarkerDash     = null;
+let _satModeDash         = false;
+
 function initLeafletMap() {
   if (_leafletMap) { setTimeout(() => _leafletMap.invalidateSize(), 50); return; }
   const container = document.getElementById('leaflet-container');
@@ -2026,29 +2033,32 @@ function initLeafletMap() {
   updateLeafletOverlay();
 }
 
-function clearLeafletLayers() {
-  for (const l of _leafletLayers) { try { _leafletMap.removeLayer(l); } catch {} }
-  _leafletLayers = [];
-  _robotMarkerLeaf = null;
+function updateLeafletOverlay() {
+  if (!_leafletMap) return;
+  _robotMarkerLeaf = _buildLeafletOverlay(_leafletMap, _leafletLayers);
 }
 
-function updateLeafletOverlay() {
-  if (!_leafletMap || !state.pond) return;
-  clearLeafletLayers();
+function updateRobotMarker() {
+  if (!_robotMarkerLeaf || !_satMode) return;
+  const ll = metersToLatLng(state.robot.x, state.robot.y);
+  if (ll) _robotMarkerLeaf.setLatLng([ll.lat, ll.lng]);
+}
 
+// ── Shared overlay builder (évite duplication) ──────────────────────────────
+function _buildLeafletOverlay(lmap, layersArr) {
+  for (const l of layersArr) { try { lmap.removeLayer(l); } catch {} }
+  layersArr.length = 0;
+
+  if (!state.pond) return null;
   const origin = state.pond.origin;
-  if (!origin || (!origin.lat && !origin.lng)) return;  // étang démo sans coords GPS
+  if (!origin || (!origin.lat && !origin.lng)) return null;
 
   const renderer = L.canvas({ padding: 0.5 });
 
-  // Polygone de l'étang
   const polyLL = state.pond.polygon.map(p => { const ll = metersToLatLng(p.x, p.y); return [ll.lat, ll.lng]; });
-  const poly = L.polygon(polyLL, {
-    color: '#0ea5e9', weight: 2, fillColor: '#0ea5e9', fillOpacity: 0.07
-  }).addTo(_leafletMap);
-  _leafletLayers.push(poly);
+  const poly = L.polygon(polyLL, { color: '#0ea5e9', weight: 2, fillColor: '#0ea5e9', fillOpacity: 0.07 }).addTo(lmap);
+  layersArr.push(poly);
 
-  // Cases (canvas renderer pour performance)
   const cs = params.cellSize;
   for (const cell of state.cells) {
     const sw = metersToLatLng(cell.cx - cs/2, cell.cy - cs/2);
@@ -2056,46 +2066,90 @@ function updateLeafletOverlay() {
     if (!sw || !ne) continue;
     const color   = cell.completed ? '#10b981' : cell.selected ? '#0ea5e9' : '#ffffff';
     const opacity = cell.completed ? 0.55 : cell.selected ? 0.2 : 0.04;
-    const rect = L.rectangle([[sw.lat, sw.lng],[ne.lat, ne.lng]], {
+    layersArr.push(L.rectangle([[sw.lat, sw.lng],[ne.lat, ne.lng]], {
       renderer, color, weight: 0.5, fillColor: color, fillOpacity: opacity, opacity: opacity * 0.5,
-    }).addTo(_leafletMap);
-    _leafletLayers.push(rect);
+    }).addTo(lmap));
   }
 
-  // Ancres — déplaçables
   const anchorLabels = ['AV-G','AV-D','AR-G','AR-D'];
   state.pond.anchors.forEach((anchor, i) => {
     const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
     const icon = L.divIcon({ html: `<div class="anchor-marker">${anchorLabels[i]}</div>`, className: '', iconSize: [48,24], iconAnchor: [24,12] });
-    const marker = L.marker([ll.lat, ll.lng], { icon, draggable: true }).addTo(_leafletMap);
+    const marker = L.marker([ll.lat, ll.lng], { icon, draggable: true }).addTo(lmap);
     marker.on('dragend', e => {
       const pos = e.target.getLatLng();
       const local = latLngToMeters(pos.lat, pos.lng, origin.lat, origin.lng);
       state.pond.anchors[i] = { ...state.pond.anchors[i], x: local.x, y: local.y };
       const idx = state.ponds.findIndex(p => p.id === state.pond.id);
       if (idx !== -1) state.ponds[idx] = state.pond;
-      savePonds();
-      renderAllPondCanvases();
+      savePonds(); renderAllPondCanvases();
       showToast(`Ancre ${anchorLabels[i]} repositionnée`, 'success');
     });
-    _leafletLayers.push(marker);
+    layersArr.push(marker);
   });
 
-  // Robot
   const robotLL = metersToLatLng(state.robot.x, state.robot.y);
+  let robotMarker = null;
   if (robotLL) {
     const icon = L.divIcon({ html: '<div class="robot-marker-leaf"></div>', className: '', iconSize: [16,16], iconAnchor: [8,8] });
-    _robotMarkerLeaf = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(_leafletMap);
-    _leafletLayers.push(_robotMarkerLeaf);
+    robotMarker = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(lmap);
+    layersArr.push(robotMarker);
   }
 
-  _leafletMap.fitBounds(poly.getBounds(), { padding: [40,40] });
+  lmap.fitBounds(poly.getBounds(), { padding: [40,40] });
+  return robotMarker;
 }
 
-function updateRobotMarker() {
-  if (!_robotMarkerLeaf || !_satMode) return;
+// ── Dashboard satellite view ─────────────────────────────────────────────────
+function initLeafletMapDash() {
+  if (_leafletMapDash) { setTimeout(() => _leafletMapDash.invalidateSize(), 50); return; }
+  const container = document.getElementById('leaflet-container-dash');
+  if (!container || typeof L === 'undefined') return;
+
+  _leafletMapDash = L.map('leaflet-container-dash', { zoomControl: false });
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution: '© Esri', maxZoom: 21, maxNativeZoom: 19 }).addTo(_leafletMapDash);
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    { attribution: '', maxZoom: 21, maxNativeZoom: 19, opacity: 0.65 }).addTo(_leafletMapDash);
+  L.control.zoom({ position: 'bottomright' }).addTo(_leafletMapDash);
+
+  _robotMarkerDash = _buildLeafletOverlay(_leafletMapDash, _leafletLayersDash);
+}
+
+function updateLeafletOverlayDash() {
+  if (!_leafletMapDash) return;
+  _robotMarkerDash = _buildLeafletOverlay(_leafletMapDash, _leafletLayersDash);
+}
+
+function updateRobotMarkerDash() {
+  if (!_robotMarkerDash || !_satModeDash) return;
   const ll = metersToLatLng(state.robot.x, state.robot.y);
-  if (ll) _robotMarkerLeaf.setLatLng([ll.lat, ll.lng]);
+  if (ll) _robotMarkerDash.setLatLng([ll.lat, ll.lng]);
+}
+
+function toggleSatelliteViewDash(on) {
+  _satModeDash = on;
+  document.getElementById('btnSatViewDash')?.classList.toggle('active', on);
+  document.getElementById('btnSchemaViewDash')?.classList.toggle('active', !on);
+
+  const canvas      = document.getElementById('dashPondCanvas');
+  const leafletDiv  = document.getElementById('leaflet-container-dash');
+  const schemaTools = document.getElementById('dashSchemaTools');
+  const schemaZoom  = document.getElementById('dashSchemaZoom');
+
+  if (on) {
+    if (canvas)      canvas.style.visibility = 'hidden';
+    if (leafletDiv)  leafletDiv.style.display = 'block';
+    if (schemaTools) schemaTools.style.display = 'none';
+    if (schemaZoom)  schemaZoom.style.display = 'none';
+    if (!_leafletMapDash) initLeafletMapDash();
+    else { updateLeafletOverlayDash(); setTimeout(() => _leafletMapDash.invalidateSize(), 100); }
+  } else {
+    if (leafletDiv)  leafletDiv.style.display = 'none';
+    if (canvas)      canvas.style.visibility = '';
+    if (schemaTools) schemaTools.style.display = '';
+    if (schemaZoom)  schemaZoom.style.display = '';
+  }
 }
 
 function toggleSatelliteView(on) {
