@@ -106,16 +106,16 @@ function subscribeSimState(pondId) {
       const sim = doc.data();
       if (!sim) return;
 
-      // Si les données sim sont antérieures au dernier RAZ, les ignorer entièrement
-      const pondResetAt = state.pond?.lastResetAt || 0;
-      if (pondResetAt > 0 && (sim.lastUpdate || 0) < pondResetAt) return;
-
       const offlineMs  = Date.now() - (sim.lastUpdate || Date.now());
       const offlineSec = (offlineMs / 1000) * (sim.speed || 1);
 
-      // Build completed set, extending with ghost cells if app was closed mid-sim
-      const completedSet = new Set(sim.completedCells || []);
-      if (sim.simRunning && offlineMs > 3000) {
+      // Si les données sim sont antérieures au dernier RAZ, ne pas restaurer la progression
+      const pondResetAt  = state.pond?.lastResetAt || 0;
+      const simPostReset = !pondResetAt || (sim.lastUpdate || 0) >= pondResetAt;
+
+      // Build completed set (ignoré si données antérieures au RAZ)
+      const completedSet = simPostReset ? new Set(sim.completedCells || []) : new Set();
+      if (simPostReset && sim.simRunning && offlineMs > 3000) {
         const doneBefore = sim.completedCells?.length || 0;
         if (doneBefore > 0 && sim.elapsedSec > 0) {
           const secPerCell = sim.elapsedSec / doneBefore;
