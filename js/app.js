@@ -169,6 +169,7 @@ function subscribeSimState(pondId) {
       renderAllPondCanvases();
       renderSectionCanvas();
       updateUI();
+      if (_satModeDash && _leafletMapDash) _rebuildCellLayersDash();
     }, e => console.warn('simState listener:', e.message));
 }
 
@@ -1627,6 +1628,7 @@ function setMode(mode) {
   ['btnModeView','btnModeViewMap'].forEach(id => { const el = document.getElementById(id); if(el) el.classList.toggle('active', mode==='view'); });
   const cur = mode === 'select' ? 'crosshair' : 'grab';
   ['dashPondCanvas','pondCanvas'].forEach(id => { const el = document.getElementById(id); if(el) el.style.cursor = cur; });
+  if (_satModeDash) _applyModeToLeafletDash();
 }
 
 // ============================================================
@@ -2008,7 +2010,8 @@ let _robotMarkerLeaf = null;
 let _satMode         = false;
 
 let _leafletMapDash      = null;
-let _leafletLayersDash   = [];
+let _baseLayersDash      = [];   // polygone, ancres, robot
+let _cellLayersDash      = [];   // cases uniquement (mise à jour rapide)
 let _robotMarkerDash     = null;
 let _satModeDash         = false;
 
@@ -2101,6 +2104,126 @@ function _buildLeafletOverlay(lmap, layersArr) {
 }
 
 // ── Dashboard satellite view ─────────────────────────────────────────────────
+
+// Redessine uniquement les cases (rapide après chaque clic de sélection)
+function _rebuildCellLayersDash() {
+  for (const l of _cellLayersDash) { try { _leafletMapDash.removeLayer(l); } catch {} }
+  _cellLayersDash.length = 0;
+  if (!state.pond) return;
+  const renderer = L.canvas({ padding: 0.5 });
+  const cs = params.cellSize;
+  for (const cell of state.cells) {
+    const sw = metersToLatLng(cell.cx - cs/2, cell.cy - cs/2);
+    const ne = metersToLatLng(cell.cx + cs/2, cell.cy + cs/2);
+    if (!sw || !ne) continue;
+    const color   = cell.completed ? '#10b981' : cell.selected ? '#0ea5e9' : '#ffffff';
+    const opacity = cell.completed ? 0.55 : cell.selected ? 0.2 : 0.04;
+    _cellLayersDash.push(L.rectangle([[sw.lat, sw.lng],[ne.lat, ne.lng]], {
+      renderer, color, weight: 0.5, fillColor: color, fillOpacity: opacity, opacity: opacity * 0.5,
+    }).addTo(_leafletMapDash));
+  }
+}
+
+// Redessine la base (polygone, ancres, robot) — appelé lors du chargement
+function _rebuildBaseLayersDash() {
+  for (const l of _baseLayersDash) { try { _leafletMapDash.removeLayer(l); } catch {} }
+  _baseLayersDash.length = 0;
+  _robotMarkerDash = null;
+  if (!state.pond) return;
+  const origin = state.pond.origin;
+  if (!origin || (!origin.lat && !origin.lng)) return;
+
+  const polyLL = state.pond.polygon.map(p => { const ll = metersToLatLng(p.x, p.y); return [ll.lat, ll.lng]; });
+  const poly = L.polygon(polyLL, { color: '#0ea5e9', weight: 2, fillColor: '#0ea5e9', fillOpacity: 0.07 }).addTo(_leafletMapDash);
+  _baseLayersDash.push(poly);
+
+  const anchorLabels = ['AV-G','AV-D','AR-G','AR-D'];
+  state.pond.anchors.forEach((anchor, i) => {
+    const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
+    const icon = L.divIcon({ html: `<div class="anchor-marker">${anchorLabels[i]}</div>`, className: '', iconSize: [48,24], iconAnchor: [24,12] });
+    const marker = L.marker([ll.lat, ll.lng], { icon, draggable: true }).addTo(_leafletMapDash);
+    marker.on('dragend', e => {
+      const pos = e.target.getLatLng();
+      const local = latLngToMeters(pos.lat, pos.lng, origin.lat, origin.lng);
+      state.pond.anchors[i] = { ...state.pond.anchors[i], x: local.x, y: local.y };
+      const idx = state.ponds.findIndex(p => p.id === state.pond.id);
+      if (idx !== -1) state.ponds[idx] = state.pond;
+      savePonds(); renderAllPondCanvases();
+      showToast(`Ancre ${anchorLabels[i]} repositionnée`, 'success');
+    });
+    _baseLayersDash.push(marker);
+  });
+
+  const robotLL = metersToLatLng(state.robot.x, state.robot.y);
+  if (robotLL) {
+    const icon = L.divIcon({ html: '<div class="robot-marker-leaf"></div>', className: '', iconSize: [16,16], iconAnchor: [8,8] });
+    _robotMarkerDash = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(_leafletMapDash);
+    _baseLayersDash.push(_robotMarkerDash);
+  }
+
+  _leafletMapDash.fitBounds(poly.getBounds(), { padding: [40,40] });
+}
+
+// Handlers de sélection : clic = case unique, drag = rectangle
+function _addSelectionHandlersDash() {
+  let _startLL = null, _startPt = null, _selRectLayer = null;
+
+  _leafletMapDash.on('mousedown', e => {
+    if (state.view.mode !== 'select' || e.originalEvent.button !== 0) return;
+    _startLL = e.latlng;
+    _startPt = e.containerPoint;
+    _leafletMapDash.dragging.disable();
+    e.originalEvent.preventDefault();
+  });
+
+  _leafletMapDash.on('mousemove', e => {
+    if (!_startLL) return;
+    if (_selRectLayer) _leafletMapDash.removeLayer(_selRectLayer);
+    _selRectLayer = L.rectangle([_startLL, e.latlng], {
+      color: '#0ea5e9', weight: 1.5, fillColor: '#0ea5e9', fillOpacity: 0.08,
+      dashArray: '5,4', interactive: false,
+    }).addTo(_leafletMapDash);
+  });
+
+  _leafletMapDash.on('mouseup', e => {
+    if (!_startLL) return;
+    if (_selRectLayer) { _leafletMapDash.removeLayer(_selRectLayer); _selRectLayer = null; }
+    _leafletMapDash.dragging.enable();
+
+    const origin = state.pond?.origin; if (!origin) { _startLL = null; return; }
+    const dx = Math.abs(e.containerPoint.x - _startPt.x);
+    const dy = Math.abs(e.containerPoint.y - _startPt.y);
+    const hcs = params.cellSize / 2;
+
+    if (dx > 8 || dy > 8) {
+      // Sélection rectangle
+      const swLL = { lat: Math.min(_startLL.lat, e.latlng.lat), lng: Math.min(_startLL.lng, e.latlng.lng) };
+      const neLL = { lat: Math.max(_startLL.lat, e.latlng.lat), lng: Math.max(_startLL.lng, e.latlng.lng) };
+      const sw = latLngToMeters(swLL.lat, swLL.lng, origin.lat, origin.lng);
+      const ne = latLngToMeters(neLL.lat, neLL.lng, origin.lat, origin.lng);
+      let changed = false;
+      for (const cell of state.cells) {
+        if (cell.cx + hcs > sw.x && cell.cx - hcs < ne.x && cell.cy + hcs > sw.y && cell.cy - hcs < ne.y) {
+          cell.selected = true; changed = true;
+        }
+      }
+      if (changed) { _rebuildCellLayersDash(); renderAllPondCanvases(); debouncedSaveSelection(); }
+    } else {
+      // Clic simple — bascule une case
+      const local = latLngToMeters(e.latlng.lat, e.latlng.lng, origin.lat, origin.lng);
+      const cell = state.cells.find(c => Math.abs(c.cx - local.x) <= hcs && Math.abs(c.cy - local.y) <= hcs);
+      if (cell) { cell.selected = !cell.selected; _rebuildCellLayersDash(); renderAllPondCanvases(); debouncedSaveSelection(); }
+    }
+    _startLL = null; _startPt = null;
+  });
+
+  // Annule si la souris quitte la carte
+  _leafletMapDash.getContainer().addEventListener('mouseleave', () => {
+    if (_selRectLayer) { _leafletMapDash.removeLayer(_selRectLayer); _selRectLayer = null; }
+    if (_startLL) { _leafletMapDash.dragging.enable(); _startLL = null; }
+  });
+}
+
 function initLeafletMapDash() {
   if (_leafletMapDash) { setTimeout(() => _leafletMapDash.invalidateSize(), 50); return; }
   const container = document.getElementById('leaflet-container-dash');
@@ -2113,12 +2236,15 @@ function initLeafletMapDash() {
     { attribution: '', maxZoom: 21, maxNativeZoom: 19, opacity: 0.65 }).addTo(_leafletMapDash);
   L.control.zoom({ position: 'bottomright' }).addTo(_leafletMapDash);
 
-  _robotMarkerDash = _buildLeafletOverlay(_leafletMapDash, _leafletLayersDash);
+  _rebuildBaseLayersDash();
+  _rebuildCellLayersDash();
+  _addSelectionHandlersDash();
 }
 
 function updateLeafletOverlayDash() {
   if (!_leafletMapDash) return;
-  _robotMarkerDash = _buildLeafletOverlay(_leafletMapDash, _leafletLayersDash);
+  _rebuildBaseLayersDash();
+  _rebuildCellLayersDash();
 }
 
 function updateRobotMarkerDash() {
@@ -2134,21 +2260,31 @@ function toggleSatelliteViewDash(on) {
 
   const canvas      = document.getElementById('dashPondCanvas');
   const leafletDiv  = document.getElementById('leaflet-container-dash');
-  const schemaTools = document.getElementById('dashSchemaTools');
   const schemaZoom  = document.getElementById('dashSchemaZoom');
 
   if (on) {
-    if (canvas)      canvas.style.visibility = 'hidden';
-    if (leafletDiv)  leafletDiv.style.display = 'block';
-    if (schemaTools) schemaTools.style.display = 'none';
-    if (schemaZoom)  schemaZoom.style.display = 'none';
+    if (canvas)     canvas.style.visibility = 'hidden';
+    if (leafletDiv) leafletDiv.style.display = 'block';
+    if (schemaZoom) schemaZoom.style.display = 'none';
+    // Applique le mode courant au curseur Leaflet
+    if (_leafletMapDash) _applyModeToLeafletDash();
     if (!_leafletMapDash) initLeafletMapDash();
     else { updateLeafletOverlayDash(); setTimeout(() => _leafletMapDash.invalidateSize(), 100); }
   } else {
-    if (leafletDiv)  leafletDiv.style.display = 'none';
-    if (canvas)      canvas.style.visibility = '';
-    if (schemaTools) schemaTools.style.display = '';
-    if (schemaZoom)  schemaZoom.style.display = '';
+    if (leafletDiv) leafletDiv.style.display = 'none';
+    if (canvas)     canvas.style.visibility = '';
+    if (schemaZoom) schemaZoom.style.display = '';
+  }
+}
+
+function _applyModeToLeafletDash() {
+  if (!_leafletMapDash) return;
+  if (state.view.mode === 'select') {
+    _leafletMapDash.dragging.disable();
+    _leafletMapDash.getContainer().style.cursor = 'crosshair';
+  } else {
+    _leafletMapDash.dragging.enable();
+    _leafletMapDash.getContainer().style.cursor = 'grab';
   }
 }
 
