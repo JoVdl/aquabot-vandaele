@@ -672,6 +672,32 @@ svg { display: block; }
   box-shadow: 0 0 14px rgba(14,165,233,0.8);
   animation: ledPulse 2s ease-in-out infinite;
 }
+.robot-marker-leaf-box {
+  width: 28px; height: 28px;
+  background: rgba(14,165,233,0.18);
+  border: 2px solid #0ea5e9;
+  box-shadow: 0 0 10px rgba(14,165,233,0.5);
+  position: relative;
+  animation: ledPulse 2s ease-in-out infinite;
+}
+.robot-pump-leaf {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 1.5px solid rgba(255,255,255,0.8);
+  box-shadow: 0 0 6px rgba(16,185,129,0.7);
+  transition: background 0.3s;
+}
+.cable-label-leaf {
+  background: rgba(0,0,0,0.65); color: #fbbf24;
+  font: bold 10px sans-serif; padding: 2px 5px;
+  border-radius: 3px; white-space: nowrap; pointer-events: none;
+}
+.gps-pos-leaf {
+  background: rgba(0,0,0,0.6); color: rgba(255,255,255,0.85);
+  font: 10px monospace; padding: 2px 6px;
+  border-radius: 3px; white-space: nowrap; pointer-events: none;
+}
 
 /* ============================================================
    CALIBRATION MODAL

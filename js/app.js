@@ -2145,6 +2145,8 @@ let _baseLayersDash      = [];   // polygone, ancres
 let _dynamicLayersDash   = [];   // robot + câbles (mis à jour à chaque tick)
 let _pathLayerDash       = [];   // parcours planifié
 let _cellLayersDash      = [];   // cases (mise à jour rapide)
+let _cellRectsDash       = [];   // références aux L.rectangle pour setStyle() rapide
+let _cellRendererDash    = null; // canvas renderer partagé
 let _robotMarkerDash     = null;
 let _satModeDash         = false;
 
@@ -2219,12 +2221,18 @@ function _buildLeafletOverlay(lmap, layersArr) {
   const anchorLabels = ['AV-G','AV-D','AR-G','AR-D'];
   const robotLL = metersToLatLng(state.robot.x, state.robot.y);
 
-  // Câbles ancre → robot
+  // Câbles + labels de longueur
   if (robotLL) {
-    state.pond.anchors.forEach((anchor) => {
+    const cables = getCableLengths();
+    state.pond.anchors.forEach((anchor, i) => {
       const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
       layersArr.push(L.polyline([[robotLL.lat, robotLL.lng],[ll.lat, ll.lng]], {
         color: 'rgba(251,191,36,0.65)', weight: 1.5, dashArray: '5,4'
+      }).addTo(lmap));
+      const midLL = L.latLng((robotLL.lat + ll.lat)/2, (robotLL.lng + ll.lng)/2);
+      layersArr.push(L.marker(midLL, {
+        icon: L.divIcon({ html: `<div class="cable-label-leaf">${cables[i].toFixed(1)}m</div>`, className: '', iconSize: [44,16], iconAnchor: [22,8] }),
+        zIndexOffset: 500,
       }).addTo(lmap));
     });
   }
@@ -2247,9 +2255,15 @@ function _buildLeafletOverlay(lmap, layersArr) {
 
   let robotMarker = null;
   if (robotLL) {
-    const icon = L.divIcon({ html: '<div class="robot-marker-leaf"></div>', className: '', iconSize: [16,16], iconAnchor: [8,8] });
+    const icon = L.divIcon({ html: _robotIconHtml(), className: '', iconSize: [28,28], iconAnchor: [14,14] });
     robotMarker = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(lmap);
     layersArr.push(robotMarker);
+    // GPS position
+    const gpsIcon = L.divIcon({
+      html: `<div class="gps-pos-leaf">${robotLL.lat.toFixed(6)}, ${robotLL.lng.toFixed(6)}</div>`,
+      className: '', iconSize: [160,18], iconAnchor: [80,-18],
+    });
+    layersArr.push(L.marker([robotLL.lat, robotLL.lng], { icon: gpsIcon, zIndexOffset: 900 }).addTo(lmap));
   }
 
   lmap.fitBounds(poly.getBounds(), { padding: [40,40] });
@@ -2258,22 +2272,37 @@ function _buildLeafletOverlay(lmap, layersArr) {
 
 // ── Dashboard satellite view ─────────────────────────────────────────────────
 
-// Redessine uniquement les cases (rapide après chaque clic de sélection)
+// Fonction utilitaire : couleur/opacité d'une case
+function _cellStyle(cell) {
+  if (cell.completed) return { color: '#10b981', fillColor: '#10b981', fillOpacity: 0.65, opacity: 0.4 };
+  if (cell.selected)  return { color: '#0ea5e9', fillColor: '#0ea5e9', fillOpacity: 0.25, opacity: 0.15 };
+  return { color: '#ffffff', fillColor: '#ffffff', fillOpacity: 0.05, opacity: 0.03 };
+}
+
+// Mise à jour légère : change seulement les styles (appelé à chaque tick)
+function _updateCellStylesDash() {
+  for (let i = 0; i < _cellRectsDash.length; i++) {
+    if (state.cells[i]) _cellRectsDash[i].setStyle(_cellStyle(state.cells[i]));
+  }
+}
+
+// Rebuild complet (chargement d'étang ou changement de sélection)
 function _rebuildCellLayersDash() {
   for (const l of _cellLayersDash) { try { _leafletMapDash.removeLayer(l); } catch {} }
   _cellLayersDash.length = 0;
+  _cellRectsDash.length  = 0;
   if (!state.pond) return;
-  const renderer = L.canvas({ padding: 0.5 });
+  if (!_cellRendererDash) _cellRendererDash = L.canvas({ padding: 0.5 });
   const cs = params.cellSize;
   for (const cell of state.cells) {
     const sw = metersToLatLng(cell.cx - cs/2, cell.cy - cs/2);
     const ne = metersToLatLng(cell.cx + cs/2, cell.cy + cs/2);
     if (!sw || !ne) continue;
-    const color   = cell.completed ? '#10b981' : cell.selected ? '#0ea5e9' : '#ffffff';
-    const opacity = cell.completed ? 0.55 : cell.selected ? 0.2 : 0.04;
-    _cellLayersDash.push(L.rectangle([[sw.lat, sw.lng],[ne.lat, ne.lng]], {
-      renderer, color, weight: 0.5, fillColor: color, fillOpacity: opacity, opacity: opacity * 0.5,
-    }).addTo(_leafletMapDash));
+    const rect = L.rectangle([[sw.lat, sw.lng],[ne.lat, ne.lng]], {
+      renderer: _cellRendererDash, weight: 0.5, ..._cellStyle(cell),
+    }).addTo(_leafletMapDash);
+    _cellLayersDash.push(rect);
+    _cellRectsDash.push(rect);
   }
 }
 
@@ -2310,6 +2339,15 @@ function _rebuildBaseLayersDash() {
   _leafletMapDash.fitBounds(poly.getBounds(), { padding: [40,40] });
 }
 
+// HTML du marqueur robot (carré bleu + cercle vert pump, comme le canvas)
+function _robotIconHtml() {
+  const pumping = state.robot.pumpState === 'pumping';
+  const pumpColor = pumping ? 'rgba(16,185,129,0.95)' : 'rgba(16,185,129,0.45)';
+  return `<div class="robot-marker-leaf-box">
+    <div class="robot-pump-leaf" style="background:${pumpColor}"></div>
+  </div>`;
+}
+
 // Redessine robot + câbles (mis à jour à chaque tick de simulation)
 function _rebuildDynamicLayersDash() {
   for (const l of _dynamicLayersDash) { try { _leafletMapDash.removeLayer(l); } catch {} }
@@ -2322,17 +2360,36 @@ function _rebuildDynamicLayersDash() {
   const robotLL = metersToLatLng(state.robot.x, state.robot.y);
   if (!robotLL) return;
 
-  // Câbles ancre → robot
-  state.pond.anchors.forEach(anchor => {
+  // Câbles + labels de longueur
+  const cables = getCableLengths();
+  state.pond.anchors.forEach((anchor, i) => {
     const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
     _dynamicLayersDash.push(L.polyline([[robotLL.lat, robotLL.lng],[ll.lat, ll.lng]], {
       color: 'rgba(251,191,36,0.65)', weight: 1.5, dashArray: '5,4'
     }).addTo(_leafletMapDash));
+    // Label longueur au milieu du câble
+    const midLL = L.latLng((robotLL.lat + ll.lat)/2, (robotLL.lng + ll.lng)/2);
+    const lbl = L.divIcon({
+      html: `<div class="cable-label-leaf">${cables[i].toFixed(1)}m</div>`,
+      className: '', iconSize: [44,16], iconAnchor: [22,8],
+    });
+    _dynamicLayersDash.push(L.marker(midLL, { icon: lbl, zIndexOffset: 500 }).addTo(_leafletMapDash));
   });
 
-  const icon = L.divIcon({ html: '<div class="robot-marker-leaf"></div>', className: '', iconSize: [16,16], iconAnchor: [8,8] });
+  // Robot
+  const icon = L.divIcon({ html: _robotIconHtml(), className: '', iconSize: [28,28], iconAnchor: [14,14] });
   _robotMarkerDash = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(_leafletMapDash);
   _dynamicLayersDash.push(_robotMarkerDash);
+
+  // Position GPS
+  const gpsLL = metersToLatLng(state.robot.x, state.robot.y);
+  if (gpsLL) {
+    const gpsIcon = L.divIcon({
+      html: `<div class="gps-pos-leaf">${gpsLL.lat.toFixed(6)}, ${gpsLL.lng.toFixed(6)}</div>`,
+      className: '', iconSize: [160,18], iconAnchor: [80,-18],
+    });
+    _dynamicLayersDash.push(L.marker([gpsLL.lat, gpsLL.lng], { icon: gpsIcon, zIndexOffset: 900 }).addTo(_leafletMapDash));
+  }
 }
 
 // Redessine le parcours planifié
@@ -2446,6 +2503,7 @@ function updateLeafletOverlayDash() {
 function updateRobotMarkerDash() {
   if (!_satModeDash || !_leafletMapDash) return;
   _rebuildDynamicLayersDash();
+  _updateCellStylesDash();
 }
 
 function toggleSatelliteViewDash(on) {
