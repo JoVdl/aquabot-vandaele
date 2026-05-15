@@ -9,7 +9,7 @@
 #define FIREBASE_PROJECT  "aquabot-vandaele"
 
 // ID de l'étang actif — récupérer depuis l'app (affiché dans l'URL ou les logs)
-#define POND_ID  "REMPLACER_PAR_ID_ETANG"
+#define POND_ID  "1778778441776"
 
 // ── NTRIP Centipède (corrections RTK via internet) ────────────────────
 #define NTRIP_HOST        "caster.centipede.fr"
