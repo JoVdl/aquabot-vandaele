@@ -169,7 +169,11 @@ function subscribeSimState(pondId) {
       renderAllPondCanvases();
       renderSectionCanvas();
       updateUI();
-      if (_satModeDash && _leafletMapDash) _rebuildCellLayersDash();
+      if (_satModeDash && _leafletMapDash) {
+        _rebuildCellLayersDash();
+        _rebuildPathLayerDash();
+        _rebuildDynamicLayersDash();
+      }
     }, e => console.warn('simState listener:', e.message));
 }
 
@@ -331,7 +335,7 @@ const state = {
     passNumber: 1,       // for double-pass modes
   },
   sim: { running: false, speed: 1, intervalId: null, lastTick: 0, sessionElapsedAtStart: 0, lastSimSave: 0 },
-  view: { offsetX: 0, offsetY: 0, scale: 10 },
+  view: { offsetX: 0, offsetY: 0, scale: 10, canvasH: 600 },
   drag: { active: false, mode: 'add' }, // for drag-select
 };
 
@@ -640,6 +644,8 @@ function resetWork(pondId) {
     }).catch(e => console.warn('resetWork sim:', e.message));
   }
 
+  if (_satModeDash && _leafletMapDash) { _rebuildPathLayerDash(); _rebuildDynamicLayersDash(); _rebuildCellLayersDash(); }
+  if (_satMode     && _leafletMap)     updateLeafletOverlay();
   updatePondsList();
   showToast('Progression remise à zéro', 'success');
 }
@@ -865,11 +871,20 @@ function syncParamsToDOM() {
 // ============================================================
 // COORDINATE TRANSFORMS
 // ============================================================
+// y est inversé pour que nord (y+) soit en haut de l'écran, comme sur le satellite
 function worldToScreen(wx, wy) {
-  return { x: (wx - state.view.offsetX) * state.view.scale, y: (wy - state.view.offsetY) * state.view.scale };
+  const H = state.view.canvasH;
+  return {
+    x: (wx - state.view.offsetX) * state.view.scale,
+    y: H - (wy - state.view.offsetY) * state.view.scale,
+  };
 }
 function screenToWorld(sx, sy) {
-  return { x: sx / state.view.scale + state.view.offsetX, y: sy / state.view.scale + state.view.offsetY };
+  const H = state.view.canvasH;
+  return {
+    x: sx / state.view.scale + state.view.offsetX,
+    y: (H - sy) / state.view.scale + state.view.offsetY,
+  };
 }
 
 function fitPond() {
@@ -923,6 +938,7 @@ function renderPondCanvas(canvas) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
   if (!W || !H) return;
+  state.view.canvasH = H;
   ctx.clearRect(0, 0, W, H);
   if (!state.pond) return;
 
@@ -930,10 +946,12 @@ function renderPondCanvas(canvas) {
   ctx.strokeStyle = 'rgba(255,255,255,0.03)'; ctx.lineWidth = 0.5;
   const wStart = screenToWorld(0,0), wEnd = screenToWorld(W,H);
   const gs = 10;
-  for (let gx = Math.floor(wStart.x/gs)*gs; gx < wEnd.x; gx += gs) {
+  const xMin = Math.min(wStart.x, wEnd.x), xMax = Math.max(wStart.x, wEnd.x);
+  const yMin = Math.min(wStart.y, wEnd.y), yMax = Math.max(wStart.y, wEnd.y);
+  for (let gx = Math.floor(xMin/gs)*gs; gx < xMax; gx += gs) {
     const s = worldToScreen(gx,0); ctx.beginPath(); ctx.moveTo(s.x,0); ctx.lineTo(s.x,H); ctx.stroke();
   }
-  for (let gy = Math.floor(wStart.y/gs)*gs; gy < wEnd.y; gy += gs) {
+  for (let gy = Math.floor(yMin/gs)*gs; gy < yMax; gy += gs) {
     const s = worldToScreen(0,gy); ctx.beginPath(); ctx.moveTo(0,s.y); ctx.lineTo(W,s.y); ctx.stroke();
   }
 
@@ -1028,6 +1046,15 @@ function renderPondCanvas(canvas) {
     ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
     ctx.fillText('ROBOT', rr.x, rr.y - hr - 4);
   }
+
+  // Boussole nord
+  const bx = W - 20, by = 32;
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('N', bx, by - 14);
+  ctx.beginPath(); ctx.moveTo(bx - 4, by - 9); ctx.lineTo(bx, by - 16); ctx.lineTo(bx + 4, by - 9); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(bx, by - 8); ctx.lineTo(bx, by + 6); ctx.stroke();
 }
 
 // ============================================================
@@ -1641,6 +1668,8 @@ function planRoute() {
   const wm = WORK_MODES[params.workMode];
   setText('dashCellsTotal', path.length);
   renderAllPondCanvases();
+  if (_satMode)     updateLeafletOverlay();
+  if (_satModeDash) _rebuildPathLayerDash();
   saveSimState();
   showToast(
     `Parcours planifié : ${base.length} cases × ${totalPasses} passe(s) × ${effectiveMiniCycles()} cycle(s) — Mode : ${wm?.label}`,
@@ -1736,7 +1765,7 @@ function initCanvasEvents() {
       }
       if (isPanning) {
         state.view.offsetX -= (e.clientX - lastPanX) / state.view.scale;
-        state.view.offsetY -= (e.clientY - lastPanY) / state.view.scale;
+        state.view.offsetY += (e.clientY - lastPanY) / state.view.scale;
         lastPanX = e.clientX; lastPanY = e.clientY;
         renderAllPondCanvases(); return;
       }
@@ -1796,7 +1825,7 @@ function initCanvasEvents() {
         if (state.view.mode === 'view') {
           // Single-finger pan
           state.view.offsetX -= (tx - lastTouchX) / state.view.scale;
-          state.view.offsetY -= (ty - lastTouchY) / state.view.scale;
+          state.view.offsetY += (ty - lastTouchY) / state.view.scale;
           renderAllPondCanvases();
         } else if (touchDragActive) {
           const rect = canvas.getBoundingClientRect();
@@ -2105,8 +2134,10 @@ let _robotMarkerLeaf = null;
 let _satMode         = false;
 
 let _leafletMapDash      = null;
-let _baseLayersDash      = [];   // polygone, ancres, robot
-let _cellLayersDash      = [];   // cases uniquement (mise à jour rapide)
+let _baseLayersDash      = [];   // polygone, ancres
+let _dynamicLayersDash   = [];   // robot + câbles (mis à jour à chaque tick)
+let _pathLayerDash       = [];   // parcours planifié
+let _cellLayersDash      = [];   // cases (mise à jour rapide)
 let _robotMarkerDash     = null;
 let _satModeDash         = false;
 
@@ -2165,7 +2196,32 @@ function _buildLeafletOverlay(lmap, layersArr) {
     }).addTo(lmap));
   }
 
+  // Parcours planifié
+  if (state.plannedPath.length > 1) {
+    const pathLL = [];
+    for (const idx of state.plannedPath) {
+      const cell = state.cells[idx]; if (!cell) continue;
+      const ll = metersToLatLng(cell.cx, cell.cy); if (!ll) continue;
+      pathLL.push([ll.lat, ll.lng]);
+    }
+    if (pathLL.length > 1) {
+      layersArr.push(L.polyline(pathLL, { color: 'rgba(251,191,36,0.6)', weight: 1.5, dashArray: '4,4' }).addTo(lmap));
+    }
+  }
+
   const anchorLabels = ['AV-G','AV-D','AR-G','AR-D'];
+  const robotLL = metersToLatLng(state.robot.x, state.robot.y);
+
+  // Câbles ancre → robot
+  if (robotLL) {
+    state.pond.anchors.forEach((anchor) => {
+      const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
+      layersArr.push(L.polyline([[robotLL.lat, robotLL.lng],[ll.lat, ll.lng]], {
+        color: 'rgba(251,191,36,0.65)', weight: 1.5, dashArray: '5,4'
+      }).addTo(lmap));
+    });
+  }
+
   state.pond.anchors.forEach((anchor, i) => {
     const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
     const icon = L.divIcon({ html: `<div class="anchor-marker">${anchorLabels[i]}</div>`, className: '', iconSize: [48,24], iconAnchor: [24,12] });
@@ -2182,7 +2238,6 @@ function _buildLeafletOverlay(lmap, layersArr) {
     layersArr.push(marker);
   });
 
-  const robotLL = metersToLatLng(state.robot.x, state.robot.y);
   let robotMarker = null;
   if (robotLL) {
     const icon = L.divIcon({ html: '<div class="robot-marker-leaf"></div>', className: '', iconSize: [16,16], iconAnchor: [8,8] });
@@ -2215,11 +2270,10 @@ function _rebuildCellLayersDash() {
   }
 }
 
-// Redessine la base (polygone, ancres, robot) — appelé lors du chargement
+// Redessine la base (polygone, ancres) — appelé lors du chargement de l'étang
 function _rebuildBaseLayersDash() {
   for (const l of _baseLayersDash) { try { _leafletMapDash.removeLayer(l); } catch {} }
   _baseLayersDash.length = 0;
-  _robotMarkerDash = null;
   if (!state.pond) return;
   const origin = state.pond.origin;
   if (!origin || (!origin.lat && !origin.lng)) return;
@@ -2240,19 +2294,57 @@ function _rebuildBaseLayersDash() {
       const idx = state.ponds.findIndex(p => p.id === state.pond.id);
       if (idx !== -1) state.ponds[idx] = state.pond;
       savePonds(); renderAllPondCanvases();
+      if (_satModeDash) _rebuildDynamicLayersDash();
       showToast(`Ancre ${anchorLabels[i]} repositionnée`, 'success');
     });
     _baseLayersDash.push(marker);
   });
 
-  const robotLL = metersToLatLng(state.robot.x, state.robot.y);
-  if (robotLL) {
-    const icon = L.divIcon({ html: '<div class="robot-marker-leaf"></div>', className: '', iconSize: [16,16], iconAnchor: [8,8] });
-    _robotMarkerDash = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(_leafletMapDash);
-    _baseLayersDash.push(_robotMarkerDash);
-  }
-
   _leafletMapDash.fitBounds(poly.getBounds(), { padding: [40,40] });
+}
+
+// Redessine robot + câbles (mis à jour à chaque tick de simulation)
+function _rebuildDynamicLayersDash() {
+  for (const l of _dynamicLayersDash) { try { _leafletMapDash.removeLayer(l); } catch {} }
+  _dynamicLayersDash.length = 0;
+  _robotMarkerDash = null;
+  if (!state.pond) return;
+  const origin = state.pond.origin;
+  if (!origin || (!origin.lat && !origin.lng)) return;
+
+  const robotLL = metersToLatLng(state.robot.x, state.robot.y);
+  if (!robotLL) return;
+
+  // Câbles ancre → robot
+  state.pond.anchors.forEach(anchor => {
+    const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
+    _dynamicLayersDash.push(L.polyline([[robotLL.lat, robotLL.lng],[ll.lat, ll.lng]], {
+      color: 'rgba(251,191,36,0.65)', weight: 1.5, dashArray: '5,4'
+    }).addTo(_leafletMapDash));
+  });
+
+  const icon = L.divIcon({ html: '<div class="robot-marker-leaf"></div>', className: '', iconSize: [16,16], iconAnchor: [8,8] });
+  _robotMarkerDash = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(_leafletMapDash);
+  _dynamicLayersDash.push(_robotMarkerDash);
+}
+
+// Redessine le parcours planifié
+function _rebuildPathLayerDash() {
+  for (const l of _pathLayerDash) { try { _leafletMapDash.removeLayer(l); } catch {} }
+  _pathLayerDash.length = 0;
+  if (!state.pond || state.plannedPath.length < 2) return;
+  const origin = state.pond.origin;
+  if (!origin || (!origin.lat && !origin.lng)) return;
+
+  const latlngs = [];
+  for (const idx of state.plannedPath) {
+    const cell = state.cells[idx]; if (!cell) continue;
+    const ll = metersToLatLng(cell.cx, cell.cy); if (!ll) continue;
+    latlngs.push([ll.lat, ll.lng]);
+  }
+  if (latlngs.length > 1) {
+    _pathLayerDash.push(L.polyline(latlngs, { color: 'rgba(251,191,36,0.6)', weight: 1.5, dashArray: '4,4' }).addTo(_leafletMapDash));
+  }
 }
 
 // Handlers de sélection : clic = case unique, drag = rectangle
@@ -2331,6 +2423,8 @@ function initLeafletMapDash() {
 
   _rebuildBaseLayersDash();
   _rebuildCellLayersDash();
+  _rebuildPathLayerDash();
+  _rebuildDynamicLayersDash();
   _addSelectionHandlersDash();
 }
 
@@ -2338,12 +2432,13 @@ function updateLeafletOverlayDash() {
   if (!_leafletMapDash) return;
   _rebuildBaseLayersDash();
   _rebuildCellLayersDash();
+  _rebuildPathLayerDash();
+  _rebuildDynamicLayersDash();
 }
 
 function updateRobotMarkerDash() {
-  if (!_robotMarkerDash || !_satModeDash) return;
-  const ll = metersToLatLng(state.robot.x, state.robot.y);
-  if (ll) _robotMarkerDash.setLatLng([ll.lat, ll.lng]);
+  if (!_satModeDash || !_leafletMapDash) return;
+  _rebuildDynamicLayersDash();
 }
 
 function toggleSatelliteViewDash(on) {
