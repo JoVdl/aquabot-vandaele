@@ -169,25 +169,26 @@ function subscribeSimState(pondId) {
 // Séparé de subscribeSimState pour éviter tout risque de re-entrance.
 function checkAndResumeSim(pondId) {
   if (!USE_CLOUD || !state.pond || state.robotMode === 'real') return;
+  console.log('[checkAndResumeSim] Lecture aquabot_sim pour', pondId);
   window.db.collection('aquabot_sim').doc(pondId).get().then(doc => {
+    console.log('[checkAndResumeSim] doc.exists=', doc.exists, 'sim.running=', state.sim.running);
     if (!doc.exists || state.sim.running) return;
     const sim = doc.data();
+    console.log('[checkAndResumeSim] simRunning=', sim?.simRunning, 'lastUpdate=', sim?.lastUpdate, 'plannedPath.length=', sim?.plannedPath?.length, 'completedCells.length=', sim?.completedCells?.length);
     if (!sim || !sim.simRunning) return;
 
-    // Ignorer si antérieur au dernier RAZ
     const pondResetAt = state.pond?.lastResetAt || 0;
-    if (pondResetAt > 0 && (sim.lastUpdate || 0) < pondResetAt) return;
-
-    // Ignorer si la dernière mise à jour date de plus de 2h
-    // (évite de reprendre une sim abandonnée d'une autre session)
     const offlineMs = Date.now() - (sim.lastUpdate || 0);
-    if (offlineMs > 7200000) return;
+    console.log('[checkAndResumeSim] pondResetAt=', pondResetAt, 'offlineMs=', offlineMs);
+    if (pondResetAt > 0 && (sim.lastUpdate || 0) < pondResetAt) { console.log('[checkAndResumeSim] SKIP: antérieur au RAZ'); return; }
+    if (offlineMs > 7200000) { console.log('[checkAndResumeSim] SKIP: trop ancien (>2h)'); return; }
 
     _resumeSimFromCloud(sim);
   }).catch(e => console.warn('checkAndResumeSim:', e.message));
 }
 
 function _resumeSimFromCloud(sim) {
+  console.log('[_resumeSimFromCloud] cells=', state.cells.length, 'running=', state.sim.running);
   if (!state.pond || !state.cells.length || state.sim.running) return;
 
   // Restaurer le parcours planifié
@@ -196,6 +197,7 @@ function _resumeSimFromCloud(sim) {
     console.warn('[resumeSim] Parcours introuvable, reprise impossible');
     return;
   }
+  console.log('[_resumeSimFromCloud] plannedPath.length=', state.plannedPath.length, 'currentCellIdx=', sim.currentCellIdx);
 
   // Restaurer les paramètres de simulation
   if (sim.speed)      state.sim.speed    = sim.speed;
@@ -1461,8 +1463,10 @@ function stopSimulation() {
   renderSectionCanvas();
 }
 
+let _tickLogCount = 0;
 function simulationTick() {
   if (!state.sim.running) return;
+  if (_tickLogCount < 5) { console.log('[tick]', ++_tickLogCount, 'cellIdx=', state.robot.currentCellIdx, '/', state.plannedPath.length, 'pumpState=', state.robot.pumpState); }
   const now   = performance.now();
   const rawDt = (now - state.sim.lastTick) / 1000;
   state.sim.lastTick = now;
