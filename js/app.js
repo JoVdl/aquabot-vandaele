@@ -117,11 +117,10 @@ function subscribeSimState(pondId) {
       const offlineMs  = Date.now() - (sim.lastUpdate || Date.now());
       const offlineSec = (offlineMs / 1000) * (sim.speed || 1);
 
-      // Règle simple : completedCells de aquabot_sim n'est utilisé QUE si la sim tourne
-      // En mode arrêté, la source de vérité est aquabot_ponds (chargé par loadPond)
+      let completedSet = new Set(sim.completedCells || []);
+
       if (sim.simRunning) {
-        const completedSet = new Set(sim.completedCells || []);
-        // Ghost cells si reprise hors-ligne
+        // Ghost cells : cases probablement traitées pendant la déconnexion
         if (offlineMs > 3000) {
           const doneBefore = sim.completedCells?.length || 0;
           if (doneBefore > 0 && sim.elapsedSec > 0) {
@@ -143,6 +142,16 @@ function subscribeSimState(pondId) {
         state.robot.completedCells = state.pond?.work?.completedCells?.length || 0;
       }
 
+      // Sync planned path and speed
+      if (sim.plannedPath?.length) state.plannedPath = sim.plannedPath;
+      if (sim.speed && sim.speed !== state.sim.speed) {
+        state.sim.speed = sim.speed;
+        const speedEl = document.getElementById('speedSlider');
+        if (speedEl) { speedEl.value = sim.speed; setText('speedValue', sim.speed + '×'); }
+      }
+      if (sim.workMode)   params.workMode   = sim.workMode;
+      if (sim.miniCycles) params.miniCycles = sim.miniCycles;
+
       state.robot.state          = sim.robotState  || 'stopped';
       state.robot.elapsedSec     = sim.elapsedSec + (sim.simRunning ? offlineSec : 0);
       state.robot.volumePumped   = sim.volumePumped || 0;
@@ -151,26 +160,56 @@ function subscribeSimState(pondId) {
       state.robot.pumpDepth      = sim.pumpDepth  ?? 0;
       state.robot.pumpState      = sim.simRunning ? (sim.pumpState || 'idle') : 'idle';
       state.robot.miniCyclesDone = sim.miniCyclesDone || 0;
-      state.robot.currentCellIdx = sim.currentCellIdx  || 0;
+      state.robot.currentCellIdx = sim.currentCellIdx || 0;
 
-      // Always sync planned path and speed
-      if (sim.plannedPath?.length) state.plannedPath = sim.plannedPath;
-      if (sim.speed && sim.speed !== state.sim.speed) {
-        state.sim.speed = sim.speed;
-        const speedEl = document.getElementById('speedSlider');
-        if (speedEl) { speedEl.value = sim.speed; setText('speedValue', sim.speed + '×'); }
+      // ── AUTO-REPRISE ───────────────────────────────────────────
+      // Si la sim était en cours dans Firestore (page actualisée ou
+      // brève déconnexion), relancer la boucle locale immédiatement.
+      if (sim.simRunning && state.robotMode !== 'real') {
+        // Avancer currentCellIdx au-delà des cases déjà complétées
+        // (y compris les ghost cells ajoutées ci-dessus)
+        const path = state.plannedPath;
+        while (
+          state.robot.currentCellIdx < path.length &&
+          completedSet.has(path[state.robot.currentCellIdx])
+        ) {
+          state.robot.currentCellIdx++;
+        }
+
+        if (state.robot.currentCellIdx >= path.length) {
+          // Tout est déjà terminé → conclure proprement
+          finishSimulation();
+        } else {
+          // Remettre à zéro le timer de pompe (on ne sait pas où on
+          // en était dans le cycle) — la pompe va simplement redémarrer
+          // le cycle de la case courante depuis le début
+          state.robot.pumpTimer  = 0;
+          state.robot.state      = 'moving';
+          state.sim.running      = true;
+          state.sim.lastSimSave  = Date.now();
+          state.sim.lastTick     = performance.now();
+          if (!state.sim.intervalId) {
+            state.sim.intervalId = setInterval(simulationTick, SIM_TICK_MS);
+          }
+          setLED('green', 'En travail');
+          const btnPause = document.getElementById('btnPause');
+          if (btnPause) btnPause.textContent = '⏸ Pause';
+          showToast('Simulation reprise automatiquement', 'success');
+        }
+        updateButtonStates();
+        renderAllPondCanvases();
+        renderSectionCanvas();
+        updateUI();
+        if (_satModeDash && _leafletMapDash) {
+          _rebuildCellLayersDash(); _rebuildPathLayerDash(); _rebuildDynamicLayersDash();
+        }
+        return; // Le tick local prend le relais, on n'a plus besoin du listener pour l'UI
       }
+      // ── FIN AUTO-REPRISE ───────────────────────────────────────
 
-      // Sync work mode params so effectiveMiniCycles() returns the right value
-      if (sim.workMode) params.workMode  = sim.workMode;
-      if (sim.miniCycles) params.miniCycles = sim.miniCycles;
-
-      // LED + boutons + texte pause
+      // LED + boutons (cas sim arrêtée ou en pause)
       const btnPause = document.getElementById('btnPause');
-      if (sim.simRunning) {
-        setLED('green', 'En travail');
-        if (btnPause) btnPause.textContent = '⏸ Pause';
-      } else if (sim.robotState === 'paused') {
+      if (sim.robotState === 'paused') {
         setLED('yellow', 'En pause');
         if (btnPause) btnPause.textContent = '▶ Reprendre';
       } else {
@@ -178,7 +217,6 @@ function subscribeSimState(pondId) {
         if (btnPause) btnPause.textContent = '⏸ Pause';
       }
       updateButtonStates();
-
       renderAllPondCanvases();
       renderSectionCanvas();
       updateUI();
