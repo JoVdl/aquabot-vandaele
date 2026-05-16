@@ -97,6 +97,8 @@ function debouncedSaveSelection() {
 }
 
 // Listen to real-time robot state for the active pond
+// Listener passif : synchronise l'affichage quand un AUTRE appareil pilote la sim.
+// Ne démarre JAMAIS la boucle locale — c'est le rôle de checkAndResumeSim().
 function subscribeSimState(pondId) {
   if (_simUnsubscribe) { _simUnsubscribe(); _simUnsubscribe = null; }
   if (!USE_CLOUD) return;
@@ -106,43 +108,21 @@ function subscribeSimState(pondId) {
       const sim = doc.data();
       if (!sim) return;
 
-      // Ignore sim data that predates the last reset — prevents stale Firestore cache
-      // from overwriting a freshly-reset pond on page reload
+      // Ignorer les données antérieures au dernier RAZ
       const pondResetAt = state.pond?.lastResetAt || 0;
-      if (pondResetAt > 0 && (sim.lastUpdate || 0) < pondResetAt) {
-        console.log('[simState] Données ignorées : antérieures au dernier RAZ');
-        return;
-      }
+      if (pondResetAt > 0 && (sim.lastUpdate || 0) < pondResetAt) return;
 
       const offlineMs  = Date.now() - (sim.lastUpdate || Date.now());
       const offlineSec = (offlineMs / 1000) * (sim.speed || 1);
 
-      let completedSet = new Set(sim.completedCells || []);
-
       if (sim.simRunning) {
-        // Ghost cells : cases probablement traitées pendant la déconnexion
-        if (offlineMs > 3000) {
-          const doneBefore = sim.completedCells?.length || 0;
-          if (doneBefore > 0 && sim.elapsedSec > 0) {
-            const secPerCell = sim.elapsedSec / doneBefore;
-            const ghostCells = Math.floor(offlineSec / secPerCell);
-            const path = sim.plannedPath || [];
-            for (let i = doneBefore; i < Math.min(doneBefore + ghostCells, path.length); i++) {
-              if (path[i] !== undefined) completedSet.add(path[i]);
-            }
-            const added = completedSet.size - doneBefore;
-            if (added > 0) showToast(`Reprise : ~${added} cases traitées hors ligne`, 'success');
-          }
-        }
+        const completedSet = new Set(sim.completedCells || []);
         state.cells.forEach((c, i) => { c.completed = completedSet.has(i); });
         state.robot.completedCells = completedSet.size;
-        if (offlineMs > 3000) saveWork();
       } else {
-        // Sim arrêtée : ne pas toucher aux cells — garder l'état de aquabot_ponds
         state.robot.completedCells = state.pond?.work?.completedCells?.length || 0;
       }
 
-      // Sync planned path and speed
       if (sim.plannedPath?.length) state.plannedPath = sim.plannedPath;
       if (sim.speed && sim.speed !== state.sim.speed) {
         state.sim.speed = sim.speed;
@@ -162,54 +142,11 @@ function subscribeSimState(pondId) {
       state.robot.miniCyclesDone = sim.miniCyclesDone || 0;
       state.robot.currentCellIdx = sim.currentCellIdx || 0;
 
-      // ── AUTO-REPRISE ───────────────────────────────────────────
-      // Si la sim était en cours dans Firestore (page actualisée ou
-      // brève déconnexion), relancer la boucle locale immédiatement.
-      if (sim.simRunning && state.robotMode !== 'real') {
-        // Avancer currentCellIdx au-delà des cases déjà complétées
-        // (y compris les ghost cells ajoutées ci-dessus)
-        const path = state.plannedPath;
-        while (
-          state.robot.currentCellIdx < path.length &&
-          completedSet.has(path[state.robot.currentCellIdx])
-        ) {
-          state.robot.currentCellIdx++;
-        }
-
-        if (state.robot.currentCellIdx >= path.length) {
-          // Tout est déjà terminé → conclure proprement
-          finishSimulation();
-        } else {
-          // Remettre à zéro le timer de pompe (on ne sait pas où on
-          // en était dans le cycle) — la pompe va simplement redémarrer
-          // le cycle de la case courante depuis le début
-          state.robot.pumpTimer  = 0;
-          state.robot.state      = 'moving';
-          state.sim.running      = true;
-          state.sim.lastSimSave  = Date.now();
-          state.sim.lastTick     = performance.now();
-          if (!state.sim.intervalId) {
-            state.sim.intervalId = setInterval(simulationTick, SIM_TICK_MS);
-          }
-          setLED('green', 'En travail');
-          const btnPause = document.getElementById('btnPause');
-          if (btnPause) btnPause.textContent = '⏸ Pause';
-          showToast('Simulation reprise automatiquement', 'success');
-        }
-        updateButtonStates();
-        renderAllPondCanvases();
-        renderSectionCanvas();
-        updateUI();
-        if (_satModeDash && _leafletMapDash) {
-          _rebuildCellLayersDash(); _rebuildPathLayerDash(); _rebuildDynamicLayersDash();
-        }
-        return; // Le tick local prend le relais, on n'a plus besoin du listener pour l'UI
-      }
-      // ── FIN AUTO-REPRISE ───────────────────────────────────────
-
-      // LED + boutons (cas sim arrêtée ou en pause)
       const btnPause = document.getElementById('btnPause');
-      if (sim.robotState === 'paused') {
+      if (sim.simRunning) {
+        setLED('green', 'En travail');
+        if (btnPause) btnPause.textContent = '⏸ Pause';
+      } else if (sim.robotState === 'paused') {
         setLED('yellow', 'En pause');
         if (btnPause) btnPause.textContent = '▶ Reprendre';
       } else {
@@ -226,6 +163,113 @@ function subscribeSimState(pondId) {
         _rebuildDynamicLayersDash();
       }
     }, e => console.warn('simState listener:', e.message));
+}
+
+// Lecture unique au chargement : reprend la simulation si elle était en cours.
+// Séparé de subscribeSimState pour éviter tout risque de re-entrance.
+function checkAndResumeSim(pondId) {
+  if (!USE_CLOUD || !state.pond || state.robotMode === 'real') return;
+  window.db.collection('aquabot_sim').doc(pondId).get().then(doc => {
+    if (!doc.exists || state.sim.running) return;
+    const sim = doc.data();
+    if (!sim || !sim.simRunning) return;
+
+    // Ignorer si antérieur au dernier RAZ
+    const pondResetAt = state.pond?.lastResetAt || 0;
+    if (pondResetAt > 0 && (sim.lastUpdate || 0) < pondResetAt) return;
+
+    // Ignorer si la dernière mise à jour date de plus de 2h
+    // (évite de reprendre une sim abandonnée d'une autre session)
+    const offlineMs = Date.now() - (sim.lastUpdate || 0);
+    if (offlineMs > 7200000) return;
+
+    _resumeSimFromCloud(sim);
+  }).catch(e => console.warn('checkAndResumeSim:', e.message));
+}
+
+function _resumeSimFromCloud(sim) {
+  if (!state.pond || !state.cells.length || state.sim.running) return;
+
+  // Restaurer le parcours planifié
+  if (sim.plannedPath?.length) state.plannedPath = sim.plannedPath;
+  if (!state.plannedPath.length) {
+    console.warn('[resumeSim] Parcours introuvable, reprise impossible');
+    return;
+  }
+
+  // Restaurer les paramètres de simulation
+  if (sim.speed)      state.sim.speed    = sim.speed;
+  if (sim.workMode)   params.workMode    = sim.workMode;
+  if (sim.miniCycles) params.miniCycles  = sim.miniCycles;
+
+  // Calculer les ghost cells (cases traitées hors-ligne)
+  const offlineMs  = Date.now() - (sim.lastUpdate || Date.now());
+  const offlineSec = (offlineMs / 1000) * (sim.speed || 1);
+  const completedSet = new Set(sim.completedCells || []);
+
+  if (offlineMs > 3000) {
+    const doneBefore = sim.completedCells?.length || 0;
+    if (doneBefore > 0 && sim.elapsedSec > 0) {
+      const secPerCell = sim.elapsedSec / doneBefore;
+      const ghostCells = Math.floor(offlineSec / secPerCell);
+      const path = sim.plannedPath || [];
+      for (let i = doneBefore; i < Math.min(doneBefore + ghostCells, path.length); i++) {
+        if (path[i] !== undefined) completedSet.add(path[i]);
+      }
+      const added = completedSet.size - doneBefore;
+      if (added > 0) showToast(`Reprise : ~${added} cases traitées hors ligne`, 'success');
+    }
+  }
+
+  // Appliquer les cases complétées
+  state.cells.forEach((c, i) => { c.completed = completedSet.has(i); });
+  state.robot.completedCells = completedSet.size;
+
+  // Restaurer la position et l'état du robot
+  state.robot.x              = sim.x ?? state.robot.x;
+  state.robot.y              = sim.y ?? state.robot.y;
+  state.robot.currentCellIdx = sim.currentCellIdx || 0;
+  state.robot.pumpState      = sim.pumpState      || 'idle';
+  state.robot.pumpDepth      = sim.pumpDepth      ?? 0;
+  state.robot.miniCyclesDone = sim.miniCyclesDone || 0;
+  state.robot.pumpTimer      = 0;   // timer inconnu après déconnexion, redémarre le cycle
+  state.robot.elapsedSec     = sim.elapsedSec + offlineSec;
+  state.robot.volumePumped   = sim.volumePumped || 0;
+
+  // Avancer currentCellIdx au-delà des cases déjà complétées (y compris ghost cells)
+  const path = state.plannedPath;
+  while (state.robot.currentCellIdx < path.length && completedSet.has(path[state.robot.currentCellIdx])) {
+    state.robot.currentCellIdx++;
+  }
+
+  if (state.robot.currentCellIdx >= path.length) {
+    finishSimulation();
+    return;
+  }
+
+  // Persister la progression (ghost cells incluses) avant de reprendre
+  if (offlineMs > 3000) saveWork();
+
+  // Relancer la boucle de simulation
+  state.robot.state     = 'moving';
+  state.sim.running     = true;
+  state.sim.lastSimSave = Date.now();
+  state.sim.lastTick    = performance.now();
+  if (!state.sim.intervalId) {
+    state.sim.intervalId = setInterval(simulationTick, SIM_TICK_MS);
+  }
+
+  setLED('green', 'En travail');
+  const btnPause = document.getElementById('btnPause');
+  if (btnPause) btnPause.textContent = '⏸ Pause';
+  updateButtonStates();
+  renderAllPondCanvases();
+  renderSectionCanvas();
+  updateUI();
+  if (_satModeDash && _leafletMapDash) {
+    _rebuildCellLayersDash(); _rebuildPathLayerDash(); _rebuildDynamicLayersDash();
+  }
+  showToast('Simulation reprise automatiquement', 'success');
 }
 
 // ============================================================
@@ -608,6 +652,7 @@ function loadPond(pond) {
   state.plannedPath = [];
 
   subscribeSimState(pond.id);
+  checkAndResumeSim(pond.id);
   if (state.robotMode === 'real') subscribeRobotTelemetry(pond.id);
   if (_satMode     && _leafletMap)     updateLeafletOverlay();
   if (_satModeDash && _leafletMapDash) updateLeafletOverlayDash();
