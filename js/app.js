@@ -26,7 +26,6 @@ function pondToFirestore(pond) {
     name:     pond.name,
     origin:   pond.origin   || null,
     polygon:  pond.polygon,
-    anchors:  pond.anchors,
     area:     pond.area     || 0,
     bbox:     pond.bbox,
     lastUsed:   pond.lastUsed   || Date.now(),
@@ -70,6 +69,8 @@ function saveSimState() {
     pumpState:      state.robot.pumpState,
     pumpDepth:      state.robot.pumpDepth,
     miniCyclesDone: state.robot.miniCyclesDone,
+    heading:        state.robot.heading,
+    motors:         state.robot.motors,
     elapsedSec:     state.robot.elapsedSec,
     volumePumped:   state.robot.volumePumped,
     plannedPath:    state.plannedPath,
@@ -141,6 +142,8 @@ function subscribeSimState(pondId) {
       state.robot.pumpState      = sim.simRunning ? (sim.pumpState || 'idle') : 'idle';
       state.robot.miniCyclesDone = sim.miniCyclesDone || 0;
       state.robot.currentCellIdx = sim.currentCellIdx || 0;
+      state.robot.heading        = sim.heading ?? state.robot.heading;
+      state.robot.motors         = sim.motors  ?? state.robot.motors;
 
       const btnPause = document.getElementById('btnPause');
       if (sim.simRunning) {
@@ -237,6 +240,8 @@ function _resumeSimFromCloud(sim) {
   state.robot.pumpTimer      = 0;   // timer inconnu après déconnexion, redémarre le cycle
   state.robot.elapsedSec     = sim.elapsedSec + offlineSec;
   state.robot.volumePumped   = sim.volumePumped || 0;
+  state.robot.heading        = sim.heading ?? state.robot.heading;
+  state.robot.motors         = sim.motors  ?? state.robot.motors;
 
   // Avancer currentCellIdx au-delà des cases déjà complétées (y compris ghost cells)
   const path = state.plannedPath;
@@ -311,7 +316,6 @@ function sendRobotCommand(cmd) {
       const c = state.cells[idx];
       return { x: c.cx, y: c.cy };
     });
-    doc.anchors = state.pond.anchors.map(a => ({ x: a.x, y: a.y }));
     doc.pumpTime         = params.pumpTime;
     doc.waterDepth       = params.waterDepth;
     doc.mudDepth         = params.mudDepth;
@@ -342,17 +346,8 @@ function subscribeRobotTelemetry(pondId) {
       state.robot.pumpDepth = t.pumpDepth  ?? 0;
       state.robot.miniCyclesDone = t.miniCyclesDone ?? 0;
       state.robot.currentCellIdx = t.currentCellIdx ?? 0;
-
-      // Longueurs câbles réelles
-      for (let i = 0; i < 4; i++) {
-        const v = t[`cable${i}`];
-        if (v !== undefined) {
-          const s = v.toFixed(1);
-          setText(`rtCable${i}`,   s);
-          setText(`cableLen${i}`,  s);
-          setText(`cableLen${i}map`, s);
-        }
-      }
+      state.robot.heading   = t.heading ?? state.robot.heading;
+      state.robot.motors    = [t.motor0, t.motor1, t.motor2, t.motor3].map(v => v ?? 0);
 
       // Statut GPS
       setText('gpsFixLabel',   t.fixLabel  || '—');
@@ -407,6 +402,9 @@ const CELL_SIZE   = 0.4;
 const SIM_TICK_MS = 50;
 const CANVAS_IDS  = ['dashPondCanvas', 'pondCanvas'];
 
+// 4 propulseurs en configuration X (avant-gauche, avant-droit, arrière-gauche, arrière-droit)
+const MOTOR_LABELS = ['AV-G', 'AV-D', 'AR-G', 'AR-D'];
+
 // ============================================================
 // STATE
 // ============================================================
@@ -431,6 +429,8 @@ const state = {
     pumpTimer: 0,
     miniCyclesDone: 0,   // mini-cycles completed at current cell
     passNumber: 1,       // for double-pass modes
+    heading: 0,          // cap boussole, degrés (0 = Nord)
+    motors: [0, 0, 0, 0],// poussée des 4 propulseurs, % (-100..100)
   },
   sim: { running: false, speed: 1, intervalId: null, lastTick: 0, sessionElapsedAtStart: 0, lastSimSave: 0 },
   view: { offsetX: 0, offsetY: 0, scale: 10, canvasH: 600 },
@@ -502,6 +502,27 @@ function mudVolumeForCells(n)   { return n * params.cellSize * params.cellSize *
 // UTILS
 // ============================================================
 function dist(ax, ay, bx, by) { return Math.sqrt((bx-ax)**2 + (by-ay)**2); }
+
+// ============================================================
+// PROPULSION — répartition de poussée sur les 4 propulseurs en X
+// ============================================================
+// vx,vy : vecteur de déplacement souhaité (repère monde) ; headingDeg : cap robot (0=Nord)
+// Retourne [AV-G, AV-D, AR-G, AR-D] en % (-100..100).
+function computeThrustAllocation(vx, vy, headingDeg) {
+  if (!vx && !vy) return [0, 0, 0, 0];
+  const mag = Math.min(1, Math.hypot(vx, vy));
+  const travelBearing = Math.atan2(vx, vy);
+  const rel = travelBearing - (headingDeg || 0) * Math.PI / 180;
+  const surge = Math.cos(rel) * mag; // avant/arrière (repère robot)
+  const sway  = Math.sin(rel) * mag; // gauche/droite (repère robot)
+  const k = Math.SQRT1_2;
+  return [
+    (surge - sway) * k, // AV-G
+    (surge + sway) * k, // AV-D
+    (surge + sway) * k, // AR-G
+    (surge - sway) * k, // AR-D
+  ].map(v => Math.round(v * 100));
+}
 
 function latLngToMeters(lat, lng, lat0, lng0) {
   return {
@@ -623,15 +644,9 @@ function createPondFromKML({ name, polygon, origin }) {
     minX = Math.min(minX,p.x); maxX = Math.max(maxX,p.x);
     minY = Math.min(minY,p.y); maxY = Math.max(maxY,p.y);
   }
-  const anchors = [
-    { x: minX, y: maxY, label: 'AV-G' },
-    { x: maxX, y: maxY, label: 'AV-D' },
-    { x: minX, y: minY, label: 'AR-G' },
-    { x: maxX, y: minY, label: 'AR-D' },
-  ];
   const cells = generateGrid(polygon);
   return {
-    id: Date.now().toString(), name, origin, polygon, anchors, area, cells,
+    id: Date.now().toString(), name, origin, polygon, area, cells,
     work: { completedCells: [], volumePumped: 0, elapsedSec: 0 },
     selections: [],
     lastUsed: Date.now(),
@@ -671,8 +686,8 @@ function loadPond(pond) {
   setText('dashPondBadge', pName);
 
   // Show pond-specific elements
-  document.getElementById('cablePanel').style.display     = 'block';
-  document.getElementById('cablePanelMap').style.display  = 'block';
+  document.getElementById('propulsionPanel').style.display    = 'flex';
+  document.getElementById('propulsionPanelMap').style.display = 'flex';
   document.getElementById('modeToggle').style.display     = 'flex';
   document.getElementById('dashCanvasEmptyState').style.display = 'none';
   document.getElementById('canvasEmptyState').style.display    = 'none';
@@ -1118,29 +1133,6 @@ function renderPondCanvas(canvas) {
     ctx.stroke(); ctx.setLineDash([]);
   }
 
-  // Cables
-  const cables = getCableLengths();
-  for (let i = 0; i < 4; i++) {
-    const a = state.pond.anchors[i]; if (!a) continue;
-    const as = worldToScreen(a.x, a.y);
-    const rs = worldToScreen(state.robot.x, state.robot.y);
-    ctx.strokeStyle = 'rgba(251,191,36,0.65)'; ctx.lineWidth = 1.5;
-    ctx.setLineDash([5,4]);
-    ctx.beginPath(); ctx.moveTo(rs.x,rs.y); ctx.lineTo(as.x,as.y); ctx.stroke();
-    ctx.setLineDash([]);
-    // Anchor
-    ctx.fillStyle = '#f59e0b'; ctx.beginPath(); ctx.arc(as.x,as.y,6,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
-    // Length label
-    if (state.view.scale > 3) {
-      const mx = (rs.x+as.x)/2, my = (rs.y+as.y)/2;
-      ctx.font = 'bold 10px sans-serif';
-      ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(mx-16,my-8,32,13);
-      ctx.fillStyle = '#fbbf24'; ctx.textAlign = 'center';
-      ctx.fillText(cables[i].toFixed(1)+'m', mx, my+3);
-    }
-  }
-
   // Robot
   const rr = worldToScreen(state.robot.x, state.robot.y);
   const hr  = (ROBOT_SIZE/2) * state.view.scale;
@@ -1154,6 +1146,22 @@ function renderPondCanvas(canvas) {
   ctx.fillStyle   = pumping ? 'rgba(16,185,129,0.9)' : 'rgba(16,185,129,0.38)';
   ctx.strokeStyle = '#10b981'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(rr.x,rr.y,pr,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  // Propulseurs — 4 coins, intensité = poussée courante
+  const motors = state.robot.motors || [0,0,0,0];
+  const corners = [{dx:-hr,dy:-hr}, {dx:hr,dy:-hr}, {dx:-hr,dy:hr}, {dx:hr,dy:hr}]; // AV-G, AV-D, AR-G, AR-D
+  corners.forEach((c, i) => {
+    const m = motors[i] || 0;
+    const r = Math.max(2, Math.min(6, Math.abs(m) / 100 * 6 + 2));
+    ctx.fillStyle   = m >= 0 ? 'rgba(14,165,233,0.9)' : 'rgba(245,158,11,0.9)';
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(rr.x + c.dx, rr.y + c.dy, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  });
+  // Cap — flèche depuis le centre
+  const hRad = (state.robot.heading || 0) * Math.PI / 180;
+  const ax = rr.x + Math.sin(hRad) * hr * 1.4, ay = rr.y - Math.cos(hRad) * hr * 1.4;
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(rr.x, rr.y); ctx.lineTo(ax, ay); ctx.stroke();
+  ctx.beginPath(); ctx.arc(ax, ay, 3, 0, Math.PI*2); ctx.fillStyle = '#fff'; ctx.fill();
   // Label
   if (state.view.scale > 6) {
     ctx.font = `bold ${Math.max(9,hr*0.5)}px sans-serif`;
@@ -1366,20 +1374,30 @@ function renderSectionCanvas() {
 }
 
 // ============================================================
-// CABLES
+// PROPULSION — affichage moteurs + cap
 // ============================================================
-function getCableLengths() {
-  if (!state.pond) return [0,0,0,0];
-  return state.pond.anchors.map(a => parseFloat(dist(state.robot.x, state.robot.y, a.x, a.y).toFixed(2)));
-}
-
-function updateCableDisplay() {
-  const cables = getCableLengths();
+function updateMotorDisplay() {
+  const motors = state.robot.motors || [0,0,0,0];
   for (let i = 0; i < 4; i++) {
-    const v = cables[i].toFixed(1);
-    setText(`rtCable${i}`, v);
-    setText(`cableLen${i}`, v);
-    setText(`cableLen${i}map`, v);
+    const m = motors[i] || 0;
+    const pct = Math.round(Math.abs(m));
+    for (const suffix of ['', 'map']) {
+      const bar = document.getElementById(`motorBar${i}${suffix}`);
+      if (bar) {
+        bar.style.width = (pct / 2) + '%';
+        bar.style.left  = m >= 0 ? '50%' : (50 - pct / 2) + '%';
+        bar.classList.toggle('reverse', m < 0);
+      }
+      setText(`motorVal${i}${suffix}`, `${Math.round(m)}%`);
+    }
+  }
+  const heading = Math.round(((state.robot.heading || 0) % 360 + 360) % 360);
+  setText('rtHeading', heading);
+  setText('headingVal', heading + '°');
+  setText('headingValMap', heading + '°');
+  for (const id of ['headingNeedle', 'headingNeedleMap']) {
+    const el = document.getElementById(id);
+    if (el) el.style.transform = `translate(-50%, -100%) rotate(${heading}deg)`;
   }
 }
 
@@ -1452,6 +1470,7 @@ function stopSimulation() {
   state.robot.pumpDepth  = 0;
   state.robot.pumpState  = 'idle';
   state.robot.currentCellIdx = 0;
+  state.robot.motors = [0, 0, 0, 0];
   state.plannedPath = [];
   setLED('blue', 'Simulation');
   updateButtonStates();
@@ -1499,10 +1518,17 @@ function simulationTick() {
         robot.pumpDepth      = 0;
         robot.miniCyclesDone = 0;
         robot.pumpTimer      = 0;
+        robot.motors          = [0, 0, 0, 0];
       } else {
         const step = params.robotSpeed * dt;
-        robot.x += (dx / d) * Math.min(step, d);
-        robot.y += (dy / d) * Math.min(step, d);
+        const ux = dx / d, uy = dy / d;
+        robot.x += ux * Math.min(step, d);
+        robot.y += uy * Math.min(step, d);
+        // Le cap ne tourne que lors des trajets principalement horizontaux (le long d'une rangée) ;
+        // les changements de rangée (déplacement surtout vertical) sont gérés en translation latérale
+        // pure, sans pivoter — c'est tout l'intérêt des 4 propulseurs holonomes.
+        if (Math.abs(dx) >= Math.abs(dy)) robot.heading = Math.atan2(ux, uy) * 180 / Math.PI;
+        robot.motors = computeThrustAllocation(ux, uy, robot.heading);
       }
       break;
     }
@@ -1582,6 +1608,7 @@ function finishSimulation() {
   state.robot.state     = 'stopped';
   state.robot.pumpDepth = 0;
   state.robot.pumpState = 'idle';
+  state.robot.motors    = [0, 0, 0, 0];
   setLED('blue', 'Terminé');
   updateButtonStates();
   updateStatus('Travail terminé !', 'Toutes les cases traitées');
@@ -1700,7 +1727,7 @@ function updateUI() {
   const pondBarEl = document.getElementById('pondTotalBar');
   if (pondBarEl) pondBarEl.style.width = pondPct + '%';
 
-  updateCableDisplay();
+  updateMotorDisplay();
 
   // Derive and set status text — works on both active device and observers
   const nc = effectiveMiniCycles();
@@ -1836,22 +1863,13 @@ function initCanvasEvents() {
     }, { passive: false });
 
     // Mouse events
-    let isPanning = false, lastPanX = 0, lastPanY = 0, anchorDragging = -1;
+    let isPanning = false, lastPanX = 0, lastPanY = 0;
 
     canvas.addEventListener('mousedown', e => {
       if (!state.pond) return;
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left, my = e.clientY - rect.top;
       const world = screenToWorld(mx, my);
-
-      // Check anchor drag
-      anchorDragging = -1;
-      for (let i = 0; i < state.pond.anchors.length; i++) {
-        const a  = state.pond.anchors[i];
-        const as = worldToScreen(a.x, a.y);
-        if (dist(mx, my, as.x, as.y) < 12) { anchorDragging = i; break; }
-      }
-      if (anchorDragging >= 0) return;
 
       if (state.view.mode === 'view' || e.button === 1) {
         isPanning = true; lastPanX = e.clientX; lastPanY = e.clientY;
@@ -1873,12 +1891,6 @@ function initCanvasEvents() {
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left, my = e.clientY - rect.top;
 
-      if (anchorDragging >= 0) {
-        const w = screenToWorld(mx, my);
-        state.pond.anchors[anchorDragging].x = w.x;
-        state.pond.anchors[anchorDragging].y = w.y;
-        updateCableDisplay(); renderAllPondCanvases(); return;
-      }
       if (isPanning) {
         state.view.offsetX -= (e.clientX - lastPanX) / state.view.scale;
         state.view.offsetY += (e.clientY - lastPanY) / state.view.scale;
@@ -1898,7 +1910,7 @@ function initCanvasEvents() {
 
     canvas.addEventListener('mouseup', () => {
       if (state.drag.active && state.view.mode === 'select') debouncedSaveSelection();
-      isPanning = false; anchorDragging = -1; state.drag.active = false;
+      isPanning = false; state.drag.active = false;
       canvas.style.cursor = state.view.mode === 'view' ? 'grab' : 'crosshair';
     });
 
@@ -2016,7 +2028,6 @@ function updatePondsList() {
         </div>
         <div class="pond-actions">
           <button class="btn btn-primary btn-sm"    onclick="event.stopPropagation();loadPondById('${p.id}')">Charger</button>
-          ${hasGPS ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();loadPondById('${p.id}');setActiveTab('map');toggleSatelliteView(true);startCalibration()">⚓ Calibrer</button>` : ''}
           <button class="btn btn-secondary btn-sm"  onclick="event.stopPropagation();resetWork('${p.id}')">↺ RAZ</button>
           <button class="btn btn-danger btn-sm"     onclick="event.stopPropagation();deletePond('${p.id}')">✕</button>
         </div>
@@ -2074,8 +2085,8 @@ function deletePond(id) {
     state.pond = null; state.cells = []; state.plannedPath = [];
     document.getElementById('dashCanvasEmptyState').style.display = 'flex';
     document.getElementById('canvasEmptyState').style.display     = 'flex';
-    document.getElementById('cablePanel').style.display    = 'none';
-    document.getElementById('cablePanelMap').style.display = 'none';
+    document.getElementById('propulsionPanel').style.display    = 'none';
+    document.getElementById('propulsionPanelMap').style.display = 'none';
     document.getElementById('modeToggle').style.display    = 'none';
     setText('currentPondName', 'Aucun étang sélectionné');
     setText('dashPondBadge', 'Aucun étang');
@@ -2132,7 +2143,6 @@ function loadDemoPond() {
   const pond = {
     id:'demo', name:'Étang démo (30×21m)',
     origin:{lat:0,lng:0}, polygon,
-    anchors:[{x:minX,y:maxY,label:'AV-G'},{x:maxX,y:maxY,label:'AV-D'},{x:minX,y:minY,label:'AR-G'},{x:maxX,y:minY,label:'AR-D'}],
     area: polygonArea(polygon),
     cells: generateGrid(polygon),
     work:{completedCells:[],volumePumped:0,elapsedSec:0},
@@ -2250,8 +2260,8 @@ let _robotMarkerLeaf = null;
 let _satMode         = false;
 
 let _leafletMapDash      = null;
-let _baseLayersDash      = [];   // polygone, ancres
-let _dynamicLayersDash   = [];   // robot + câbles (mis à jour à chaque tick)
+let _baseLayersDash      = [];   // polygone de l'étang
+let _dynamicLayersDash   = [];   // robot (mis à jour à chaque tick)
 let _pathLayerDash       = [];   // parcours planifié
 let _cellLayersDash      = [];   // cases (mise à jour rapide)
 let _cellRectsDash       = [];   // références aux L.rectangle pour setStyle() rapide
@@ -2327,40 +2337,7 @@ function _buildLeafletOverlay(lmap, layersArr) {
     }
   }
 
-  const anchorLabels = ['AV-G','AV-D','AR-G','AR-D'];
   const robotLL = metersToLatLng(state.robot.x, state.robot.y);
-
-  // Câbles + labels de longueur
-  if (robotLL) {
-    const cables = getCableLengths();
-    state.pond.anchors.forEach((anchor, i) => {
-      const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
-      layersArr.push(L.polyline([[robotLL.lat, robotLL.lng],[ll.lat, ll.lng]], {
-        color: 'rgba(251,191,36,0.65)', weight: 1.5, dashArray: '5,4'
-      }).addTo(lmap));
-      const midLL = L.latLng((robotLL.lat + ll.lat)/2, (robotLL.lng + ll.lng)/2);
-      layersArr.push(L.marker(midLL, {
-        icon: L.divIcon({ html: `<div class="cable-label-leaf">${cables[i].toFixed(1)}m</div>`, className: '', iconSize: [44,16], iconAnchor: [22,8] }),
-        zIndexOffset: 500,
-      }).addTo(lmap));
-    });
-  }
-
-  state.pond.anchors.forEach((anchor, i) => {
-    const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
-    const icon = L.divIcon({ html: `<div class="anchor-marker">${anchorLabels[i]}</div>`, className: '', iconSize: [48,24], iconAnchor: [24,12] });
-    const marker = L.marker([ll.lat, ll.lng], { icon, draggable: true }).addTo(lmap);
-    marker.on('dragend', e => {
-      const pos = e.target.getLatLng();
-      const local = latLngToMeters(pos.lat, pos.lng, origin.lat, origin.lng);
-      state.pond.anchors[i] = { ...state.pond.anchors[i], x: local.x, y: local.y };
-      const idx = state.ponds.findIndex(p => p.id === state.pond.id);
-      if (idx !== -1) state.ponds[idx] = state.pond;
-      savePonds(); renderAllPondCanvases();
-      showToast(`Ancre ${anchorLabels[i]} repositionnée`, 'success');
-    });
-    layersArr.push(marker);
-  });
 
   let robotMarker = null;
   if (robotLL) {
@@ -2415,7 +2392,7 @@ function _rebuildCellLayersDash() {
   }
 }
 
-// Redessine la base (polygone, ancres) — appelé lors du chargement de l'étang
+// Redessine la base (polygone) — appelé lors du chargement de l'étang
 function _rebuildBaseLayersDash() {
   for (const l of _baseLayersDash) { try { _leafletMapDash.removeLayer(l); } catch {} }
   _baseLayersDash.length = 0;
@@ -2427,37 +2404,21 @@ function _rebuildBaseLayersDash() {
   const poly = L.polygon(polyLL, { color: '#0ea5e9', weight: 2, fillColor: '#0ea5e9', fillOpacity: 0.07 }).addTo(_leafletMapDash);
   _baseLayersDash.push(poly);
 
-  const anchorLabels = ['AV-G','AV-D','AR-G','AR-D'];
-  state.pond.anchors.forEach((anchor, i) => {
-    const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
-    const icon = L.divIcon({ html: `<div class="anchor-marker">${anchorLabels[i]}</div>`, className: '', iconSize: [48,24], iconAnchor: [24,12] });
-    const marker = L.marker([ll.lat, ll.lng], { icon, draggable: true }).addTo(_leafletMapDash);
-    marker.on('dragend', e => {
-      const pos = e.target.getLatLng();
-      const local = latLngToMeters(pos.lat, pos.lng, origin.lat, origin.lng);
-      state.pond.anchors[i] = { ...state.pond.anchors[i], x: local.x, y: local.y };
-      const idx = state.ponds.findIndex(p => p.id === state.pond.id);
-      if (idx !== -1) state.ponds[idx] = state.pond;
-      savePonds(); renderAllPondCanvases();
-      if (_satModeDash) _rebuildDynamicLayersDash();
-      showToast(`Ancre ${anchorLabels[i]} repositionnée`, 'success');
-    });
-    _baseLayersDash.push(marker);
-  });
-
   _leafletMapDash.fitBounds(poly.getBounds(), { padding: [40,40] });
 }
 
-// HTML du marqueur robot (carré bleu + cercle vert pump, comme le canvas)
+// HTML du marqueur robot (carré bleu + cercle vert pump + flèche de cap, comme le canvas)
 function _robotIconHtml() {
   const pumping = state.robot.pumpState === 'pumping';
   const pumpColor = pumping ? 'rgba(16,185,129,0.95)' : 'rgba(16,185,129,0.45)';
+  const heading = state.robot.heading || 0;
   return `<div class="robot-marker-leaf-box">
     <div class="robot-pump-leaf" style="background:${pumpColor}"></div>
+    <div class="heading-arrow-leaf" style="--heading:${heading}deg"></div>
   </div>`;
 }
 
-// Redessine robot + câbles (mis à jour à chaque tick de simulation)
+// Redessine le robot (mis à jour à chaque tick de simulation)
 function _rebuildDynamicLayersDash() {
   for (const l of _dynamicLayersDash) { try { _leafletMapDash.removeLayer(l); } catch {} }
   _dynamicLayersDash.length = 0;
@@ -2468,22 +2429,6 @@ function _rebuildDynamicLayersDash() {
 
   const robotLL = metersToLatLng(state.robot.x, state.robot.y);
   if (!robotLL) return;
-
-  // Câbles + labels de longueur
-  const cables = getCableLengths();
-  state.pond.anchors.forEach((anchor, i) => {
-    const ll = metersToLatLng(anchor.x, anchor.y); if (!ll) return;
-    _dynamicLayersDash.push(L.polyline([[robotLL.lat, robotLL.lng],[ll.lat, ll.lng]], {
-      color: 'rgba(251,191,36,0.65)', weight: 1.5, dashArray: '5,4'
-    }).addTo(_leafletMapDash));
-    // Label longueur au milieu du câble
-    const midLL = L.latLng((robotLL.lat + ll.lat)/2, (robotLL.lng + ll.lng)/2);
-    const lbl = L.divIcon({
-      html: `<div class="cable-label-leaf">${cables[i].toFixed(1)}m</div>`,
-      className: '', iconSize: [44,16], iconAnchor: [22,8],
-    });
-    _dynamicLayersDash.push(L.marker(midLL, { icon: lbl, zIndexOffset: 500 }).addTo(_leafletMapDash));
-  });
 
   // Robot
   const icon = L.divIcon({ html: _robotIconHtml(), className: '', iconSize: [28,28], iconAnchor: [14,14] });
@@ -2663,7 +2608,6 @@ function toggleSatelliteView(on) {
   const leafletDiv    = document.getElementById('leaflet-container');
   const zoomControls  = document.querySelector('#panel-map .zoom-controls');
   const modeToggleMap = document.getElementById('modeToggle');
-  const calibBtn      = document.getElementById('btnCalibrate');
   const scaleInfo     = document.getElementById('scaleInfoMap');
   const styleGroup    = document.getElementById('mapMapStyleGroup');
 
@@ -2674,7 +2618,6 @@ function toggleSatelliteView(on) {
     if (scaleInfo)     scaleInfo.style.display = 'none';
     if (leafletDiv)    leafletDiv.style.display = 'block';
     if (styleGroup)    styleGroup.style.display = '';
-    if (calibBtn)      calibBtn.style.display = (state.pond && state.pond.origin?.lat) ? 'inline-flex' : 'none';
     if (!_leafletMap) initLeafletMap();
     else { updateLeafletOverlay(); setTimeout(() => _leafletMap.invalidateSize(), 100); }
   } else {
@@ -2684,90 +2627,12 @@ function toggleSatelliteView(on) {
     if (modeToggleMap && state.pond) modeToggleMap.style.display = 'flex';
     if (scaleInfo)     scaleInfo.style.display = '';
     if (styleGroup)    styleGroup.style.display = 'none';
-    if (calibBtn)      calibBtn.style.display = 'none';
     requestAnimationFrame(() => {
       const c = document.getElementById('pondCanvas'), w = document.getElementById('canvasWrap');
       if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
       renderPondCanvas(document.getElementById('pondCanvas'));
     });
   }
-}
-
-// ============================================================
-// CALIBRATION WIZARD
-// ============================================================
-let _calibIdx = 0;
-let _calibClickHandler = null;
-const _calibLabels = ['AV-G (avant gauche)', 'AV-D (avant droite)', 'AR-G (arrière gauche)', 'AR-D (arrière droite)'];
-
-function startCalibration() {
-  if (!state.pond) { showToast('Chargez un étang d\'abord', 'error'); return; }
-  if (!state.pond.origin?.lat && !state.pond.origin?.lng) {
-    showToast('Cet étang n\'a pas de coordonnées GPS (étang démo)', 'error'); return;
-  }
-  _calibIdx = 0;
-  updateCalibUI();
-  document.getElementById('calibModal').style.display = 'flex';
-  if (!_leafletMap) initLeafletMap();
-  if (_calibClickHandler) _leafletMap.off('click', _calibClickHandler);
-  _calibClickHandler = e => captureAnchorByClick(e.latlng);
-  setTimeout(() => _leafletMap?.on('click', _calibClickHandler), 200);
-}
-
-function updateCalibUI() {
-  setText('calibAnchorName', _calibLabels[_calibIdx] || '');
-  setText('calibStep', `${_calibIdx + 1} / 4`);
-  for (let i = 0; i < 4; i++) {
-    const dot = document.getElementById(`calibDot${i}`);
-    if (dot) dot.className = 'calib-dot' + (i < _calibIdx ? ' done' : i === _calibIdx ? ' active' : '');
-  }
-}
-
-function captureAnchorByClick(latlng) {
-  if (!state.pond) return;
-  const { lat: lat0, lng: lng0 } = state.pond.origin;
-  const local = latLngToMeters(latlng.lat, latlng.lng, lat0, lng0);
-  state.pond.anchors[_calibIdx] = { ...state.pond.anchors[_calibIdx], x: local.x, y: local.y };
-  showToast(`Ancre ${['AV-G','AV-D','AR-G','AR-D'][_calibIdx]} placée sur la carte`, 'success');
-  advanceCalib();
-}
-
-function captureAnchorByGPS() {
-  if (!navigator.geolocation) { showToast('GPS non disponible sur cet appareil', ''); return; }
-  showToast('Lecture GPS en cours…', '');
-  navigator.geolocation.getCurrentPosition(pos => {
-    const { lat: lat0, lng: lng0 } = state.pond.origin;
-    const local = latLngToMeters(pos.coords.latitude, pos.coords.longitude, lat0, lng0);
-    state.pond.anchors[_calibIdx] = { ...state.pond.anchors[_calibIdx], x: local.x, y: local.y };
-    showToast(`Ancre ${['AV-G','AV-D','AR-G','AR-D'][_calibIdx]} capturée (±${Math.round(pos.coords.accuracy)}m)`, 'success');
-    advanceCalib();
-  }, err => { showToast('Erreur GPS : ' + err.message, 'error'); },
-  { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
-}
-
-function skipCalibAnchor() { advanceCalib(); }
-
-function advanceCalib() {
-  updateLeafletOverlay();
-  renderAllPondCanvases();
-  _calibIdx++;
-  if (_calibIdx >= 4) finishCalibration();
-  else updateCalibUI();
-}
-
-function finishCalibration() {
-  if (_calibClickHandler) { _leafletMap?.off('click', _calibClickHandler); _calibClickHandler = null; }
-  document.getElementById('calibModal').style.display = 'none';
-  const idx = state.ponds.findIndex(p => p.id === state.pond.id);
-  if (idx !== -1) state.ponds[idx] = state.pond;
-  savePonds();
-  renderAllPondCanvases();
-  showToast('Calibration des ancres enregistrée !', 'success');
-}
-
-function closeCalibration() {
-  if (_calibClickHandler) { _leafletMap?.off('click', _calibClickHandler); _calibClickHandler = null; }
-  document.getElementById('calibModal').style.display = 'none';
 }
 
 // ============================================================

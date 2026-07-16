@@ -23,8 +23,9 @@
   --led-yellow:   #fbbf24;
   --radius-sm:    6px;
   --radius:       10px;
-  --radius-lg:    12px;
-  --shadow-card:  0 4px 20px rgba(0,0,0,0.4);
+  --radius-lg:    14px;
+  --shadow-card:  0 4px 24px rgba(0,0,0,0.35);
+  --ease:         cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 /* ---- RESET ---- */
@@ -184,11 +185,12 @@ svg { display: block; }
   border-radius: var(--radius-lg);
   overflow: hidden;
   box-shadow: var(--shadow-card);
+  transition: border-color 0.2s var(--ease);
 }
 .card-header {
   display: flex; align-items: center; gap: 7px;
-  padding: 9px 14px;
-  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px;
+  padding: 10px 14px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.9px;
   color: var(--text-2); border-bottom: 1px solid var(--border);
   background: var(--bg-card-2); flex-shrink: 0;
 }
@@ -200,8 +202,10 @@ svg { display: block; }
   display: inline-flex; align-items: center; gap: 5px;
   padding: 7px 12px; border-radius: var(--radius-sm);
   border: 1px solid transparent; font-size: 12px; font-weight: 600;
-  transition: all 0.15s; white-space: nowrap;
+  transition: transform 0.12s var(--ease), background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
 }
+.btn:active:not(:disabled) { transform: scale(0.96); }
 .btn svg { width: 14px; height: 14px; flex-shrink: 0; }
 .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .btn-primary:hover { background: var(--accent-dark); }
@@ -481,17 +485,51 @@ svg { display: block; }
   border-radius: var(--radius-sm); padding: 3px 7px;
 }
 
-/* Cable panel */
-.cable-panel {
+/* Propulsion panel — 4 motor thrust readouts + heading compass */
+.propulsion-panel {
   background: var(--bg-card); border-top: 1px solid var(--border);
-  padding: 7px 14px; flex-shrink: 0;
+  padding: 8px 14px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
 }
-.cable-panel-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-2); margin-bottom: 5px; }
-.cable-grid { display: flex; gap: 10px; flex-wrap: wrap; }
-.cable-item { display: flex; align-items: center; gap: 5px; }
-.cable-lbl { font-size: 10px; color: var(--text-2); }
-.cable-val { font-size: 13px; font-weight: 700; color: var(--led-blue); font-variant-numeric: tabular-nums; }
-.cable-unit { font-size: 10px; color: var(--text-3); }
+.propulsion-panel-title {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--text-2); flex-basis: 100%; margin-bottom: 2px;
+}
+.motor-grid { display: flex; gap: 12px; flex-wrap: wrap; flex: 1; }
+.motor-item { display: flex; align-items: center; gap: 6px; min-width: 92px; }
+.motor-lbl { font-size: 10px; color: var(--text-2); width: 28px; flex-shrink: 0; }
+.motor-bar-track {
+  position: relative; width: 52px; height: 6px; border-radius: 4px;
+  background: var(--bg-input); overflow: hidden; flex-shrink: 0;
+}
+.motor-bar-fill {
+  position: absolute; top: 0; bottom: 0; left: 50%;
+  border-radius: 4px; background: var(--accent);
+  transition: width 0.15s ease, background 0.15s ease;
+}
+.motor-bar-fill.reverse { background: var(--warning); }
+.motor-val { font-size: 11px; font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums; width: 34px; text-align: right; flex-shrink: 0; }
+
+/* Heading compass */
+.heading-wrap { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.heading-compass {
+  position: relative; width: 30px; height: 30px; border-radius: 50%;
+  background: var(--bg-input); border: 1.5px solid var(--border);
+  flex-shrink: 0;
+}
+.heading-compass::before {
+  content: 'N'; position: absolute; top: 1px; left: 50%; transform: translateX(-50%);
+  font-size: 7px; font-weight: 700; color: var(--text-3);
+}
+.heading-needle {
+  position: absolute; left: 50%; top: 50%; width: 2px; height: 12px;
+  background: linear-gradient(var(--accent), transparent);
+  transform-origin: bottom center;
+  transform: translate(-50%, -100%) rotate(0deg);
+  transition: transform 0.2s ease;
+}
+.heading-val { font-size: 12px; font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums; }
+.heading-lbl { font-size: 9px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.5px; }
 
 /* ============================================================
    MAP TAB (full screen)
@@ -655,16 +693,6 @@ svg { display: block; }
 .map-style-btn:hover:not(.active) { color: var(--text-1); background: var(--border); }
 
 /* Custom Leaflet markers */
-.anchor-marker {
-  background: #f59e0b; color: #000;
-  font-size: 10px; font-weight: 800; letter-spacing: 0.3px;
-  padding: 3px 7px; border-radius: 5px;
-  border: 2px solid #fff;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-  white-space: nowrap; cursor: move;
-  transition: transform 0.1s;
-}
-.anchor-marker:hover { transform: scale(1.1); }
 .robot-marker-leaf {
   width: 16px; height: 16px;
   background: #0ea5e9; border-radius: 50%;
@@ -688,70 +716,18 @@ svg { display: block; }
   box-shadow: 0 0 6px rgba(16,185,129,0.7);
   transition: background 0.3s;
 }
-.cable-label-leaf {
-  background: rgba(0,0,0,0.65); color: #fbbf24;
-  font: bold 10px sans-serif; padding: 2px 5px;
-  border-radius: 3px; white-space: nowrap; pointer-events: none;
+.heading-arrow-leaf {
+  position: absolute; top: 50%; left: 50%; width: 3px; height: 16px;
+  background: linear-gradient(#fff, transparent);
+  transform-origin: bottom center;
+  transform: translate(-50%, -100%) rotate(var(--heading, 0deg));
+  pointer-events: none;
 }
 .gps-pos-leaf {
   background: rgba(0,0,0,0.6); color: rgba(255,255,255,0.85);
   font: 10px monospace; padding: 2px 6px;
   border-radius: 3px; white-space: nowrap; pointer-events: none;
 }
-
-/* ============================================================
-   CALIBRATION MODAL
-   ============================================================ */
-.calib-modal-overlay {
-  position: fixed; inset: 0; z-index: 3000;
-  background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
-  display: flex; align-items: flex-end; justify-content: center;
-}
-.calib-modal {
-  background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  width: 100%; max-width: 480px;
-  box-shadow: 0 -8px 40px rgba(0,0,0,0.6);
-  animation: slideUp 0.22s cubic-bezier(0.34,1.56,0.64,1);
-}
-@keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-.calib-header {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  padding: 16px 20px 12px; border-bottom: 1px solid var(--border);
-}
-.calib-title { font-size: 15px; font-weight: 700; color: var(--text-1); }
-.calib-subtitle { font-size: 11px; color: var(--text-2); margin-top: 2px; }
-.calib-steps-row {
-  display: flex; align-items: center; gap: 14px;
-  padding: 12px 20px; background: var(--bg-card-2); border-bottom: 1px solid var(--border);
-}
-.calib-dot-row { display: flex; align-items: center; gap: 0; }
-.calib-dot {
-  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
-  background: var(--bg-input); border: 2px solid var(--text-3);
-  transition: all 0.25s;
-}
-.calib-dot.active { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); transform: scale(1.2); }
-.calib-dot.done   { background: var(--success); border-color: var(--success); }
-.calib-dot-line { width: 24px; height: 2px; background: var(--border); flex-shrink: 0; }
-.calib-step-label { font-size: 12px; color: var(--text-2); font-weight: 600; }
-.calib-body { padding: 16px 20px; }
-.calib-anchor-badge {
-  display: inline-block;
-  background: var(--accent-glow); border: 1px solid var(--accent);
-  border-radius: 20px; padding: 4px 14px;
-  font-size: 13px; font-weight: 700; color: var(--accent);
-  margin-bottom: 12px;
-}
-.calib-instruction { font-size: 12px; color: var(--text-2); line-height: 1.6; margin-bottom: 14px; }
-.calib-instruction strong { color: var(--text-1); }
-.calib-instruction em { color: var(--accent); font-style: normal; }
-.calib-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.calib-footer {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 20px 14px; border-top: 1px solid var(--border);
-}
-.calib-hint { font-size: 11px; color: var(--text-3); }
 
 /* ============================================================
    POND CARDS — improved

@@ -1,11 +1,12 @@
 /*
  * AquaBot Vandaele — Sketch ESP32
- * Contrôle robot curage autonome par câbles
+ * Contrôle robot curage autonome par propulsion (moteurs + GPS + boussole)
  *
  * Matériel :
  *   - ESP32 (cerveau principal)
  *   - ZED-F9P GPS RTK (I2C) + antenne GNSS multi-bande
- *   - 4× BTS7960 (drivers moteurs treuils câbles)
+ *   - Magnétomètre I2C QMC5883L (boussole électronique, cap du robot)
+ *   - 4× BTS7960 (drivers propulseurs, montage en X aux 4 coins)
  *   - 1× BTS7960 (moteur descente/remontée pompe)
  *   - Capteur courant (GPIO 34) pour détection fond/haut
  *   - Relais SSR 230V (pompe)
@@ -13,6 +14,7 @@
  *
  * Librairies requises (Gestionnaire de bibliothèques Arduino) :
  *   - SparkFun u-blox GNSS Arduino Library (v3)
+ *   - QMC5883LCompass
  *   - ArduinoJson (v6)
  *   - WiFi, HTTPClient, WiFiClientSecure (inclus ESP32 Arduino Core)
  */
@@ -22,6 +24,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
+#include <QMC5883LCompass.h>
 #include <Wire.h>
 #include <math.h>
 #include <vector>
@@ -29,6 +32,9 @@
 
 // ── GPS ───────────────────────────────────────────────────────────────
 SFE_UBLOX_GNSS gps;
+
+// ── Boussole ──────────────────────────────────────────────────────────
+QMC5883LCompass compass;
 
 // ── NTRIP ─────────────────────────────────────────────────────────────
 WiFiClient ntripClient;
@@ -63,8 +69,6 @@ bool   originLoaded = false;
 
 Vec2  currentPos   = {0, 0};
 Vec2  targetPos    = {0, 0};
-Vec2  anchors[4]   = {};
-bool  anchorsLoaded = false;
 
 std::vector<Vec2> plannedPath;
 int  currentCellIdx = 0;
@@ -72,9 +76,15 @@ int  currentCellIdx = 0;
 // ── GPS ───────────────────────────────────────────────────────────────
 double gpsLat      = 0, gpsLng = 0;
 float  gpsAccuracy = 99.0f;
+float  gpsSpeed    = 0;    // m/s (ground speed)
+float  gpsHeading  = 0;    // degrés, cap GPS (course over ground)
 int    fixType     = 0;
 int    carrierType = 0;   // 0=no RTK, 1=float, 2=fixed
 bool   gpsValid    = false;
+
+// ── Boussole ──────────────────────────────────────────────────────────
+float currentHeading = 0;  // degrés, 0 = Nord — cap courant du robot
+bool  compassReady   = false;
 
 // ── Pompe / mini-cycles ───────────────────────────────────────────────
 float pumpDepth      = 0;
@@ -83,7 +93,7 @@ int   miniCyclesDone = 0;
 bool  pumpFullAscent = false;
 
 // ── Moteur descente pompe (5ème moteur, BTS7960) ──────────────────────
-// Canaux LEDC 8-9 (0-7 occupés par les 4 moteurs câbles)
+// Canaux LEDC 8-9 (0-7 occupés par les 4 propulseurs)
 #define PUMP_MOTOR_CH_R  8
 #define PUMP_MOTOR_CH_L  9
 int   pumpMotorPwm   = 0;   // PWM courant (rampe progressive)
@@ -142,14 +152,14 @@ void motorSetup() {
   digitalWrite(PUMP_PIN, LOW);
 }
 
-// Tendre le câble i (raccourcir)
-void motorTighten(int i, int pwm) {
+// Pousse le propulseur i vers l'avant (poussée positive)
+void motorForward(int i, int pwm) {
   ledcWrite(i * 2,     constrain(pwm, 0, 255));
   ledcWrite(i * 2 + 1, 0);
 }
 
-// Lâcher le câble i (allonger)
-void motorLoosen(int i, int pwm) {
+// Pousse le propulseur i vers l'arrière (poussée négative)
+void motorReverse(int i, int pwm) {
   ledcWrite(i * 2,     0);
   ledcWrite(i * 2 + 1, constrain(pwm, 0, 255));
 }
@@ -199,29 +209,63 @@ int readPumpCurrent() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// CONTRÔLE DE POSITION PAR CÂBLES (GPS comme feedback)
-//
-// Principe : calculer la longueur de câble nécessaire pour être à
-// la position cible, comparer à la longueur actuelle (déduite du GPS),
-// ajuster chaque moteur proportionnellement à l'erreur.
+// BOUSSOLE — cap du robot (magnétomètre I2C + repli cap GPS)
 // ─────────────────────────────────────────────────────────────────────
-void controlCables() {
-  if (!gpsValid || !anchorsLoaded) {
-    stopAllMotors();
-    return;
-  }
-  for (int i = 0; i < 4; i++) {
-    float currentLen = dist2D(currentPos, anchors[i]);
-    float targetLen  = dist2D(targetPos,  anchors[i]);
-    float error = targetLen - currentLen;  // >0 = trop court → lâcher, <0 = trop long → tendre
+void compassSetup() {
+  compass.init();
+  compassReady = true;
+}
 
-    if (fabsf(error) < CABLE_DEADBAND) {
-      motorStop(i);
-    } else {
-      int pwm = (int)constrain(fabsf(error) * KP_CABLE, MIN_PWM, MAX_PWM);
-      if (error > 0) motorLoosen(i, pwm);
-      else           motorTighten(i, pwm);
-    }
+void readCompass() {
+  compass.read();
+  float heading = compass.getAzimuth() + COMPASS_DECLINATION;
+  // Recoupement : au-dessus d'une vitesse suffisante, le cap GPS (déplacement
+  // réel) est plus fiable que la boussole (bruit magnétique, métal embarqué).
+  if (gpsValid && gpsSpeed > COMPASS_GPS_SPEED_MIN) heading = gpsHeading;
+  while (heading < 0)    heading += 360;
+  while (heading >= 360) heading -= 360;
+  currentHeading = heading;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CONTRÔLE DE POSITION PAR PROPULSEURS (GPS + boussole)
+//
+// Principe : calculer le cap et la distance vers la cible, exprimer ce
+// vecteur dans le repère du robot (via le cap boussole), puis répartir la
+// poussée sur les 4 propulseurs montés en X. Aucun pivot n'est nécessaire :
+// le montage holonome permet de translater directement vers la cible
+// depuis l'orientation courante du robot.
+// ─────────────────────────────────────────────────────────────────────
+float motorThrust[4] = {0, 0, 0, 0}; // dernière poussée appliquée par propulseur (-255..255), pour la télémétrie
+
+void controlThrusters() {
+  if (!gpsValid || !compassReady) { stopAllMotors(); return; }
+
+  float dx = targetPos.x - currentPos.x, dy = targetPos.y - currentPos.y;
+  float distToTarget = dist2D(currentPos, targetPos);
+  if (distToTarget < ARRIVAL_THRESHOLD) { stopAllMotors(); return; }
+
+  float bearingToTarget = atan2f(dx, dy);              // radians, 0 = Nord
+  float relRad = bearingToTarget - currentHeading * PI / 180.0f; // cible, repère robot
+
+  float thrustMag = constrain(distToTarget * KP_THRUST, MIN_PWM, MAX_PWM);
+  float surge = cosf(relRad) * thrustMag; // avant(+)/arrière(-), repère robot
+  float sway  = sinf(relRad) * thrustMag; // droite(+)/gauche(-), repère robot
+
+  const float k = 0.70710678f; // cos(45°) — géométrie des propulseurs en X
+  float thrust[4] = {
+    (surge - sway) * k, // AV-G
+    (surge + sway) * k, // AV-D
+    (surge + sway) * k, // AR-G
+    (surge - sway) * k, // AR-D
+  };
+
+  for (int i = 0; i < 4; i++) {
+    motorThrust[i] = constrain(thrust[i], -MAX_PWM, MAX_PWM);
+    float mag = fabsf(motorThrust[i]);
+    if (mag < MIN_PWM) { motorStop(i); motorThrust[i] = 0; continue; }
+    if (motorThrust[i] >= 0) motorForward(i, (int)mag);
+    else                     motorReverse(i, (int)mag);
   }
 }
 
@@ -277,6 +321,8 @@ void readGPS() {
   gpsLat      = gps.getLatitude()  * 1e-7;
   gpsLng      = gps.getLongitude() * 1e-7;
   gpsAccuracy = gps.getPositionAccuracy() / 1000.0f; // mm → m
+  gpsSpeed    = gps.getGroundSpeed() / 1000.0f;      // mm/s → m/s
+  gpsHeading  = gps.getHeading() * 1e-5f;             // 1e-5° → °
 
   // Position valide si fix 3D ET origine chargée
   gpsValid = (fixType >= 3) && originLoaded;
@@ -355,14 +401,6 @@ void pollCommands() {
     originLng    = fields["originLng"]["doubleValue"] | 0.0;
     originLoaded = (originLat != 0 || originLng != 0);
 
-    // Ancres
-    JsonArray anch = fields["anchors"]["arrayValue"]["values"];
-    for (int i = 0; i < 4 && i < (int)anch.size(); i++) {
-      anchors[i].x = anch[i]["mapValue"]["fields"]["x"]["doubleValue"] | 0.0f;
-      anchors[i].y = anch[i]["mapValue"]["fields"]["y"]["doubleValue"] | 0.0f;
-    }
-    anchorsLoaded = true;
-
     // Parcours planifié
     plannedPath.clear();
     JsonArray path = fields["plannedPath"]["arrayValue"]["values"];
@@ -416,11 +454,6 @@ void pollCommands() {
 // ENVOI TÉLÉMÉTRIE
 // ─────────────────────────────────────────────────────────────────────
 void sendTelemetry() {
-  // Longueurs câbles calculées depuis la position GPS actuelle
-  float cables[4];
-  for (int i = 0; i < 4; i++)
-    cables[i] = anchorsLoaded ? dist2D(currentPos, anchors[i]) : 0.0f;
-
   // Conversion état → string
   const char* robotStateStr;
   switch (robotState) {
@@ -463,10 +496,11 @@ void sendTelemetry() {
     "\"pumpDepth\":"     + fsD(pumpDepth)     + ","
     "\"miniCyclesDone\":" + fsI(miniCyclesDone) + ","
     "\"currentCellIdx\":" + fsI(currentCellIdx) + ","
-    "\"cable0\":"        + fsD(cables[0])    + ","
-    "\"cable1\":"        + fsD(cables[1])    + ","
-    "\"cable2\":"        + fsD(cables[2])    + ","
-    "\"cable3\":"        + fsD(cables[3])    + ","
+    "\"heading\":"       + fsD(currentHeading) + ","
+    "\"motor0\":"        + fsD(motorThrust[0]) + ","
+    "\"motor1\":"        + fsD(motorThrust[1]) + ","
+    "\"motor2\":"        + fsD(motorThrust[2]) + ","
+    "\"motor3\":"        + fsD(motorThrust[3]) + ","
     "\"simRunning\":"    + fsB(robotState == STATE_MOVING || robotState == STATE_DESCENDING || robotState == STATE_PUMPING || robotState == STATE_ASCENDING) + ","
     "\"timestamp\":"     + fsI((int)(millis() / 1000)) +
     "}}";
@@ -485,7 +519,7 @@ void robotTick(float dt) {
 
     // ── Déplacement vers la case cible ────────────────────────────
     case STATE_MOVING: {
-      controlCables();
+      controlThrusters();
       if (gpsValid && dist2D(currentPos, targetPos) < ARRIVAL_THRESHOLD) {
         stopAllMotors();
         pumpDepth      = 0;
@@ -604,7 +638,7 @@ void setup() {
     Serial.println(" ECHEC — vérifier SSID/mot de passe");
   }
 
-  // GPS ZED-F9P via I2C
+  // GPS ZED-F9P + boussole (bus I2C partagé)
   Wire.begin(GPS_SDA, GPS_SCL);
   if (!gps.begin()) {
     Serial.println("[GPS] ZED-F9P non détecté — vérifier câblage I2C");
@@ -614,6 +648,8 @@ void setup() {
     gps.setAutoPVT(true);
     Serial.println("[GPS] ZED-F9P OK — " + String(GPS_FREQ) + "Hz");
   }
+  compassSetup();
+  Serial.println("[BOUSSOLE] QMC5883L prête");
 
   // NTRIP Centipède
   connectNTRIP();
@@ -633,8 +669,9 @@ void loop() {
   // Corrections RTK → GPS
   handleNTRIP();
 
-  // Lecture position GPS
+  // Lecture position GPS + cap boussole
   readGPS();
+  readCompass();
 
   // Boucle robot
   if (robotState != STATE_IDLE && robotState != STATE_PAUSED && robotState != STATE_DONE) {

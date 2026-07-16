@@ -20,9 +20,12 @@
 // Base64("centipede:centipede") — ne pas modifier
 #define NTRIP_AUTH_B64    "Y2VudGlwZWRlOmNlbnRpcGVkZQ=="
 
-// ── Broches moteurs BTS7960 ───────────────────────────────────────────
-// Ordre : AV-G, AV-D, AR-G, AR-D (identique aux ancres dans l'app)
-// RPWM = avancer (tendre câble), LPWM = reculer (lâcher câble)
+// ── Broches propulseurs BTS7960 ────────────────────────────────────────
+// 4 propulseurs bidirectionnels montés aux 4 coins de la plateforme, en
+// configuration X (45° de l'axe avant-arrière) : AV-G, AV-D, AR-G, AR-D.
+// Ce montage holonome permet d'avancer/reculer/translater latéralement et
+// de pivoter indépendamment — utile pour tenir position pendant le pompage.
+// RPWM = poussée avant (sens du propulseur), LPWM = poussée arrière (inversé)
 const uint8_t MOTOR_RPWM[4] = { 25, 32, 16, 18 };
 const uint8_t MOTOR_LPWM[4] = { 26, 33, 17, 19 };
 const uint8_t MOTOR_EN[4]   = { 27, 15,  5, 23 };
@@ -54,12 +57,22 @@ const uint8_t MOTOR_EN[4]   = { 27, 15,  5, 23 };
 #define GPS_SCL  22
 #define GPS_FREQ  5        // Hz — fréquence de mise à jour position
 
+// ── Boussole électronique (magnétomètre I2C, ex. QMC5883L) ────────────
+// Partage le même bus I2C que le GPS. Donne le cap du robot à l'arrêt ou à
+// faible vitesse, quand le cap GPS (course over ground) n'est pas fiable.
+#define COMPASS_I2C_ADDR      0x0D
+#define COMPASS_DECLINATION   0.0f   // déclinaison magnétique locale, degrés
+#define COMPASS_GPS_SPEED_MIN 0.3f   // m/s — au-dessus, on peut recouper avec le cap GPS
+
 // ── Paramètres de contrôle ────────────────────────────────────────────
-#define ARRIVAL_THRESHOLD  0.15f   // m — distance pour considérer la case atteinte
-#define CABLE_DEADBAND     0.05f   // m — erreur câble ignorée (évite oscillations)
-#define KP_CABLE           80.0f   // gain proportionnel (PWM par mètre d'erreur)
-#define MIN_PWM            55      // PWM minimum pour démarrer les moteurs portail
-#define MAX_PWM            200     // PWM maximum
+// Pas de contrôle de cap actif : les 4 propulseurs en X permettent d'avancer
+// dans n'importe quelle direction (translation pure) depuis l'orientation
+// courante du robot, sans avoir besoin de pivoter — la boussole sert
+// uniquement à convertir le cap (monde) vers le repère du robot.
+#define ARRIVAL_THRESHOLD   0.15f  // m — distance pour considérer la case atteinte
+#define KP_THRUST           120.0f // gain proportionnel avance/translation (PWM par mètre d'erreur)
+#define MIN_PWM             55     // PWM minimum pour démarrer les propulseurs
+#define MAX_PWM             200    // PWM maximum
 
 // ── Timings ───────────────────────────────────────────────────────────
 #define TELEMETRY_INTERVAL_MS   500   // envoi télémétrie vers Firebase
