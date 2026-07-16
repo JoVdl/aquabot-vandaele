@@ -172,17 +172,10 @@ svg { display: block; }
 #panel-dashboard { padding: 0; overflow: hidden; }
 #panel-dashboard.active { display: flex; flex-direction: column; }
 
-/* ---- HERO STATUS BAND (dashboard) ---- */
-.hero-status {
-  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-  padding: 10px 18px;
-  background: var(--bg-card); border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.hero-status-text { min-width: 150px; }
-.hero-progress { display: flex; align-items: center; gap: 8px; flex: 1 1 160px; max-width: 320px; }
-.hero-mode-toggle { display: flex; gap: 6px; flex-shrink: 0; }
-.hero-controls { display: flex; gap: 6px; flex-shrink: 0; margin-left: auto; }
+/* ---- Status/control text shared by the rail ---- */
+.hero-status-text { min-width: 0; }
+.hero-progress { display: flex; align-items: center; gap: 8px; }
+.hero-mode-toggle { display: flex; gap: 6px; }
 
 /* ============================================================
    LED
@@ -325,77 +318,43 @@ svg { display: block; }
 .progress-pct { font-size: 12px; font-weight: 700; color: var(--accent); min-width: 34px; text-align: right; }
 
 /* ============================================================
-   DASHBOARD — 3-PANEL LAYOUT
+   DASHBOARD — rail / carte / panneau à onglets
    ============================================================ */
 .dashboard-main {
   display: grid;
-  grid-template-columns: 210px 1fr 220px;
-  grid-template-rows: 1fr auto;
+  grid-template-columns: 200px 1fr 280px;
+  grid-template-areas: "rail map panel";
   flex: 1;
   min-height: 0;
   gap: 0;
   overflow: hidden;
 }
 
-/* Bottom bar — pond global progress */
-.dash-bottom {
-  grid-column: 1 / -1;
-  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-  padding: 7px 16px;
-  background: var(--bg-card); border-top: 2px solid var(--border);
-  flex-shrink: 0; min-height: 46px;
-}
-.dash-bottom-info {
-  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
-}
-.dash-bottom-title {
-  font-size: 10px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.7px; color: var(--text-2); white-space: nowrap;
-}
-.dash-bottom-pond {
-  background: var(--accent-glow); border: 1px solid var(--accent);
-  border-radius: 20px; padding: 1px 8px;
-  font-size: 10px; color: var(--accent); font-weight: 600; white-space: nowrap;
-}
-.dash-bottom-progress {
-  display: flex; align-items: center; gap: 8px; flex: 0 0 180px;
-}
-.dash-bottom-pct {
-  font-size: 12px; font-weight: 700; color: var(--accent);
-  min-width: 34px; text-align: right;
-}
-.dash-bottom-stats {
-  display: flex; align-items: center; gap: 20px; flex: 1; flex-wrap: wrap;
-}
-.dash-stat-item {
-  display: flex; flex-direction: column; align-items: center; gap: 0;
-}
-.dash-stat-lbl {
-  font-size: 9px; color: var(--text-3); text-transform: uppercase;
-  letter-spacing: 0.5px; white-space: nowrap;
-}
-.dash-stat-val {
-  font-size: 12px; font-weight: 700; color: var(--text-1);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Left panel */
-.dash-left {
-  display: flex; flex-direction: column; gap: 0;
-  overflow-y: auto; overflow-x: hidden;
+/* Rail — état + contrôles, toujours visible */
+.dash-rail {
+  grid-area: rail;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 12px;
+  overflow-y: auto;
   border-right: 1px solid var(--border);
-  background: var(--bg-app);
-  grid-row: 1;
+  background: var(--bg-card);
 }
-.dash-left .dash-card { border-radius: 0; border-left: none; border-right: none; border-top: none; }
-.dash-left .dash-card:first-child { border-top: none; }
+.rail-status { display: flex; align-items: center; gap: 10px; }
+.rail-controls { display: flex; gap: 5px; flex-wrap: wrap; }
+.rail-controls .btn { flex: 1; }
+.rail-divider { height: 1px; background: var(--border); }
+.rail-label {
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.6px; color: var(--text-3);
+}
+.rail-speed { padding: 0; border-top: none; }
 
-/* Center panel */
+/* Center — carte */
 .dash-center {
+  grid-area: map;
   display: flex; flex-direction: column;
   overflow: hidden; position: relative;
   background: #070c18;
-  grid-row: 1;
 }
 .dash-toolbar {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
@@ -412,36 +371,47 @@ svg { display: block; }
 }
 .zoom-btn-inline:hover { border-color: var(--accent); color: var(--accent); }
 
-/* Right panel */
-.dash-right {
-  display: flex; flex-direction: column; gap: 0;
-  overflow-y: auto; overflow-x: hidden;
+/* Panel — onglets Sélection / Propulsion / Progression */
+.dash-panel {
+  grid-area: panel;
+  display: flex; flex-direction: column;
   border-left: 1px solid var(--border);
-  background: var(--bg-app);
-  grid-row: 1;
+  background: var(--bg-card);
+  overflow: hidden;
 }
-.dash-right .dash-card { border-radius: 0; border-left: none; border-right: none; border-top: none; }
-.dash-right .dash-card:first-child { border-top: none; }
+.panel-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.panel-tab {
+  flex: 1; background: none; border: none; border-bottom: 2px solid transparent;
+  padding: 11px 4px; font-size: 11px; font-weight: 700; color: var(--text-2);
+  transition: color 0.15s;
+}
+.panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.panel-tab:hover:not(.active) { color: var(--text-1); }
+.panel-content { display: none; overflow-y: auto; flex: 1; min-height: 0; }
+.panel-content.active { display: block; }
+.panel-section-label {
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+  color: var(--text-3); padding: 12px 14px 6px;
+}
+.panel-motor-grid, .panel-heading-wrap, .panel-data-grid { padding-left: 14px; padding-right: 14px; }
+.panel-motor-grid { padding-top: 12px; }
+.panel-heading-wrap { padding: 10px 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 
-/* Status display */
-.robot-status-display { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
-.status-title { font-size: 16px; font-weight: 700; }
+.status-title { font-size: 15px; font-weight: 700; }
 .status-subtitle { font-size: 11px; color: var(--text-2); margin-top: 2px; }
 
-.control-buttons { display: flex; gap: 5px; padding: 0 14px 12px; flex-wrap: wrap; }
-
-.speed-control { padding: 10px 14px 12px; border-top: 1px solid var(--border); }
+.speed-control { padding: 0; }
 .speed-header { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); margin-bottom: 8px; font-weight: 600; }
 .speed-badge { margin-left: auto; background: var(--accent-glow); color: var(--accent); border: 1px solid var(--accent); border-radius: 20px; padding: 1px 8px; font-size: 11px; font-weight: 700; }
 .slider-labels { display: flex; justify-content: space-between; font-size: 9px; color: var(--text-3); margin-top: 3px; }
 
 /* Selection tools */
-.sel-buttons { display: flex; gap: 4px; padding: 10px 14px 8px; flex-wrap: wrap; }
+.sel-buttons { display: flex; gap: 4px; padding: 14px 14px 8px; flex-wrap: wrap; }
 
 /* Selection history */
-.sel-history-wrap { padding: 0 14px 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.sel-history-wrap { padding: 0 14px 12px; }
 .sel-save-row { display: flex; gap: 5px; margin-bottom: 8px; }
-.sel-history-list { display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow-y: auto; }
+.sel-history-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
 .sel-empty { font-size: 11px; color: var(--text-3); text-align: center; padding: 12px 0; }
 
 .sel-item {
@@ -454,17 +424,6 @@ svg { display: block; }
 .sel-item-btn { background: none; border: none; color: var(--text-3); font-size: 12px; cursor: pointer; padding: 1px 4px; border-radius: 3px; }
 .sel-item-btn:hover { color: var(--text-1); background: var(--border); }
 .sel-item-btn.del:hover { color: var(--danger); }
-
-/* Collapsible "Détails techniques" card */
-.details-summary {
-  cursor: pointer; list-style: none;
-}
-.details-summary::-webkit-details-marker { display: none; }
-.details-summary::after {
-  content: '▾'; margin-left: auto; color: var(--text-3); font-size: 10px;
-  transition: transform 0.15s var(--ease);
-}
-.details-card[open] .details-summary::after { transform: rotate(180deg); }
 
 /* Data grid */
 .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); }
@@ -821,26 +780,43 @@ svg { display: block; }
   /* Allow natural document scroll on mobile */
   html, body { height: auto; overflow-y: auto; }
   .app { height: auto; min-height: 100vh; overflow: visible; }
-  .main-content { overflow: visible; height: auto; flex: none; }
+  .main-content { overflow: visible; height: auto; flex: none; padding-bottom: 60px; }
   #panel-dashboard { overflow: visible; height: auto; }
 
+  /* La carte d'abord, puis les contrôles, puis le panneau à onglets */
   .dashboard-main {
     grid-template-columns: 1fr;
-    grid-template-rows: 45vh auto auto auto;
+    grid-template-areas: "map" "rail" "panel";
     overflow: visible;
     height: auto;
   }
-  /* Map first on mobile */
-  .dash-center { grid-row: 1; min-height: 45vh; }
-  .dash-left   { grid-row: 2; border-right: none; border-left: none; overflow-y: visible; flex-direction: row; flex-wrap: wrap; }
-  .dash-right  { grid-row: 3; border-right: none; border-left: none; overflow-y: visible; flex-direction: row; flex-wrap: wrap; }
-  .dash-bottom { grid-row: 4; flex-direction: column; align-items: flex-start; gap: 8px; }
-  .dash-left .dash-card, .dash-right .dash-card {
-    flex: 1; min-width: 200px;
-    border: 1px solid var(--border) !important;
-    border-radius: var(--radius-lg) !important;
-    margin: 8px;
+  .dash-center { min-height: 48vh; }
+  .dash-rail {
+    flex-direction: row; flex-wrap: wrap; align-items: center;
+    border-right: none; border-bottom: 1px solid var(--border);
   }
-  .dash-bottom-progress { flex: 0 0 auto; width: 100%; }
-  .dash-bottom-stats { gap: 12px; }
+  .rail-status { flex: 1 1 auto; min-width: 160px; }
+  .hero-progress { flex: 1 1 100%; order: 3; }
+  .rail-controls { flex: 1 1 auto; }
+  .rail-divider { display: none; }
+  .rail-label { flex-basis: 100%; order: 4; }
+  .hero-mode-toggle { order: 5; }
+  #speedControlCard { flex: 1 1 100%; order: 6; }
+  .dash-panel { border-left: none; }
+  .panel-content { max-height: 60vh; }
+
+  /* Onglet Carte plein écran : height:100% ne marche plus une fois le
+     document en scroll naturel (parents en hauteur auto) — hauteur fixe. */
+  #panel-map { height: auto; }
+  .map-layout { height: 75vh; }
+
+  /* Navigation en bas de l'écran — plus facile à atteindre au pouce */
+  .nav-tabs {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+    border-bottom: none; border-top: 1px solid var(--border);
+    justify-content: space-around;
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.15);
+  }
+  .nav-tab { flex: 1; padding: 8px 4px; }
+  .nav-tab.active { border-radius: 0; }
 }

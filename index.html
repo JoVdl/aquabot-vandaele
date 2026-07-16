@@ -76,37 +76,34 @@
          TAB: TABLEAU DE BORD (full view)
     ============================= -->
     <section class="tab-panel active" id="panel-dashboard">
-
-      <!-- ── HERO: état du robot en un coup d'œil ── -->
-      <div class="hero-status">
-        <div id="heroLed" class="led-large led-blue"></div>
-        <div class="hero-status-text">
-          <div id="heroStatus" class="status-title">Arrêté</div>
-          <div id="heroSubStatus" class="status-subtitle">Prêt à démarrer</div>
-        </div>
-        <div class="hero-progress">
-          <div class="progress-bar"><div id="heroProgressBar" class="progress-fill" style="width:0%"></div></div>
-          <span id="heroProgressPct" class="progress-pct">0%</span>
-        </div>
-        <div class="hero-mode-toggle">
-          <button id="modeSimBtn"  class="mode-toggle-btn active" onclick="setRobotMode('simulation')">⚙ Simulation</button>
-          <button id="modeRealBtn" class="mode-toggle-btn"        onclick="setRobotMode('real')">📡 Robot réel</button>
-        </div>
-        <div class="hero-controls">
-          <button id="btnStart"  class="btn btn-success btn-sm"  onclick="handleStart()">▶ Démarrer</button>
-          <button id="btnPause"  class="btn btn-warning btn-sm"  onclick="handlePause()"  disabled>⏸ Pause</button>
-          <button id="btnStop"   class="btn btn-danger  btn-sm"  onclick="handleStop()"   disabled>⏹ Arrêt</button>
-        </div>
-      </div>
-
       <div class="dashboard-main">
 
-        <!-- ── LEFT PANEL ── -->
-        <div class="dash-left">
-
-          <!-- Vitesse simulation -->
-          <div class="card dash-card" id="speedControlCard">
-            <div class="speed-control" style="border-top:none">
+        <!-- ── RAIL: état + contrôles, toujours visible ── -->
+        <div class="dash-rail">
+          <div class="rail-status">
+            <div id="heroLed" class="led-large led-blue"></div>
+            <div class="hero-status-text">
+              <div id="heroStatus" class="status-title">Arrêté</div>
+              <div id="heroSubStatus" class="status-subtitle">Prêt à démarrer</div>
+            </div>
+          </div>
+          <div class="hero-progress">
+            <div class="progress-bar"><div id="heroProgressBar" class="progress-fill" style="width:0%"></div></div>
+            <span id="heroProgressPct" class="progress-pct">0%</span>
+          </div>
+          <div class="rail-controls">
+            <button id="btnStart"  class="btn btn-success btn-sm"  onclick="handleStart()">▶ Démarrer</button>
+            <button id="btnPause"  class="btn btn-warning btn-sm"  onclick="handlePause()"  disabled>⏸ Pause</button>
+            <button id="btnStop"   class="btn btn-danger  btn-sm"  onclick="handleStop()"   disabled>⏹ Arrêt</button>
+          </div>
+          <div class="rail-divider"></div>
+          <div class="rail-label">Mode</div>
+          <div class="hero-mode-toggle">
+            <button id="modeSimBtn"  class="mode-toggle-btn active" onclick="setRobotMode('simulation')">⚙ Simulation</button>
+            <button id="modeRealBtn" class="mode-toggle-btn"        onclick="setRobotMode('real')">📡 Robot réel</button>
+          </div>
+          <div id="speedControlCard">
+            <div class="speed-control rail-speed">
               <div class="speed-header">
                 <svg viewBox="0 0 20 20" fill="currentColor" style="width:12px;height:12px"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd"/></svg>
                 Vitesse simulation
@@ -116,49 +113,7 @@
               <div class="slider-labels"><span>1×</span><span>200×</span></div>
             </div>
           </div>
-
-          <!-- Selection tools -->
-          <div class="card dash-card">
-            <div class="card-header">
-              <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/></svg>
-              Sélection des cases
-            </div>
-            <div class="sel-buttons">
-              <button class="btn btn-secondary btn-sm" id="btnSelectAll"       onclick="selectAllCells()"       disabled>☑ Toutes</button>
-              <button class="btn btn-secondary btn-sm" id="btnSelectRemaining" onclick="selectRemainingCells()" disabled>☑ Restantes</button>
-              <button class="btn btn-secondary btn-sm" id="btnDeselectAll"     onclick="deselectAllCells()"     disabled>☐ Aucune</button>
-              <button class="btn btn-accent    btn-sm" id="btnPlanRoute"       onclick="planRoute()"            disabled>↪ Planifier</button>
-            </div>
-            <!-- Selection history -->
-            <div class="sel-history-wrap">
-              <div class="sel-save-row">
-                <input type="text" id="selNameInput" class="sel-name-input" placeholder="Nom de la sélection…" maxlength="30">
-                <button class="btn btn-primary btn-sm" onclick="saveCurrentSelection()">Sauver</button>
-              </div>
-              <div id="selectionHistoryList" class="sel-history-list">
-                <div class="sel-empty">Aucune sélection sauvegardée</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Real-time Data (repliable — infos secondaires) -->
-          <details class="card dash-card details-card">
-            <summary class="card-header details-summary">
-              <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z"/></svg>
-              Détails techniques
-            </summary>
-            <div class="data-grid">
-              <div class="data-item"><span class="data-label">Pos. X</span><span class="data-value" id="rtPosX">—</span><span class="data-unit">m</span></div>
-              <div class="data-item"><span class="data-label">Pos. Y</span><span class="data-value" id="rtPosY">—</span><span class="data-unit">m</span></div>
-              <div class="data-item"><span class="data-label">Prof. pompe</span><span class="data-value" id="rtPumpDepth">0.00</span><span class="data-unit">m</span></div>
-              <div class="data-item"><span class="data-label">État pompe</span><span class="data-value" id="rtPumpState">—</span></div>
-              <div class="data-item"><span class="data-label">Cap</span><span class="data-value" id="rtHeading">—</span><span class="data-unit">°</span></div>
-              <div class="data-item data-item-gps"><span class="data-label">Fix GPS</span><span class="data-value gps-fix" id="gpsFixLabel">—</span></div>
-              <div class="data-item data-item-gps"><span class="data-label">Précision</span><span class="data-value" id="gpsAccuracy">—</span></div>
-            </div>
-          </details>
-
-        </div><!-- /dash-left -->
+        </div><!-- /dash-rail -->
 
         <!-- ── CENTER: Map ── -->
         <div class="dash-center">
@@ -209,31 +164,60 @@
               <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="loadDemoPond()">Charger étang démo</button>
             </div>
           </div>
-          <!-- Propulsion — 4 moteurs + cap -->
-          <div class="propulsion-panel" id="propulsionPanel" style="display:none">
-            <div class="propulsion-panel-title">Propulsion</div>
-            <div class="motor-grid">
+        </div><!-- /dash-center -->
+
+        <!-- ── PANEL: infos secondaires, un onglet à la fois ── -->
+        <div class="dash-panel">
+          <div class="panel-tabs" id="dashPanelTabs">
+            <button class="panel-tab active" data-panel="selection">Sélection</button>
+            <button class="panel-tab" data-panel="propulsion">Propulsion</button>
+            <button class="panel-tab" data-panel="progression">Progression</button>
+          </div>
+
+          <!-- Onglet: Sélection des cases -->
+          <div class="panel-content active" data-content="selection">
+            <div class="sel-buttons">
+              <button class="btn btn-secondary btn-sm" id="btnSelectAll"       onclick="selectAllCells()"       disabled>☑ Toutes</button>
+              <button class="btn btn-secondary btn-sm" id="btnSelectRemaining" onclick="selectRemainingCells()" disabled>☑ Restantes</button>
+              <button class="btn btn-secondary btn-sm" id="btnDeselectAll"     onclick="deselectAllCells()"     disabled>☐ Aucune</button>
+              <button class="btn btn-accent    btn-sm" id="btnPlanRoute"       onclick="planRoute()"            disabled>↪ Planifier</button>
+            </div>
+            <div class="sel-history-wrap">
+              <div class="sel-save-row">
+                <input type="text" id="selNameInput" class="sel-name-input" placeholder="Nom de la sélection…" maxlength="30">
+                <button class="btn btn-primary btn-sm" onclick="saveCurrentSelection()">Sauver</button>
+              </div>
+              <div id="selectionHistoryList" class="sel-history-list">
+                <div class="sel-empty">Aucune sélection sauvegardée</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Onglet: Propulsion + télémétrie -->
+          <div class="panel-content" data-content="propulsion">
+            <div class="motor-grid panel-motor-grid">
               <div class="motor-item"><span class="motor-lbl">AV-G</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar0" style="width:0%"></div></div><span class="motor-val" id="motorVal0">0%</span></div>
               <div class="motor-item"><span class="motor-lbl">AV-D</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar1" style="width:0%"></div></div><span class="motor-val" id="motorVal1">0%</span></div>
               <div class="motor-item"><span class="motor-lbl">AR-G</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar2" style="width:0%"></div></div><span class="motor-val" id="motorVal2">0%</span></div>
               <div class="motor-item"><span class="motor-lbl">AR-D</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar3" style="width:0%"></div></div><span class="motor-val" id="motorVal3">0%</span></div>
             </div>
-            <div class="heading-wrap">
+            <div class="heading-wrap panel-heading-wrap">
               <div class="heading-compass"><div class="heading-needle" id="headingNeedle"></div></div>
               <div><div class="heading-val" id="headingVal">—°</div><div class="heading-lbl">Cap</div></div>
             </div>
-          </div>
-        </div><!-- /dash-center -->
-
-        <!-- ── RIGHT PANEL ── -->
-        <div class="dash-right">
-
-          <!-- Progress: current selection/session -->
-          <div class="card dash-card">
-            <div class="card-header">
-              <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zm6-4a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zm6-3a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"/></svg>
-              Sélection en cours
+            <div class="data-grid panel-data-grid">
+              <div class="data-item"><span class="data-label">Pos. X</span><span class="data-value" id="rtPosX">—</span><span class="data-unit">m</span></div>
+              <div class="data-item"><span class="data-label">Pos. Y</span><span class="data-value" id="rtPosY">—</span><span class="data-unit">m</span></div>
+              <div class="data-item"><span class="data-label">Prof. pompe</span><span class="data-value" id="rtPumpDepth">0.00</span><span class="data-unit">m</span></div>
+              <div class="data-item"><span class="data-label">État pompe</span><span class="data-value" id="rtPumpState">—</span></div>
+              <div class="data-item"><span class="data-label">Cap</span><span class="data-value" id="rtHeading">—</span><span class="data-unit">°</span></div>
+              <div class="data-item data-item-gps"><span class="data-label">Fix GPS</span><span class="data-value gps-fix" id="gpsFixLabel">—</span></div>
+              <div class="data-item data-item-gps"><span class="data-label">Précision</span><span class="data-value" id="gpsAccuracy">—</span></div>
             </div>
+          </div>
+
+          <!-- Onglet: Progression -->
+          <div class="panel-content" data-content="progression">
             <div class="pond-name-badge" id="dashPondBadge">Aucun étang</div>
             <div class="progress-bar-wrap">
               <div class="progress-bar">
@@ -249,7 +233,6 @@
               <div class="time-item"><span class="time-lbl">Écoulé</span><span class="time-val" id="dashTimeElapsed">00:00:00</span></div>
               <div class="time-item"><span class="time-lbl">Restant</span><span class="time-val" id="dashTimeRemaining">—</span></div>
             </div>
-            <!-- Volume summary for current selection -->
             <div class="vol-section">
               <div class="vol-row vol-mode-row">
                 <span class="vol-lbl">Mode</span>
@@ -264,14 +247,8 @@
                 <span class="vol-val" id="dashMudVolume">—</span>
               </div>
             </div>
-          </div>
 
-          <!-- Vertical section -->
-          <div class="card dash-card">
-            <div class="card-header">
-              <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><path fill-rule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 11-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 110-2h4a1 1 0 011 1v4a1 1 0 11-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 7a1 1 0 112 0v1.586l2.293-2.293a1 1 0 111.414 1.414L6.414 15H8a1 1 0 110 2H4a1 1 0 01-1-1v-4zm13-1a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 110-2h1.586l-2.293-2.293a1 1 0 111.414-1.414L15 13.586V12a1 1 0 011-1z" clip-rule="evenodd"/></svg>
-              Coupe verticale
-            </div>
+            <div class="panel-section-label">Coupe verticale</div>
             <div class="section-canvas-wrap dash-section-wrap">
               <canvas id="sectionCanvas"></canvas>
             </div>
@@ -280,40 +257,22 @@
               <div class="depth-item"><span class="depth-lbl">Vase</span><span class="depth-val"><span id="depthMud">—</span> m</span></div>
               <div class="depth-item"><span class="depth-lbl">Pompe</span><span class="depth-val accent"><span id="depthPump">0.00</span> m</span></div>
             </div>
-          </div>
 
-        </div><!-- /dash-right -->
-
-        <!-- ── BOTTOM BAR: Cumulative pond progress ── -->
-        <div class="dash-bottom">
-          <div class="dash-bottom-info">
-            <svg viewBox="0 0 20 20" fill="currentColor" style="width:13px;height:13px;flex-shrink:0;color:#94a3b8"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/></svg>
-            <span class="dash-bottom-title">Progression totale</span>
-            <span id="dashPondBottomName" class="dash-bottom-pond">—</span>
-          </div>
-          <div class="dash-bottom-progress">
-            <div class="progress-bar"><div id="pondTotalBar" class="progress-fill" style="width:0%"></div></div>
-            <span id="pondTotalPct" class="dash-bottom-pct">0%</span>
-          </div>
-          <div class="dash-bottom-stats">
-            <div class="dash-stat-item">
-              <span class="dash-stat-lbl">Cases traitées</span>
-              <span class="dash-stat-val"><span id="pondTotalDone">0</span>/<span id="pondTotalCells">—</span></span>
+            <div class="panel-section-label">Progression totale — <span id="dashPondBottomName">—</span></div>
+            <div class="progress-bar-wrap">
+              <div class="progress-bar"><div id="pondTotalBar" class="progress-fill" style="width:0%"></div></div>
+              <span id="pondTotalPct" class="progress-pct">0%</span>
             </div>
-            <div class="dash-stat-item">
-              <span class="dash-stat-lbl">Volume pompé</span>
-              <span class="dash-stat-val" id="pondTotalVolume">0 L</span>
+            <div class="summary-stats total-stats">
+              <div class="sum-stat"><span class="sum-val"><span id="pondTotalDone">0</span>/<span id="pondTotalCells">—</span></span><span class="sum-label">Cases</span></div>
+              <div class="sum-stat"><span class="sum-val" id="pondTotalVolume">0 L</span><span class="sum-label">Pompé</span></div>
             </div>
-            <div class="dash-stat-item">
-              <span class="dash-stat-lbl">Volume vase total</span>
-              <span class="dash-stat-val" id="pondTotalMud">—</span>
-            </div>
-            <div class="dash-stat-item">
-              <span class="dash-stat-lbl">Temps de travail</span>
-              <span class="dash-stat-val" id="pondTotalTime">00:00:00</span>
+            <div class="vol-section">
+              <div class="vol-row"><span class="vol-lbl">Volume vase total</span><span class="vol-val" id="pondTotalMud">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Temps de travail</span><span class="vol-val" id="pondTotalTime">00:00:00</span></div>
             </div>
           </div>
-        </div><!-- /dash-bottom -->
+        </div><!-- /dash-panel -->
 
       </div><!-- /dashboard-main -->
     </section>

@@ -702,7 +702,6 @@ function loadPond(pond) {
   setText('dashPondBadge', pName);
 
   // Show pond-specific elements
-  document.getElementById('propulsionPanel').style.display    = 'flex';
   document.getElementById('propulsionPanelMap').style.display = 'flex';
   document.getElementById('modeToggle').style.display     = 'flex';
   document.getElementById('dashCanvasEmptyState').style.display = 'none';
@@ -2104,7 +2103,6 @@ function deletePond(id) {
     state.pond = null; state.cells = []; state.plannedPath = [];
     document.getElementById('dashCanvasEmptyState').style.display = 'flex';
     document.getElementById('canvasEmptyState').style.display     = 'flex';
-    document.getElementById('propulsionPanel').style.display    = 'none';
     document.getElementById('propulsionPanelMap').style.display = 'none';
     document.getElementById('modeToggle').style.display    = 'none';
     setText('currentPondName', 'Aucun étang sélectionné');
@@ -2115,6 +2113,14 @@ function deletePond(id) {
   if (!USE_CLOUD) savePonds();
   updatePondsList();
   showToast('Étang supprimé');
+}
+
+// ============================================================
+// DASHBOARD PANEL TABS (Sélection / Propulsion / Progression)
+// ============================================================
+function setPanelTab(tab) {
+  document.querySelectorAll('.panel-tab').forEach(b => b.classList.toggle('active', b.dataset.panel === tab));
+  document.querySelectorAll('.panel-content').forEach(p => p.classList.toggle('active', p.dataset.content === tab));
 }
 
 // ============================================================
@@ -2665,6 +2671,7 @@ function init() {
   syncParamsToDOM();
 
   document.querySelectorAll('.nav-tab').forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
+  document.querySelectorAll('.panel-tab').forEach(btn => btn.addEventListener('click', () => setPanelTab(btn.dataset.panel)));
 
   initCanvasEvents();
 
