@@ -560,6 +560,22 @@ function formatVolume(l) {
 function setText(id, val) { const e = document.getElementById(id); if (e) e.textContent = val; }
 
 // ============================================================
+// THEME (clair/sombre)
+// ============================================================
+function applyThemeIcon() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  setText('themeIcon', isLight ? '☀️' : '🌙');
+}
+
+function toggleTheme() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const next = isLight ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('aquabot_theme', next);
+  applyThemeIcon();
+}
+
+// ============================================================
 // KML PARSER
 // ============================================================
 function parseKML(text) {
@@ -1624,7 +1640,7 @@ function finishSimulation() {
 // LED
 // ============================================================
 function setLED(color, label) {
-  ['ledIndicator','dashLed'].forEach(id => {
+  ['ledIndicator','heroLed'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.className = el.className.replace(/led-(?:blue|green|red|yellow)/g, '');
@@ -1684,6 +1700,9 @@ function updateUI() {
   const el = document.getElementById('dashProgressBar');
   if (el) el.style.width = pct + '%';
   setText('dashProgressPct', pct + '%');
+  const heroEl = document.getElementById('heroProgressBar');
+  if (heroEl) heroEl.style.width = pct + '%';
+  setText('heroProgressPct', pct + '%');
   setText('dashCellsDone',  done);
   setText('dashCellsTotal', total || '—');
 
@@ -1750,8 +1769,8 @@ function updateUI() {
 
 function updateStatus(main, sub) {
   setText('statusText', main);
-  setText('dashStatus', main);
-  setText('dashSubStatus', sub);
+  setText('heroStatus', main);
+  setText('heroSubStatus', sub);
 }
 
 function updateButtonStates() {
@@ -2639,6 +2658,7 @@ function toggleSatelliteView(on) {
 // INIT
 // ============================================================
 function init() {
+  applyThemeIcon();
   loadPonds();
   try { const sp = localStorage.getItem('aquabot_params'); if (sp) Object.assign(params, JSON.parse(sp)); } catch {}
 

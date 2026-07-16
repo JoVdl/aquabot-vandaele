@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>AquaBot Vandaele — Curage Autonome 2026</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <script>
+    (function() {
+      var stored = localStorage.getItem('aquabot_theme');
+      var theme  = stored || ((window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
 </head>
@@ -36,6 +43,9 @@
         <div id="ledIndicator" class="led led-blue"></div>
         <span id="ledLabel" class="led-label">Simulation</span>
       </div>
+      <button id="themeToggle" class="theme-toggle-btn" onclick="toggleTheme()" title="Changer de thème" aria-label="Changer de thème">
+        <span id="themeIcon">🌙</span>
+      </button>
     </div>
   </header>
 
@@ -66,45 +76,44 @@
          TAB: TABLEAU DE BORD (full view)
     ============================= -->
     <section class="tab-panel active" id="panel-dashboard">
+
+      <!-- ── HERO: état du robot en un coup d'œil ── -->
+      <div class="hero-status">
+        <div id="heroLed" class="led-large led-blue"></div>
+        <div class="hero-status-text">
+          <div id="heroStatus" class="status-title">Arrêté</div>
+          <div id="heroSubStatus" class="status-subtitle">Prêt à démarrer</div>
+        </div>
+        <div class="hero-progress">
+          <div class="progress-bar"><div id="heroProgressBar" class="progress-fill" style="width:0%"></div></div>
+          <span id="heroProgressPct" class="progress-pct">0%</span>
+        </div>
+        <div class="hero-mode-toggle">
+          <button id="modeSimBtn"  class="mode-toggle-btn active" onclick="setRobotMode('simulation')">⚙ Simulation</button>
+          <button id="modeRealBtn" class="mode-toggle-btn"        onclick="setRobotMode('real')">📡 Robot réel</button>
+        </div>
+        <div class="hero-controls">
+          <button id="btnStart"  class="btn btn-success btn-sm"  onclick="handleStart()">▶ Démarrer</button>
+          <button id="btnPause"  class="btn btn-warning btn-sm"  onclick="handlePause()"  disabled>⏸ Pause</button>
+          <button id="btnStop"   class="btn btn-danger  btn-sm"  onclick="handleStop()"   disabled>⏹ Arrêt</button>
+        </div>
+      </div>
+
       <div class="dashboard-main">
 
         <!-- ── LEFT PANEL ── -->
         <div class="dash-left">
 
-          <!-- Status + Controls -->
-          <div class="card dash-card">
-            <div class="card-header">
-              <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M10 6v4l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
-              État du robot
-            </div>
-            <div class="robot-status-display">
-              <div id="dashLed" class="led-large led-blue"></div>
-              <div>
-                <div id="dashStatus" class="status-title">Arrêté</div>
-                <div id="dashSubStatus" class="status-subtitle">Prêt à démarrer</div>
+          <!-- Vitesse simulation -->
+          <div class="card dash-card" id="speedControlCard">
+            <div class="speed-control" style="border-top:none">
+              <div class="speed-header">
+                <svg viewBox="0 0 20 20" fill="currentColor" style="width:12px;height:12px"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd"/></svg>
+                Vitesse simulation
+                <span id="speedValue" class="speed-badge">1×</span>
               </div>
-            </div>
-            <div class="control-buttons">
-              <button id="btnStart"  class="btn btn-success btn-sm"  onclick="handleStart()">▶ Démarrer</button>
-              <button id="btnPause"  class="btn btn-warning btn-sm"  onclick="handlePause()"  disabled>⏸ Pause</button>
-              <button id="btnStop"   class="btn btn-danger  btn-sm"  onclick="handleStop()"   disabled>⏹ Arrêt</button>
-            </div>
-            <!-- Mode toggle -->
-            <div class="mode-toggle-row">
-              <button id="modeSimBtn"  class="mode-toggle-btn active" onclick="setRobotMode('simulation')">⚙ Simulation</button>
-              <button id="modeRealBtn" class="mode-toggle-btn"        onclick="setRobotMode('real')">📡 Robot réel</button>
-            </div>
-
-            <div id="speedControlCard">
-              <div class="speed-control">
-                <div class="speed-header">
-                  <svg viewBox="0 0 20 20" fill="currentColor" style="width:12px;height:12px"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd"/></svg>
-                  Vitesse simulation
-                  <span id="speedValue" class="speed-badge">1×</span>
-                </div>
-                <input type="range" id="speedSlider" class="slider" min="1" max="200" value="1" oninput="handleSpeedChange(this.value)">
-                <div class="slider-labels"><span>1×</span><span>200×</span></div>
-              </div>
+              <input type="range" id="speedSlider" class="slider" min="1" max="200" value="1" oninput="handleSpeedChange(this.value)">
+              <div class="slider-labels"><span>1×</span><span>200×</span></div>
             </div>
           </div>
 
@@ -132,12 +141,12 @@
             </div>
           </div>
 
-          <!-- Real-time Data -->
-          <div class="card dash-card">
-            <div class="card-header">
+          <!-- Real-time Data (repliable — infos secondaires) -->
+          <details class="card dash-card details-card">
+            <summary class="card-header details-summary">
               <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z"/></svg>
-              Données temps réel
-            </div>
+              Détails techniques
+            </summary>
             <div class="data-grid">
               <div class="data-item"><span class="data-label">Pos. X</span><span class="data-value" id="rtPosX">—</span><span class="data-unit">m</span></div>
               <div class="data-item"><span class="data-label">Pos. Y</span><span class="data-value" id="rtPosY">—</span><span class="data-unit">m</span></div>
@@ -147,7 +156,7 @@
               <div class="data-item data-item-gps"><span class="data-label">Fix GPS</span><span class="data-value gps-fix" id="gpsFixLabel">—</span></div>
               <div class="data-item data-item-gps"><span class="data-label">Précision</span><span class="data-value" id="gpsAccuracy">—</span></div>
             </div>
-          </div>
+          </details>
 
         </div><!-- /dash-left -->
 
@@ -158,18 +167,27 @@
               <button class="btn btn-primary btn-sm" onclick="triggerKMLImport()">📁 KML</button>
               <input type="file" id="kmlInput" accept=".kml,.KML" style="display:none" onchange="handleKMLFile(this)">
             </div>
-            <div class="toolbar-group view-toggle-group">
-              <button class="view-toggle-btn active" id="btnSchemaViewDash" onclick="toggleSatelliteViewDash(false)">📐 Schéma</button>
-              <button class="view-toggle-btn" id="btnSatViewDash" onclick="toggleSatelliteViewDash(true)">🛰 Satellite</button>
+            <div class="toolbar-group toolbar-group-labeled">
+              <span class="toolbar-group-label">Vue</span>
+              <div class="view-toggle-group">
+                <button class="view-toggle-btn active" id="btnSchemaViewDash" onclick="toggleSatelliteViewDash(false)">📐 Schéma</button>
+                <button class="view-toggle-btn" id="btnSatViewDash" onclick="toggleSatelliteViewDash(true)">🛰 Satellite</button>
+              </div>
             </div>
-            <div class="toolbar-group map-style-group" id="dashMapStyleGroup" style="display:none">
-              <button class="map-style-btn active" data-style="esri"      onclick="setMapStyle('esri')">Esri</button>
-              <button class="map-style-btn"         data-style="ign_ortho" onclick="setMapStyle('ign_ortho')">IGN Photo</button>
-              <button class="map-style-btn"         data-style="ign_plan"  onclick="setMapStyle('ign_plan')">IGN Plan</button>
+            <div class="toolbar-group toolbar-group-labeled" id="dashMapStyleGroup" style="display:none">
+              <span class="toolbar-group-label">Fond de carte</span>
+              <div class="map-style-group">
+                <button class="map-style-btn active" data-style="esri"      onclick="setMapStyle('esri')">Esri</button>
+                <button class="map-style-btn"         data-style="ign_ortho" onclick="setMapStyle('ign_ortho')">IGN Photo</button>
+                <button class="map-style-btn"         data-style="ign_plan"  onclick="setMapStyle('ign_plan')">IGN Plan</button>
+              </div>
             </div>
-            <div class="toolbar-group" id="dashSchemaTools">
-              <button class="mode-btn active" id="btnModeSelect" onclick="setMode('select')">✏ Sélection</button>
-              <button class="mode-btn" id="btnModeView" onclick="setMode('view')">✋ Vue</button>
+            <div class="toolbar-group toolbar-group-labeled" id="dashSchemaTools">
+              <span class="toolbar-group-label">Outil</span>
+              <div style="display:flex;gap:5px">
+                <button class="mode-btn active" id="btnModeSelect" onclick="setMode('select')">✏ Sélection</button>
+                <button class="mode-btn" id="btnModeView" onclick="setMode('view')">✋ Vue</button>
+              </div>
             </div>
             <div class="toolbar-group toolbar-group-right" id="dashSchemaZoom">
               <span class="scale-badge" id="scaleInfo">—</span>
@@ -313,19 +331,28 @@
             </button>
           </div>
           <!-- Vue Schéma / Satellite -->
-          <div class="toolbar-group view-toggle-group">
-            <button class="view-toggle-btn active" id="btnSchemaView" onclick="toggleSatelliteView(false)">📐 Schéma</button>
-            <button class="view-toggle-btn" id="btnSatView" onclick="toggleSatelliteView(true)">🛰 Satellite</button>
+          <div class="toolbar-group toolbar-group-labeled">
+            <span class="toolbar-group-label">Vue</span>
+            <div class="view-toggle-group">
+              <button class="view-toggle-btn active" id="btnSchemaView" onclick="toggleSatelliteView(false)">📐 Schéma</button>
+              <button class="view-toggle-btn" id="btnSatView" onclick="toggleSatelliteView(true)">🛰 Satellite</button>
+            </div>
           </div>
-          <div class="toolbar-group map-style-group" id="mapMapStyleGroup" style="display:none">
-            <button class="map-style-btn active" data-style="esri"      onclick="setMapStyle('esri')">Esri</button>
-            <button class="map-style-btn"         data-style="ign_ortho" onclick="setMapStyle('ign_ortho')">IGN Photo</button>
-            <button class="map-style-btn"         data-style="ign_plan"  onclick="setMapStyle('ign_plan')">IGN Plan</button>
+          <div class="toolbar-group toolbar-group-labeled" id="mapMapStyleGroup" style="display:none">
+            <span class="toolbar-group-label">Fond de carte</span>
+            <div class="map-style-group">
+              <button class="map-style-btn active" data-style="esri"      onclick="setMapStyle('esri')">Esri</button>
+              <button class="map-style-btn"         data-style="ign_ortho" onclick="setMapStyle('ign_ortho')">IGN Photo</button>
+              <button class="map-style-btn"         data-style="ign_plan"  onclick="setMapStyle('ign_plan')">IGN Plan</button>
+            </div>
           </div>
-          <div class="toolbar-group">
-            <button class="btn btn-secondary btn-sm" onclick="selectAllCells()">☑ Toutes</button>
-            <button class="btn btn-secondary btn-sm" onclick="deselectAllCells()">☐ Aucune</button>
-            <button class="btn btn-accent btn-sm" onclick="planRoute()">↪ Planifier</button>
+          <div class="toolbar-group toolbar-group-labeled">
+            <span class="toolbar-group-label">Sélection</span>
+            <div style="display:flex;gap:5px">
+              <button class="btn btn-secondary btn-sm" onclick="selectAllCells()">☑ Toutes</button>
+              <button class="btn btn-secondary btn-sm" onclick="deselectAllCells()">☐ Aucune</button>
+              <button class="btn btn-accent btn-sm" onclick="planRoute()">↪ Planifier</button>
+            </div>
           </div>
           <div class="toolbar-group toolbar-group-right">
             <span class="scale-badge" id="scaleInfoMap">—</span>
