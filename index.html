@@ -94,66 +94,65 @@
             <button id="btnPause"  class="btn btn-warning btn-sm"  onclick="handlePause()"  disabled>⏸ Pause</button>
             <button id="btnStop"   class="btn btn-danger  btn-sm"  onclick="handleStop()"   disabled>⏹ Arrêt</button>
           </div>
-          <button class="strip-icon-btn" id="btnModeToggle" onclick="toggleModePopover()" title="Mode & vitesse">⚙</button>
-          <button class="strip-icon-btn strip-details-btn" id="btnDrawerToggle" onclick="toggleDashDrawer()" title="Sélection, propulsion, progression détaillée">☰ Détails</button>
-
-          <!-- Mode / vitesse — repliés, affichés au clic -->
-          <div class="mode-popover" id="modePopover">
-            <div class="rail-label">Mode</div>
-            <div class="hero-mode-toggle">
-              <button id="modeSimBtn"  class="mode-toggle-btn active" onclick="setRobotMode('simulation')">⚙ Simulation</button>
-              <button id="modeRealBtn" class="mode-toggle-btn"        onclick="setRobotMode('real')">📡 Robot réel</button>
-            </div>
-            <div id="speedControlCard">
-              <div class="speed-control rail-speed">
-                <div class="speed-header">
-                  <svg viewBox="0 0 20 20" fill="currentColor" style="width:12px;height:12px"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd"/></svg>
-                  Vitesse simulation
-                  <span id="speedValue" class="speed-badge">1×</span>
+          <div class="strip-popover-anchor">
+            <button class="strip-icon-btn" id="btnMapOptionsToggle" onclick="toggleMapOptionsPopover()" title="Options de carte">🗺</button>
+            <!-- KML / Vue / Fond de carte / Outil — repliés, affichés au clic -->
+            <div class="popover map-options-popover" id="mapOptionsPopover">
+              <div class="toolbar-group">
+                <button class="btn btn-primary btn-sm" onclick="triggerKMLImport()">📁 Importer KML</button>
+                <input type="file" id="kmlInput" accept=".kml,.KML" style="display:none" onchange="handleKMLFile(this)">
+              </div>
+              <div class="toolbar-group toolbar-group-labeled">
+                <span class="toolbar-group-label">Vue</span>
+                <div class="view-toggle-group">
+                  <button class="view-toggle-btn active" id="btnSchemaViewDash" onclick="toggleSatelliteViewDash(false)">📐 Schéma</button>
+                  <button class="view-toggle-btn" id="btnSatViewDash" onclick="toggleSatelliteViewDash(true)">🛰 Satellite</button>
                 </div>
-                <input type="range" id="speedSlider" class="slider" min="1" max="200" value="1" oninput="handleSpeedChange(this.value)">
-                <div class="slider-labels"><span>1×</span><span>200×</span></div>
+              </div>
+              <div class="toolbar-group toolbar-group-labeled" id="dashMapStyleGroup" style="display:none">
+                <span class="toolbar-group-label">Fond de carte</span>
+                <div class="map-style-group">
+                  <button class="map-style-btn"         data-style="esri"      onclick="setMapStyle('esri')">Esri</button>
+                  <button class="map-style-btn active"  data-style="ign_ortho" onclick="setMapStyle('ign_ortho')">IGN Photo</button>
+                  <button class="map-style-btn"         data-style="ign_plan"  onclick="setMapStyle('ign_plan')">IGN Plan</button>
+                </div>
+              </div>
+              <div class="toolbar-group toolbar-group-labeled" id="dashSchemaTools">
+                <span class="toolbar-group-label">Outil</span>
+                <div style="display:flex;gap:5px">
+                  <button class="mode-btn active" id="btnModeSelect" onclick="setMode('select')">✏ Sélection</button>
+                  <button class="mode-btn" id="btnModeView" onclick="setMode('view')">✋ Vue</button>
+                </div>
               </div>
             </div>
           </div>
+          <div class="strip-popover-anchor">
+            <button class="strip-icon-btn" id="btnModeToggle" onclick="toggleModePopover()" title="Mode & vitesse">⚙</button>
+            <!-- Mode / vitesse — repliés, affichés au clic -->
+            <div class="popover mode-popover" id="modePopover">
+              <div class="rail-label">Mode</div>
+              <div class="hero-mode-toggle">
+                <button id="modeSimBtn"  class="mode-toggle-btn active" onclick="setRobotMode('simulation')">⚙ Simulation</button>
+                <button id="modeRealBtn" class="mode-toggle-btn"        onclick="setRobotMode('real')">📡 Robot réel</button>
+              </div>
+              <div id="speedControlCard">
+                <div class="speed-control rail-speed">
+                  <div class="speed-header">
+                    <svg viewBox="0 0 20 20" fill="currentColor" style="width:12px;height:12px"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd"/></svg>
+                    Vitesse simulation
+                    <span id="speedValue" class="speed-badge">1×</span>
+                  </div>
+                  <input type="range" id="speedSlider" class="slider" min="1" max="200" value="1" oninput="handleSpeedChange(this.value)">
+                  <div class="slider-labels"><span>1×</span><span>200×</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button class="strip-icon-btn strip-details-btn" id="btnDrawerToggle" onclick="toggleDashDrawer()" title="Sélection, propulsion, progression détaillée">☰ Détails</button>
         </div><!-- /status-strip -->
 
         <!-- ── CENTER: Map ── -->
         <div class="dash-center">
-          <div class="map-toolbar dash-toolbar">
-            <div class="toolbar-group">
-              <button class="btn btn-primary btn-sm" onclick="triggerKMLImport()">📁 KML</button>
-              <input type="file" id="kmlInput" accept=".kml,.KML" style="display:none" onchange="handleKMLFile(this)">
-            </div>
-            <div class="toolbar-group toolbar-group-labeled">
-              <span class="toolbar-group-label">Vue</span>
-              <div class="view-toggle-group">
-                <button class="view-toggle-btn active" id="btnSchemaViewDash" onclick="toggleSatelliteViewDash(false)">📐 Schéma</button>
-                <button class="view-toggle-btn" id="btnSatViewDash" onclick="toggleSatelliteViewDash(true)">🛰 Satellite</button>
-              </div>
-            </div>
-            <div class="toolbar-group toolbar-group-labeled" id="dashMapStyleGroup" style="display:none">
-              <span class="toolbar-group-label">Fond de carte</span>
-              <div class="map-style-group">
-                <button class="map-style-btn"         data-style="esri"      onclick="setMapStyle('esri')">Esri</button>
-                <button class="map-style-btn active"  data-style="ign_ortho" onclick="setMapStyle('ign_ortho')">IGN Photo</button>
-                <button class="map-style-btn"         data-style="ign_plan"  onclick="setMapStyle('ign_plan')">IGN Plan</button>
-              </div>
-            </div>
-            <div class="toolbar-group toolbar-group-labeled" id="dashSchemaTools">
-              <span class="toolbar-group-label">Outil</span>
-              <div style="display:flex;gap:5px">
-                <button class="mode-btn active" id="btnModeSelect" onclick="setMode('select')">✏ Sélection</button>
-                <button class="mode-btn" id="btnModeView" onclick="setMode('view')">✋ Vue</button>
-              </div>
-            </div>
-            <div class="toolbar-group toolbar-group-right" id="dashSchemaZoom">
-              <span class="scale-badge" id="scaleInfo">—</span>
-              <button class="btn btn-ghost btn-sm" onclick="fitPond()">⊡</button>
-              <button class="zoom-btn-inline" onclick="zoomIn()">+</button>
-              <button class="zoom-btn-inline" onclick="zoomOut()">−</button>
-            </div>
-          </div>
           <div class="canvas-wrap" id="dashCanvasWrap">
             <canvas id="dashPondCanvas"></canvas>
             <div id="leaflet-container-dash"></div>
@@ -167,6 +166,14 @@
               <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="loadDemoPond()">Charger étang démo</button>
             </div>
 
+            <!-- Zoom / échelle — flottants, toujours visibles -->
+            <div class="map-zoom-float" id="dashSchemaZoom">
+              <span class="scale-badge" id="scaleInfo">—</span>
+              <button class="btn btn-ghost btn-sm" onclick="fitPond()">⊡</button>
+              <button class="zoom-btn-inline" onclick="zoomIn()">+</button>
+              <button class="zoom-btn-inline" onclick="zoomOut()">−</button>
+            </div>
+
             <!-- Coupe verticale : mini-widget flottant sur la carte, repliable -->
             <div class="section-widget" id="sectionWidget">
               <div class="section-widget-header" onclick="toggleSectionWidget()">
@@ -174,6 +181,18 @@
                 <button class="section-widget-toggle" id="sectionWidgetToggle">▾</button>
               </div>
               <div class="section-widget-body" id="sectionWidgetBody">
+                <div class="mini-propulsion">
+                  <div class="mini-motor-grid">
+                    <div class="mini-motor-cell"><span class="mini-motor-lbl">AV-G</span><span class="mini-motor-val" id="motorVal0mini">0%</span><div class="mini-motor-fill" id="motorFill0mini"></div></div>
+                    <div class="mini-motor-cell"><span class="mini-motor-lbl">AV-D</span><span class="mini-motor-val" id="motorVal1mini">0%</span><div class="mini-motor-fill" id="motorFill1mini"></div></div>
+                    <div class="mini-motor-cell"><span class="mini-motor-lbl">AR-G</span><span class="mini-motor-val" id="motorVal2mini">0%</span><div class="mini-motor-fill" id="motorFill2mini"></div></div>
+                    <div class="mini-motor-cell"><span class="mini-motor-lbl">AR-D</span><span class="mini-motor-val" id="motorVal3mini">0%</span><div class="mini-motor-fill" id="motorFill3mini"></div></div>
+                  </div>
+                  <div class="mini-heading">
+                    <div class="mini-heading-compass"><div class="mini-heading-needle" id="headingNeedleMini"></div></div>
+                    <span class="mini-heading-val" id="headingValMini">—°</span>
+                  </div>
+                </div>
                 <div class="section-canvas-wrap dash-section-wrap">
                   <canvas id="sectionCanvas"></canvas>
                 </div>

@@ -1405,12 +1405,19 @@ function updateMotorDisplay() {
       }
       setText(`motorVal${i}${suffix}`, `${Math.round(m)}%`);
     }
+    setText(`motorVal${i}mini`, `${Math.round(m)}%`);
+    const fillMini = document.getElementById(`motorFill${i}mini`);
+    if (fillMini) {
+      fillMini.style.width = pct + '%';
+      fillMini.classList.toggle('reverse', m < 0);
+    }
   }
   const heading = Math.round(((state.robot.heading || 0) % 360 + 360) % 360);
   setText('rtHeading', heading);
   setText('headingVal', heading + '°');
   setText('headingValMap', heading + '°');
-  for (const id of ['headingNeedle', 'headingNeedleMap']) {
+  setText('headingValMini', heading + '°');
+  for (const id of ['headingNeedle', 'headingNeedleMap', 'headingNeedleMini']) {
     const el = document.getElementById(id);
     if (el) el.style.transform = `translate(-50%, -100%) rotate(${heading}deg)`;
   }
@@ -2141,12 +2148,25 @@ function toggleModePopover(force) {
   if (!pop) return;
   const open = force !== undefined ? force : !pop.classList.contains('open');
   pop.classList.toggle('open', open);
+  if (open) toggleMapOptionsPopover(false);
 }
+
+// Popover Options de carte (KML/Vue/Fond de carte/Outil) — replié par défaut, ouvert au clic sur 🗺
+function toggleMapOptionsPopover(force) {
+  const pop = document.getElementById('mapOptionsPopover');
+  if (!pop) return;
+  const open = force !== undefined ? force : !pop.classList.contains('open');
+  pop.classList.toggle('open', open);
+  if (open) toggleModePopover(false);
+}
+
 document.addEventListener('click', e => {
-  const pop = document.getElementById('modePopover');
-  if (!pop || !pop.classList.contains('open')) return;
-  if (e.target.closest('#modePopover') || e.target.closest('#btnModeToggle')) return;
-  toggleModePopover(false);
+  for (const [popId, btnId] of [['modePopover', 'btnModeToggle'], ['mapOptionsPopover', 'btnMapOptionsToggle']]) {
+    const pop = document.getElementById(popId);
+    if (!pop || !pop.classList.contains('open')) continue;
+    if (e.target.closest(`#${popId}`) || e.target.closest(`#${btnId}`)) continue;
+    pop.classList.remove('open');
+  }
 });
 
 // ============================================================

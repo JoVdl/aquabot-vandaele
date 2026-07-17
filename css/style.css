@@ -350,16 +350,22 @@ svg { display: block; }
 .strip-details-btn { width: auto; padding: 0 10px; gap: 5px; font-size: 11px; font-weight: 700; }
 .strip-details-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-/* Popover Mode / Vitesse — replié par défaut, ancré au bouton ⚙ */
-.mode-popover {
+/* Popovers du bandeau — repliés par défaut, chacun ancré à son propre bouton */
+.strip-popover-anchor { position: relative; flex-shrink: 0; }
+.popover {
   display: none;
-  position: absolute; top: 100%; right: 90px; margin-top: 6px;
-  width: 220px; padding: 12px;
+  position: absolute; top: 100%; right: 0; margin-top: 6px;
   background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: var(--shadow-card); z-index: 70;
   flex-direction: column; gap: 8px;
 }
-.mode-popover.open { display: flex; }
+.popover.open { display: flex; }
+.mode-popover { width: 220px; padding: 12px; }
+.map-options-popover { width: 220px; padding: 10px; }
+.map-options-popover .toolbar-group-labeled + .toolbar-group-labeled {
+  border-left: none; padding-left: 0; margin-left: 0;
+  border-top: 1px solid var(--border); padding-top: 8px; margin-top: 2px;
+}
 .rail-label {
   font-size: 9.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.6px; color: var(--text-3);
@@ -396,17 +402,50 @@ svg { display: block; }
 .section-widget.collapsed .section-widget-toggle { transform: rotate(-90deg); }
 .section-widget.collapsed .section-widget-body { display: none; }
 .section-widget-body { padding: 8px; }
+
+/* Propulsion temps réel — en haut de la coupe verticale, très compact */
+.mini-propulsion {
+  display: flex; align-items: center; gap: 6px;
+  padding-bottom: 8px; margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.mini-motor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; flex: 1; }
+.mini-motor-cell {
+  position: relative; overflow: hidden;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: var(--bg-input); border-radius: 4px; padding: 3px 2px 4px;
+}
+.mini-motor-lbl { font-size: 7.5px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.3px; }
+.mini-motor-val { font-size: 10px; font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums; }
+.mini-motor-fill {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px; width: 0%;
+  background: var(--accent); transition: width 0.15s ease, background 0.15s ease;
+}
+.mini-motor-fill.reverse { background: var(--warning); }
+.mini-heading { display: flex; flex-direction: column; align-items: center; gap: 2px; flex-shrink: 0; }
+.mini-heading-compass {
+  position: relative; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--bg-input); border: 1.5px solid var(--border);
+}
+.mini-heading-needle {
+  position: absolute; left: 50%; top: 50%; width: 2px; height: 10px;
+  background: linear-gradient(var(--accent), transparent);
+  transform-origin: bottom center;
+  transform: translate(-50%, -100%) rotate(0deg);
+  transition: transform 0.2s ease;
+}
+.mini-heading-val { font-size: 9px; font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums; }
+
 .section-widget .depth-row { flex-direction: column; border-top: none; margin-top: 6px; }
 .section-widget .depth-item {
   flex-direction: row; justify-content: space-between; align-items: center;
   padding: 3px 0; border-right: none; border-top: 1px solid var(--border);
 }
 .section-widget .depth-item:first-child { border-top: none; }
-.dash-toolbar {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  padding: 6px 10px;
-  background: var(--bg-card); border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+/* Zoom/échelle — flottants sur la carte (le bandeau toolbar a été retiré de la vue permanente) */
+.map-zoom-float {
+  position: absolute; bottom: 10px; left: 10px; z-index: 15;
+  display: flex; align-items: center; gap: 5px;
 }
 .zoom-btn-inline {
   width: 26px; height: 26px;
@@ -854,8 +893,12 @@ svg { display: block; }
   .dash-center { min-height: 48vh; }
   .status-strip { border-bottom: 1px solid var(--border); }
   .hero-progress { flex: 1 1 100%; order: 3; }
-  .mode-popover { right: 14px; left: 14px; width: auto; }
-  .section-widget { width: 130px; }
+  /* Le popover s'ancre au bandeau entier (pas au petit bouton) pour occuper toute la largeur */
+  .strip-popover-anchor { position: static; }
+  .popover { right: 14px; left: 14px; width: auto; }
+  .section-widget { width: 148px; }
+  .mini-motor-lbl { font-size: 7px; }
+  .mini-heading-compass { width: 22px; height: 22px; }
 
   /* Le tiroir devient une feuille qui monte du bas, plus naturel au doigt */
   .drawer-backdrop { position: fixed; }
