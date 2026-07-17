@@ -28,6 +28,7 @@ function pondToFirestore(pond) {
     polygon:  pond.polygon,
     area:     pond.area     || 0,
     bbox:     pond.bbox,
+    hoseAnchor: pond.hoseAnchor || null,
     lastUsed:   pond.lastUsed   || Date.now(),
     lastResetAt: pond.lastResetAt || 0,
     work: {
@@ -442,6 +443,7 @@ const state = {
   sim: { running: false, speed: 1, intervalId: null, lastTick: 0, sessionElapsedAtStart: 0, lastSimSave: 0 },
   view: { offsetX: 0, offsetY: 0, scale: 10, canvasH: 600 },
   drag: { active: false, mode: 'add' }, // for drag-select
+  hose: { dragging: false }, // déplacement à la main de l'ancrage du tuyau d'évacuation
 };
 
 // ============================================================
@@ -554,6 +556,42 @@ function polygonArea(poly) {
   return Math.abs(a/2);
 }
 
+// Point le plus proche de (px,py) sur le contour du polygone (la berge) — utilisé pour
+// contraindre l'ancre du tuyau à toujours rester physiquement sur le bord de l'étang.
+function nearestPointOnPolygon(poly, px, py) {
+  let best = null, bestDist = Infinity;
+  for (let i = 0; i < poly.length - 1; i++) {
+    const a = poly[i], b = poly[i+1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx*dx + dy*dy;
+    let t = len2 > 0 ? ((px-a.x)*dx + (py-a.y)*dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const qx = a.x + t*dx, qy = a.y + t*dy;
+    const d = Math.hypot(px-qx, py-qy);
+    if (d < bestDist) { bestDist = d; best = { x: qx, y: qy }; }
+  }
+  return best || { x: px, y: py };
+}
+
+// Points d'une courbe légèrement sinueuse entre l'ancre (berge) et le robot — un tuyau qui
+// flotte ne file jamais droit, il ondule doucement ; l'amplitude retombe à zéro aux deux
+// bouts (sin(πt)) pour que la courbe reste toujours accrochée exactement à l'ancre et au robot.
+function computeHoseCurvePoints(anchor, robot, segments = 24) {
+  const dx = robot.x - anchor.x, dy = robot.y - anchor.y;
+  const L  = Math.hypot(dx, dy) || 0.001;
+  const ux = dx / L, uy = dy / L;   // direction
+  const nx = -uy, ny = ux;          // perpendiculaire
+  const amp = Math.min(L * 0.12, 1.5);
+  const pts = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const win  = Math.sin(Math.PI * t);
+    const wave = win * (Math.sin(t * 5.3 + L * 0.7) * amp + Math.sin(t * 2.1 + L * 0.3) * amp * 0.4);
+    pts.push({ x: anchor.x + dx * t + nx * wave, y: anchor.y + dy * t + ny * wave });
+  }
+  return pts;
+}
+
 function formatTime(sec) {
   const s = Math.floor(Math.abs(sec));
   const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
@@ -637,22 +675,51 @@ function generateGrid(polygon) {
 }
 
 // ============================================================
-// PATH PLANNER — boustrophedon
+// PATH PLANNER — boustrophedon, orienté pour ne jamais enrouler le tuyau
 // ============================================================
+// Le tuyau relie une ancre fixe (berge) au robot. Pour qu'il ne s'enroule/emmêle jamais,
+// le balayage en lignes doit avancer en s'éloignant progressivement de l'ancre, sans jamais
+// revenir en arrière : on choisit donc l'axe de balayage (rangées ou colonnes) selon que
+// l'ancre est plutôt sur un bord haut/bas ou gauche/droite de l'étang, puis on ordonne les
+// lignes de la plus proche de l'ancre à la plus lointaine.
 function planPath(cells) {
   const selected = cells.filter(c => c.selected && !c.completed);
   if (!selected.length) return [];
-  const byRow = {};
-  for (const c of selected) {
-    if (!byRow[c.row]) byRow[c.row] = [];
-    byRow[c.row].push(c);
+
+  const anchor = state.pond?.hoseAnchor;
+  let useCols = false;
+  if (anchor && state.pond?.bbox) {
+    const { minX, maxX, minY, maxY } = state.pond.bbox;
+    const spanX = maxX - minX || 1, spanY = maxY - minY || 1;
+    const edgeDistX = Math.min(anchor.x - minX, maxX - anchor.x) / spanX;
+    const edgeDistY = Math.min(anchor.y - minY, maxY - anchor.y) / spanY;
+    useCols = edgeDistX < edgeDistY; // ancre proche d'un bord gauche/droit → balayer par colonnes
   }
+  const groupKey = useCols ? 'col' : 'row';
+  const sweepKey = useCols ? 'row' : 'col';
+
+  const byGroup = {};
+  for (const c of selected) {
+    if (!byGroup[c[groupKey]]) byGroup[c[groupKey]] = [];
+    byGroup[c[groupKey]].push(c);
+  }
+
+  let groupIdxs = Object.keys(byGroup).map(Number);
+  if (anchor && state.pond?.bbox) {
+    const cs = params.cellSize;
+    const { minX, minY } = state.pond.bbox;
+    const anchorGroupCoord = useCols ? (anchor.x - minX) / cs : (anchor.y - minY) / cs;
+    groupIdxs.sort((a,b) => Math.abs(a - anchorGroupCoord) - Math.abs(b - anchorGroupCoord));
+  } else {
+    groupIdxs.sort((a,b) => a-b);
+  }
+
   const path = [];
-  let ltr = true;
-  for (const rowIdx of Object.keys(byRow).map(Number).sort((a,b) => a-b)) {
-    const row = byRow[rowIdx].sort((a,b) => ltr ? a.col-b.col : b.col-a.col);
-    path.push(...row.map(c => cells.indexOf(c)));
-    ltr = !ltr;
+  let forward = true;
+  for (const idx of groupIdxs) {
+    const group = byGroup[idx].sort((a,b) => forward ? a[sweepKey]-b[sweepKey] : b[sweepKey]-a[sweepKey]);
+    path.push(...group.map(c => cells.indexOf(c)));
+    forward = !forward;
   }
   return path.filter(i => i !== -1);
 }
@@ -674,11 +741,18 @@ function createPondFromKML({ name, polygon, origin }) {
     selections: [],
     lastUsed: Date.now(),
     bbox: { minX, maxX, minY, maxY },
+    // Point d'entrée par défaut du tuyau d'évacuation (berge la plus proche du bord gauche) —
+    // à ajuster ensuite à la main vers l'emplacement réel.
+    hoseAnchor: nearestPointOnPolygon(polygon, minX, (minY + maxY) / 2),
   };
 }
 
 function loadPond(pond) {
   state.pond = pond;
+  if (!pond.hoseAnchor) {
+    const { minX, minY, maxY } = pond.bbox;
+    pond.hoseAnchor = nearestPointOnPolygon(pond.polygon, minX, (minY + maxY) / 2);
+  }
   state.cells = pond.cells.map(c => ({ ...c }));
 
   // Restore completed cells
@@ -893,6 +967,20 @@ function getCellAt(wx, wy) {
   return state.cells.find(c =>
     Math.abs(c.cx - wx) <= cs/2 && Math.abs(c.cy - wy) <= cs/2
   ) || null;
+}
+
+// Le clic/toucher est-il assez proche de la poignée de l'ancre du tuyau pour la saisir ?
+function hitTestHoseAnchor(screenX, screenY, radiusPx) {
+  if (!state.pond?.hoseAnchor) return false;
+  const a = worldToScreen(state.pond.hoseAnchor.x, state.pond.hoseAnchor.y);
+  return Math.hypot(screenX - a.x, screenY - a.y) <= radiusPx;
+}
+
+// Déplace l'ancre du tuyau vers (wx,wy), toujours reprojetée sur la berge (contour de l'étang)
+function dragHoseAnchorTo(wx, wy) {
+  if (!state.pond) return;
+  state.pond.hoseAnchor = nearestPointOnPolygon(state.pond.polygon, wx, wy);
+  renderAllPondCanvases();
 }
 
 // ============================================================
@@ -1161,6 +1249,30 @@ function renderPondCanvas(canvas) {
       i === 0 ? ctx.moveTo(s.x,s.y) : ctx.lineTo(s.x,s.y);
     }
     ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // Tuyau d'évacuation flottant — de l'ancre (berge) au robot, en petites courbes
+  if (state.pond.hoseAnchor) {
+    const hosePts = computeHoseCurvePoints(state.pond.hoseAnchor, state.robot);
+    ctx.beginPath();
+    hosePts.forEach((p, i) => {
+      const s = worldToScreen(p.x, p.y);
+      i === 0 ? ctx.moveTo(s.x, s.y) : ctx.lineTo(s.x, s.y);
+    });
+    ctx.strokeStyle = 'rgba(15,23,42,0.9)';
+    ctx.lineWidth   = Math.max(2, 0.12 * state.view.scale);
+    ctx.lineCap     = 'round'; ctx.lineJoin = 'round';
+    ctx.stroke();
+    // Petit reflet clair pour l'effet "boyau flottant"
+    ctx.strokeStyle = 'rgba(148,163,184,0.5)';
+    ctx.lineWidth   = Math.max(1, 0.05 * state.view.scale);
+    ctx.stroke();
+
+    // Ancre — poignée à saisir pour la repositionner sur la berge réelle
+    const aS = worldToScreen(state.pond.hoseAnchor.x, state.pond.hoseAnchor.y);
+    ctx.beginPath(); ctx.arc(aS.x, aS.y, 7, 0, Math.PI*2);
+    ctx.fillStyle = '#f97316'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
   }
 
   // Robot
@@ -1939,6 +2051,13 @@ function initCanvasEvents() {
       const mx = e.clientX - rect.left, my = e.clientY - rect.top;
       const world = screenToWorld(mx, my);
 
+      // Ancre du tuyau : on la saisit en priorité si le clic est dessus
+      if (hitTestHoseAnchor(mx, my, 12)) {
+        state.hose.dragging = true;
+        canvas.style.cursor = 'grabbing';
+        return;
+      }
+
       if (state.view.mode === 'view' || e.button === 1) {
         isPanning = true; lastPanX = e.clientX; lastPanY = e.clientY;
         canvas.style.cursor = 'grabbing'; return;
@@ -1959,11 +2078,20 @@ function initCanvasEvents() {
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left, my = e.clientY - rect.top;
 
+      if (state.hose.dragging) {
+        const world = screenToWorld(mx, my);
+        dragHoseAnchorTo(world.x, world.y);
+        return;
+      }
       if (isPanning) {
         state.view.offsetX -= (e.clientX - lastPanX) / state.view.scale;
         state.view.offsetY += (e.clientY - lastPanY) / state.view.scale;
         lastPanX = e.clientX; lastPanY = e.clientY;
         renderAllPondCanvases(); return;
+      }
+      // Hover feedback near the anchor even when not dragging
+      if (!isPanning && !state.drag.active) {
+        canvas.style.cursor = hitTestHoseAnchor(mx, my, 12) ? 'grab' : (state.view.mode === 'view' ? 'grab' : 'crosshair');
       }
       // Drag select
       if (e.buttons === 1 && state.drag.active && state.view.mode === 'select') {
@@ -1977,6 +2105,12 @@ function initCanvasEvents() {
     });
 
     canvas.addEventListener('mouseup', () => {
+      if (state.hose.dragging) {
+        state.hose.dragging = false;
+        saveWork();
+        canvas.style.cursor = state.view.mode === 'view' ? 'grab' : 'crosshair';
+        return;
+      }
       if (state.drag.active && state.view.mode === 'select') debouncedSaveSelection();
       isPanning = false; state.drag.active = false;
       canvas.style.cursor = state.view.mode === 'view' ? 'grab' : 'crosshair';
@@ -1986,6 +2120,8 @@ function initCanvasEvents() {
     let lastTouchDist = 0, touchDragActive = false;
     let lastTouchX = 0, lastTouchY = 0;
 
+    let touchHoseDragActive = false;
+
     canvas.addEventListener('touchstart', e => {
       if (!state.pond) return;
       if (e.touches.length === 2) {
@@ -1994,9 +2130,15 @@ function initCanvasEvents() {
       } else if (e.touches.length === 1) {
         lastTouchX = e.touches[0].clientX;
         lastTouchY = e.touches[0].clientY;
+        const rect = canvas.getBoundingClientRect();
+        const mx = lastTouchX - rect.left, my = lastTouchY - rect.top;
+        if (hitTestHoseAnchor(mx, my, 20)) {
+          touchHoseDragActive = true;
+          state.hose.dragging = true;
+          return;
+        }
         if (state.view.mode === 'select') {
-          const rect = canvas.getBoundingClientRect();
-          const world = screenToWorld(e.touches[0].clientX - rect.left, e.touches[0].clientY - rect.top);
+          const world = screenToWorld(mx, my);
           const cell  = getCellAt(world.x, world.y);
           if (cell) {
             state.drag.mode = cell.selected ? 'remove' : 'add';
@@ -2010,6 +2152,13 @@ function initCanvasEvents() {
 
     canvas.addEventListener('touchmove', e => {
       if (!state.pond) return;
+      if (touchHoseDragActive && e.touches.length === 1) {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const world = screenToWorld(e.touches[0].clientX - rect.left, e.touches[0].clientY - rect.top);
+        dragHoseAnchorTo(world.x, world.y);
+        return;
+      }
       if (e.touches.length === 2) {
         e.preventDefault();
         const d = getTouchDist(e.touches);
@@ -2038,6 +2187,12 @@ function initCanvasEvents() {
     }, { passive: false });
 
     canvas.addEventListener('touchend', () => {
+      if (touchHoseDragActive) {
+        touchHoseDragActive = false;
+        state.hose.dragging = false;
+        saveWork();
+        return;
+      }
       if (touchDragActive && state.view.mode === 'select') debouncedSaveSelection();
       touchDragActive = false; lastTouchDist = 0;
     });
@@ -2272,6 +2427,7 @@ function loadDemoPond() {
     selections:[],
     lastUsed:Date.now(),
     bbox:{minX,maxX,minY,maxY},
+    hoseAnchor: nearestPointOnPolygon(polygon, minX, (minY + maxY) / 2),
   };
   const idx = state.ponds.findIndex(p => p.id==='demo');
   if (idx !== -1) state.ponds[idx] = pond; else state.ponds.push(pond);
@@ -2380,20 +2536,37 @@ function setMapStyle(styleKey) {
   }
 }
 
-let _leafletMap      = null;
-let _leafletLayers   = [];
-let _robotMarkerLeaf = null;
-let _satMode         = true; // vue satellite par défaut
+let _leafletMap          = null;
+let _leafletLayers       = [];
+let _robotMarkerLeaf     = null;
+let _hosePolylineLeaf    = null;
+let _hoseAnchorMarkerLeaf = null;
+let _satMode             = true; // vue satellite par défaut
 
 let _leafletMapDash      = null;
-let _baseLayersDash      = [];   // polygone de l'étang
-let _dynamicLayersDash   = [];   // robot (mis à jour à chaque tick)
+let _baseLayersDash      = [];   // polygone de l'étang + ancre du tuyau
+let _dynamicLayersDash   = [];   // robot + tuyau (mis à jour à chaque tick)
 let _pathLayerDash       = [];   // parcours planifié
 let _cellLayersDash      = [];   // cases (mise à jour rapide)
 let _cellRectsDash       = [];   // références aux L.rectangle pour setStyle() rapide
 let _cellRendererDash    = null; // canvas renderer partagé
 let _robotMarkerDash     = null;
+let _hoseAnchorMarkerDash = null;
+let _hosePolylineDash    = null;
 let _satModeDash         = true; // vue satellite par défaut
+
+// Met à jour la courbe du tuyau sans tout reconstruire (appelé pendant le glisser de l'ancre)
+function _refreshHosePolylineDash() {
+  if (!_hosePolylineDash || !state.pond?.hoseAnchor) return;
+  _hosePolylineDash.setLatLngs(_hoseLatLngs(state.pond.hoseAnchor, state.robot));
+}
+
+// Points lat/lng de la courbe du tuyau, pour un L.polyline
+function _hoseLatLngs(anchor, robot) {
+  return computeHoseCurvePoints(anchor, robot)
+    .map(p => { const ll = metersToLatLng(p.x, p.y); return ll ? [ll.lat, ll.lng] : null; })
+    .filter(Boolean);
+}
 
 function initLeafletMap() {
   if (_leafletMap) { setTimeout(() => _leafletMap.invalidateSize(), 50); return; }
@@ -2423,6 +2596,9 @@ function updateRobotMarker() {
   if (!_robotMarkerLeaf || !_satMode) return;
   const ll = metersToLatLng(state.robot.x, state.robot.y);
   if (ll) _robotMarkerLeaf.setLatLng([ll.lat, ll.lng]);
+  if (_hosePolylineLeaf && state.pond?.hoseAnchor) {
+    _hosePolylineLeaf.setLatLngs(_hoseLatLngs(state.pond.hoseAnchor, state.robot));
+  }
 }
 
 function refreshRobotMarkerIconSize() {
@@ -2486,6 +2662,31 @@ function _buildLeafletOverlay(lmap, layersArr) {
     layersArr.push(L.marker([robotLL.lat, robotLL.lng], { icon: gpsIcon, zIndexOffset: 900 }).addTo(lmap));
   }
 
+  // Tuyau d'évacuation flottant — courbe de l'ancre (berge, déplaçable) au robot
+  _hosePolylineLeaf = null; _hoseAnchorMarkerLeaf = null;
+  if (state.pond.hoseAnchor) {
+    const hosePts = _hoseLatLngs(state.pond.hoseAnchor, state.robot);
+    if (hosePts.length > 1) {
+      _hosePolylineLeaf = L.polyline(hosePts, { color: '#0f172a', weight: 4, opacity: 0.9, lineCap: 'round' }).addTo(lmap);
+      layersArr.push(_hosePolylineLeaf);
+    }
+    const aLL = metersToLatLng(state.pond.hoseAnchor.x, state.pond.hoseAnchor.y);
+    if (aLL) {
+      const anchorIcon = L.divIcon({ html: '<div class="hose-anchor-leaf"></div>', className: '', iconSize: [18,18], iconAnchor: [9,9] });
+      _hoseAnchorMarkerLeaf = L.marker([aLL.lat, aLL.lng], { icon: anchorIcon, draggable: true, zIndexOffset: 950 }).addTo(lmap);
+      _hoseAnchorMarkerLeaf.on('drag', e => {
+        const local = latLngToMeters(e.target.getLatLng().lat, e.target.getLatLng().lng, origin.lat, origin.lng);
+        const snapped = nearestPointOnPolygon(state.pond.polygon, local.x, local.y);
+        state.pond.hoseAnchor = snapped;
+        const sLL = metersToLatLng(snapped.x, snapped.y);
+        if (sLL) e.target.setLatLng([sLL.lat, sLL.lng]);
+        if (_hosePolylineLeaf) _hosePolylineLeaf.setLatLngs(_hoseLatLngs(snapped, state.robot));
+      });
+      _hoseAnchorMarkerLeaf.on('dragend', () => saveWork());
+      layersArr.push(_hoseAnchorMarkerLeaf);
+    }
+  }
+
   lmap.fitBounds(poly.getBounds(), { padding: [40,40] });
   return robotMarker;
 }
@@ -2537,6 +2738,26 @@ function _rebuildBaseLayersDash() {
   const polyLL = state.pond.polygon.map(p => { const ll = metersToLatLng(p.x, p.y); return [ll.lat, ll.lng]; });
   const poly = L.polygon(polyLL, { color: '#0ea5e9', weight: 2, fillColor: '#0ea5e9', fillOpacity: 0.07 }).addTo(_leafletMapDash);
   _baseLayersDash.push(poly);
+
+  // Ancre du tuyau d'évacuation — poignée déplaçable à la main, reprojetée sur la berge
+  _hoseAnchorMarkerDash = null;
+  if (state.pond.hoseAnchor) {
+    const aLL = metersToLatLng(state.pond.hoseAnchor.x, state.pond.hoseAnchor.y);
+    if (aLL) {
+      const anchorIcon = L.divIcon({ html: '<div class="hose-anchor-leaf"></div>', className: '', iconSize: [18,18], iconAnchor: [9,9] });
+      _hoseAnchorMarkerDash = L.marker([aLL.lat, aLL.lng], { icon: anchorIcon, draggable: true, zIndexOffset: 950 }).addTo(_leafletMapDash);
+      _hoseAnchorMarkerDash.on('drag', e => {
+        const local = latLngToMeters(e.target.getLatLng().lat, e.target.getLatLng().lng, origin.lat, origin.lng);
+        const snapped = nearestPointOnPolygon(state.pond.polygon, local.x, local.y);
+        state.pond.hoseAnchor = snapped;
+        const sLL = metersToLatLng(snapped.x, snapped.y);
+        if (sLL) e.target.setLatLng([sLL.lat, sLL.lng]);
+        _refreshHosePolylineDash();
+      });
+      _hoseAnchorMarkerDash.on('dragend', () => saveWork());
+      _baseLayersDash.push(_hoseAnchorMarkerDash);
+    }
+  }
 
   // La coupe verticale flotte en haut à droite du canvas : on réserve sa largeur côté droit
   // pour garder l'étang centré côté gauche, jamais masqué dessous.
@@ -2596,6 +2817,16 @@ function _rebuildDynamicLayersDash() {
       className: '', iconSize: [160,18], iconAnchor: [80,-18],
     });
     _dynamicLayersDash.push(L.marker([gpsLL.lat, gpsLL.lng], { icon: gpsIcon, zIndexOffset: 900 }).addTo(_leafletMapDash));
+  }
+
+  // Tuyau d'évacuation flottant — courbe de l'ancre (berge, déplaçable) au robot
+  _hosePolylineDash = null;
+  if (state.pond.hoseAnchor) {
+    const hosePts = _hoseLatLngs(state.pond.hoseAnchor, state.robot);
+    if (hosePts.length > 1) {
+      _hosePolylineDash = L.polyline(hosePts, { color: '#0f172a', weight: 4, opacity: 0.9, lineCap: 'round' }).addTo(_leafletMapDash);
+      _dynamicLayersDash.push(_hosePolylineDash);
+    }
   }
 }
 
