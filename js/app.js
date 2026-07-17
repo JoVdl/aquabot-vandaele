@@ -1151,10 +1151,13 @@ function renderPondCanvas(canvas) {
   // Robot
   const rr = worldToScreen(state.robot.x, state.robot.y);
   const hr  = (ROBOT_SIZE/2) * state.view.scale;
-  ctx.fillStyle   = 'rgba(14,165,233,0.18)';
-  ctx.strokeStyle = '#0ea5e9'; ctx.lineWidth = 2;
+  ctx.save();
+  ctx.shadowColor = 'rgba(245,158,11,0.9)'; ctx.shadowBlur = Math.max(8, hr*0.8);
+  ctx.fillStyle   = 'rgba(245,158,11,0.35)';
+  ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3;
   ctx.beginPath(); ctx.rect(rr.x-hr, rr.y-hr, hr*2, hr*2); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#0ea5e9'; ctx.beginPath(); ctx.arc(rr.x,rr.y,Math.max(3,hr*0.18),0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = '#f59e0b'; ctx.beginPath(); ctx.arc(rr.x,rr.y,Math.max(3,hr*0.18),0,Math.PI*2); ctx.fill();
   // Pump indicator
   const pr = Math.max(3, (params.cellSize/2)*state.view.scale);
   const pumping = state.robot.pumpState === 'pumping';
@@ -2449,7 +2452,7 @@ function _buildLeafletOverlay(lmap, layersArr) {
 
   let robotMarker = null;
   if (robotLL) {
-    const icon = L.divIcon({ html: _robotIconHtml(), className: '', iconSize: [28,28], iconAnchor: [14,14] });
+    const icon = L.divIcon({ html: _robotIconHtml(), className: '', iconSize: [36,36], iconAnchor: [18,18] });
     robotMarker = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(lmap);
     layersArr.push(robotMarker);
     // GPS position
@@ -2539,7 +2542,7 @@ function _rebuildDynamicLayersDash() {
   if (!robotLL) return;
 
   // Robot
-  const icon = L.divIcon({ html: _robotIconHtml(), className: '', iconSize: [28,28], iconAnchor: [14,14] });
+  const icon = L.divIcon({ html: _robotIconHtml(), className: '', iconSize: [36,36], iconAnchor: [18,18] });
   _robotMarkerDash = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(_leafletMapDash);
   _dynamicLayersDash.push(_robotMarkerDash);
 
