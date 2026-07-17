@@ -1423,6 +1423,18 @@ function updateMotorDisplay() {
   }
 }
 
+// Position GPS + case en cours de traitement, affichées dans la coupe verticale
+function updateGpsDisplay() {
+  const robot  = state.robot;
+  const origin = state.pond?.origin || { lat: 0, lng: 0 };
+  const lat = origin.lat + robot.y / 110540;
+  const lng = origin.lng + robot.x / (Math.cos(origin.lat * Math.PI / 180) * 111320);
+  setText('miniGpsLat', lat.toFixed(6) + '°');
+  setText('miniGpsLng', lng.toFixed(6) + '°');
+  const total = state.plannedPath.length;
+  setText('miniGpsCell', total ? `${robot.currentCellIdx + 1}/${total}` : '—');
+}
+
 // ============================================================
 // SIMULATION
 // ============================================================
@@ -1526,6 +1538,18 @@ function simulationTick() {
 
   const targetCell = state.cells[path[robot.currentCellIdx]];
   if (!targetCell) { robot.currentCellIdx++; return; }
+
+  // Le robot n'est jamais parfaitement immobile pendant le travail sur une case : courant et
+  // agitation de l'eau par la pompe le font dériver légèrement, les moteurs corrigent en continu.
+  if (robot.pumpState !== 'idle') {
+    const phase  = robot.currentCellIdx * 0.9137;
+    const t      = robot.elapsedSec;
+    const driftX = Math.sin(t * 0.6  + phase)       * 0.02 + Math.sin(t * 1.7 + phase * 1.4) * 0.012;
+    const driftY = Math.cos(t * 0.45 + phase * 1.2) * 0.02 + Math.sin(t * 2.1 + phase * 0.8) * 0.012;
+    robot.x = targetCell.cx + driftX;
+    robot.y = targetCell.cy + driftY;
+    robot.motors = computeThrustAllocation(-driftX * 6, -driftY * 6, robot.heading);
+  }
 
   switch (robot.pumpState) {
 
@@ -1753,6 +1777,7 @@ function updateUI() {
   if (pondBarEl) pondBarEl.style.width = pondPct + '%';
 
   updateMotorDisplay();
+  updateGpsDisplay();
 
   // Derive and set status text — works on both active device and observers
   const nc = effectiveMiniCycles();

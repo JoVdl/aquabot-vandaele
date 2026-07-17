@@ -436,6 +436,23 @@ svg { display: block; }
 }
 .mini-heading-val { font-size: 9px; font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums; }
 
+/* Position GPS + case en cours — sous la propulsion, au-dessus du schéma */
+.mini-gps-row {
+  display: flex;
+  padding-bottom: 8px; margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.mini-gps-item {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+}
+.mini-gps-item + .mini-gps-item { border-left: 1px solid var(--border); }
+.mini-gps-lbl { font-size: 7px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.3px; }
+.mini-gps-val {
+  max-width: 100%; font-size: 9px; font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .section-widget .depth-row { flex-direction: column; border-top: none; margin-top: 6px; }
 .section-widget .depth-item {
   flex-direction: row; justify-content: space-between; align-items: center;
