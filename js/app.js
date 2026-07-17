@@ -703,7 +703,7 @@ function loadPond(pond) {
 
   // Show pond-specific elements
   document.getElementById('propulsionPanelMap').style.display = 'flex';
-  document.getElementById('modeToggle').style.display     = 'flex';
+  if (!_satMode) document.getElementById('modeToggle').style.display = 'flex';
   document.getElementById('dashCanvasEmptyState').style.display = 'none';
   document.getElementById('canvasEmptyState').style.display    = 'none';
   ['btnSelectAll','btnSelectRemaining','btnDeselectAll','btnPlanRoute'].forEach(id => {
@@ -2236,7 +2236,7 @@ const MAP_STYLES = {
   },
 };
 
-let _currentMapStyle   = 'esri';
+let _currentMapStyle   = 'ign_ortho'; // IGN Ortho — meilleure résolution qu'Esri sur le territoire français
 let _baseTileLayer     = null;   // onglet Carte
 let _labelsLayer       = null;
 let _baseTileLayerDash = null;   // tableau de bord
@@ -2282,7 +2282,7 @@ function setMapStyle(styleKey) {
 let _leafletMap      = null;
 let _leafletLayers   = [];
 let _robotMarkerLeaf = null;
-let _satMode         = false;
+let _satMode         = true; // vue satellite par défaut
 
 let _leafletMapDash      = null;
 let _baseLayersDash      = [];   // polygone de l'étang
@@ -2292,7 +2292,7 @@ let _cellLayersDash      = [];   // cases (mise à jour rapide)
 let _cellRectsDash       = [];   // références aux L.rectangle pour setStyle() rapide
 let _cellRendererDash    = null; // canvas renderer partagé
 let _robotMarkerDash     = null;
-let _satModeDash         = false;
+let _satModeDash         = true; // vue satellite par défaut
 
 function initLeafletMap() {
   if (_leafletMap) { setTimeout(() => _leafletMap.invalidateSize(), 50); return; }
@@ -2665,6 +2665,8 @@ function toggleSatelliteView(on) {
 // ============================================================
 function init() {
   applyThemeIcon();
+  toggleSatelliteViewDash(true);
+  toggleSatelliteView(true);
   loadPonds();
   try { const sp = localStorage.getItem('aquabot_params'); if (sp) Object.assign(params, JSON.parse(sp)); } catch {}
 
