@@ -1841,6 +1841,15 @@ function autoSaveSelectionOnStart() {
 // UI UPDATER
 // ============================================================
 function updateUI() {
+  // Auto-corrige l'affichage "aucun étang" (nom d'en-tête, état vide du canvas) à chaque
+  // rafraîchissement — évite qu'il reste bloqué si state.pond a été peuplé par un chemin
+  // qui ne passe pas par loadPond() (reprise cloud, sync multi-appareil, etc.).
+  setText('currentPondName', state.pond ? state.pond.name : 'Aucun étang sélectionné');
+  const dashEmpty = document.getElementById('dashCanvasEmptyState');
+  if (dashEmpty) dashEmpty.style.display = state.pond ? 'none' : 'flex';
+  const mapEmpty = document.getElementById('canvasEmptyState');
+  if (mapEmpty) mapEmpty.style.display = state.pond ? 'none' : 'flex';
+
   const robot = state.robot, path = state.plannedPath;
   const total = path.length;
   // Path-relative progress: count only cells in the current path that are completed
