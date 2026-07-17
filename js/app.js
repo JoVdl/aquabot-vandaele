@@ -203,7 +203,14 @@ function _resumeSimFromCloud(sim) {
   console.log('[_resumeSimFromCloud] plannedPath.length=', state.plannedPath.length, 'currentCellIdx=', sim.currentCellIdx);
 
   // Restaurer les paramètres de simulation
-  if (sim.speed)      state.sim.speed    = sim.speed;
+  if (sim.speed) {
+    state.sim.speed = sim.speed;
+    // Sans ça, le curseur affiché reste sur sa valeur HTML par défaut (1×) tant que
+    // subscribeSimState() n'a pas reçu son propre snapshot — une course selon l'ordre
+    // d'arrivée des deux lectures Firestore, d'où la vitesse qui semblait se réinitialiser.
+    const speedEl = document.getElementById('speedSlider');
+    if (speedEl) { speedEl.value = sim.speed; setText('speedValue', sim.speed + '×'); }
+  }
   if (sim.workMode)   params.workMode    = sim.workMode;
   if (sim.miniCycles) params.miniCycles  = sim.miniCycles;
 
