@@ -2123,6 +2123,32 @@ function setPanelTab(tab) {
   document.querySelectorAll('.panel-content').forEach(p => p.classList.toggle('active', p.dataset.content === tab));
 }
 
+// Tiroir Sélection/Propulsion/Progression — replié par défaut, ouvert au clic
+function toggleDashDrawer(force) {
+  const drawer   = document.getElementById('dashDrawer');
+  const backdrop = document.getElementById('drawerBackdrop');
+  const btn      = document.getElementById('btnDrawerToggle');
+  if (!drawer) return;
+  const open = force !== undefined ? force : !drawer.classList.contains('open');
+  drawer.classList.toggle('open', open);
+  if (backdrop) backdrop.classList.toggle('open', open);
+  if (btn) btn.classList.toggle('active', open);
+}
+
+// Popover Mode/Vitesse — replié par défaut, ouvert au clic sur ⚙
+function toggleModePopover(force) {
+  const pop = document.getElementById('modePopover');
+  if (!pop) return;
+  const open = force !== undefined ? force : !pop.classList.contains('open');
+  pop.classList.toggle('open', open);
+}
+document.addEventListener('click', e => {
+  const pop = document.getElementById('modePopover');
+  if (!pop || !pop.classList.contains('open')) return;
+  if (e.target.closest('#modePopover') || e.target.closest('#btnModeToggle')) return;
+  toggleModePopover(false);
+});
+
 // ============================================================
 // TAB NAVIGATION
 // ============================================================

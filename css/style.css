@@ -318,31 +318,49 @@ svg { display: block; }
 .progress-pct { font-size: 12px; font-weight: 700; color: var(--accent); min-width: 34px; text-align: right; }
 
 /* ============================================================
-   DASHBOARD — rail / carte / panneau à onglets
+   DASHBOARD — bandeau d'état / carte + coupe verticale / tiroir
    ============================================================ */
 .dashboard-main {
   display: grid;
-  grid-template-columns: 200px 1fr 280px;
-  grid-template-areas: "rail map panel";
+  grid-template-columns: 1fr 240px;
+  grid-template-rows: auto 1fr;
+  grid-template-areas: "strip strip" "map section";
+  position: relative;
   flex: 1;
   min-height: 0;
   gap: 0;
   overflow: hidden;
 }
 
-/* Rail — état + contrôles, toujours visible */
-.dash-rail {
-  grid-area: rail;
-  display: flex; flex-direction: column; gap: 10px;
-  padding: 14px 12px;
-  overflow-y: auto;
-  border-right: 1px solid var(--border);
+/* Bandeau d'état — LED, statut, progression, contrôles essentiels */
+.status-strip {
+  grid-area: strip;
+  position: relative;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
   background: var(--bg-card);
 }
-.rail-status { display: flex; align-items: center; gap: 10px; }
-.rail-controls { display: flex; gap: 5px; flex-wrap: wrap; }
-.rail-controls .btn { flex: 1; }
-.rail-divider { height: 1px; background: var(--border); }
+.strip-controls { display: flex; gap: 5px; flex-shrink: 0; }
+.strip-icon-btn {
+  width: 30px; height: 30px; flex-shrink: 0;
+  background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-2); font-size: 14px; transition: all 0.15s;
+}
+.strip-icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.strip-details-btn { width: auto; padding: 0 10px; gap: 5px; font-size: 11px; font-weight: 700; }
+.strip-details-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Popover Mode / Vitesse — replié par défaut, ancré au bouton ⚙ */
+.mode-popover {
+  display: none;
+  position: absolute; top: 100%; right: 90px; margin-top: 6px;
+  width: 220px; padding: 12px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-card); z-index: 70;
+  flex-direction: column; gap: 8px;
+}
+.mode-popover.open { display: flex; }
 .rail-label {
   font-size: 9.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.6px; color: var(--text-3);
@@ -355,6 +373,15 @@ svg { display: block; }
   display: flex; flex-direction: column;
   overflow: hidden; position: relative;
   background: #070c18;
+}
+
+/* Coupe verticale — toujours visible, à côté de la carte */
+.dash-section {
+  grid-area: section;
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: var(--bg-card);
 }
 .dash-toolbar {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
@@ -371,13 +398,29 @@ svg { display: block; }
 }
 .zoom-btn-inline:hover { border-color: var(--accent); color: var(--accent); }
 
-/* Panel — onglets Sélection / Propulsion / Progression */
-.dash-panel {
-  grid-area: panel;
+/* Tiroir — Sélection / Propulsion / Progression, replié par défaut */
+.drawer-backdrop {
+  position: absolute; inset: 0; z-index: 55;
+  background: rgba(0,0,0,0.35);
+  display: none;
+}
+.drawer-backdrop.open { display: block; }
+.dash-drawer {
+  position: absolute; top: 0; right: -340px; bottom: 0; width: 320px;
+  max-width: 90vw;
   display: flex; flex-direction: column;
   border-left: 1px solid var(--border);
   background: var(--bg-card);
+  box-shadow: -8px 0 30px rgba(0,0,0,0.35);
+  transition: right 0.22s var(--ease);
+  z-index: 60;
   overflow: hidden;
+}
+.dash-drawer.open { right: 0; }
+.drawer-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; font-size: 13px; font-weight: 700;
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 .panel-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .panel-tab {
@@ -783,27 +826,29 @@ svg { display: block; }
   .main-content { overflow: visible; height: auto; flex: none; padding-bottom: 60px; }
   #panel-dashboard { overflow: visible; height: auto; }
 
-  /* La carte d'abord, puis les contrôles, puis le panneau à onglets */
+  /* La carte d'abord, puis le bandeau d'état, puis la coupe verticale */
   .dashboard-main {
     grid-template-columns: 1fr;
-    grid-template-areas: "map" "rail" "panel";
+    grid-template-areas: "map" "strip" "section";
     overflow: visible;
     height: auto;
   }
   .dash-center { min-height: 48vh; }
-  .dash-rail {
-    flex-direction: row; flex-wrap: wrap; align-items: center;
-    border-right: none; border-bottom: 1px solid var(--border);
-  }
-  .rail-status { flex: 1 1 auto; min-width: 160px; }
+  .status-strip { border-bottom: 1px solid var(--border); }
   .hero-progress { flex: 1 1 100%; order: 3; }
-  .rail-controls { flex: 1 1 auto; }
-  .rail-divider { display: none; }
-  .rail-label { flex-basis: 100%; order: 4; }
-  .hero-mode-toggle { order: 5; }
-  #speedControlCard { flex: 1 1 100%; order: 6; }
-  .dash-panel { border-left: none; }
-  .panel-content { max-height: 60vh; }
+  .mode-popover { right: 14px; left: 14px; width: auto; }
+  .dash-section { border-left: none; border-top: 1px solid var(--border); }
+
+  /* Le tiroir devient une feuille qui monte du bas, plus naturel au doigt */
+  .drawer-backdrop { position: fixed; }
+  .dash-drawer {
+    position: fixed; top: auto; right: 0; left: 0; bottom: -85vh;
+    width: auto; max-width: none; height: 80vh;
+    border-left: none; border-radius: 16px 16px 0 0;
+    transition: bottom 0.22s var(--ease);
+  }
+  .dash-drawer.open { bottom: 0; right: 0; }
+  .panel-content { max-height: none; }
 
   /* Onglet Carte plein écran : height:100% ne marche plus une fois le
      document en scroll naturel (parents en hauteur auto) — hauteur fixe. */

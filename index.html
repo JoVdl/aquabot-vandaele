@@ -78,42 +78,45 @@
     <section class="tab-panel active" id="panel-dashboard">
       <div class="dashboard-main">
 
-        <!-- ── RAIL: état + contrôles, toujours visible ── -->
-        <div class="dash-rail">
-          <div class="rail-status">
-            <div id="heroLed" class="led-large led-blue"></div>
-            <div class="hero-status-text">
-              <div id="heroStatus" class="status-title">Arrêté</div>
-              <div id="heroSubStatus" class="status-subtitle">Prêt à démarrer</div>
-            </div>
+        <!-- ── BANDEAU: état + contrôles essentiels, toujours visible ── -->
+        <div class="status-strip">
+          <div id="heroLed" class="led-large led-blue"></div>
+          <div class="hero-status-text">
+            <div id="heroStatus" class="status-title">Arrêté</div>
+            <div id="heroSubStatus" class="status-subtitle">Prêt à démarrer</div>
           </div>
           <div class="hero-progress">
             <div class="progress-bar"><div id="heroProgressBar" class="progress-fill" style="width:0%"></div></div>
             <span id="heroProgressPct" class="progress-pct">0%</span>
           </div>
-          <div class="rail-controls">
+          <div class="strip-controls">
             <button id="btnStart"  class="btn btn-success btn-sm"  onclick="handleStart()">▶ Démarrer</button>
             <button id="btnPause"  class="btn btn-warning btn-sm"  onclick="handlePause()"  disabled>⏸ Pause</button>
             <button id="btnStop"   class="btn btn-danger  btn-sm"  onclick="handleStop()"   disabled>⏹ Arrêt</button>
           </div>
-          <div class="rail-divider"></div>
-          <div class="rail-label">Mode</div>
-          <div class="hero-mode-toggle">
-            <button id="modeSimBtn"  class="mode-toggle-btn active" onclick="setRobotMode('simulation')">⚙ Simulation</button>
-            <button id="modeRealBtn" class="mode-toggle-btn"        onclick="setRobotMode('real')">📡 Robot réel</button>
-          </div>
-          <div id="speedControlCard">
-            <div class="speed-control rail-speed">
-              <div class="speed-header">
-                <svg viewBox="0 0 20 20" fill="currentColor" style="width:12px;height:12px"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd"/></svg>
-                Vitesse simulation
-                <span id="speedValue" class="speed-badge">1×</span>
+          <button class="strip-icon-btn" id="btnModeToggle" onclick="toggleModePopover()" title="Mode & vitesse">⚙</button>
+          <button class="strip-icon-btn strip-details-btn" id="btnDrawerToggle" onclick="toggleDashDrawer()" title="Sélection, propulsion, progression détaillée">☰ Détails</button>
+
+          <!-- Mode / vitesse — repliés, affichés au clic -->
+          <div class="mode-popover" id="modePopover">
+            <div class="rail-label">Mode</div>
+            <div class="hero-mode-toggle">
+              <button id="modeSimBtn"  class="mode-toggle-btn active" onclick="setRobotMode('simulation')">⚙ Simulation</button>
+              <button id="modeRealBtn" class="mode-toggle-btn"        onclick="setRobotMode('real')">📡 Robot réel</button>
+            </div>
+            <div id="speedControlCard">
+              <div class="speed-control rail-speed">
+                <div class="speed-header">
+                  <svg viewBox="0 0 20 20" fill="currentColor" style="width:12px;height:12px"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd"/></svg>
+                  Vitesse simulation
+                  <span id="speedValue" class="speed-badge">1×</span>
+                </div>
+                <input type="range" id="speedSlider" class="slider" min="1" max="200" value="1" oninput="handleSpeedChange(this.value)">
+                <div class="slider-labels"><span>1×</span><span>200×</span></div>
               </div>
-              <input type="range" id="speedSlider" class="slider" min="1" max="200" value="1" oninput="handleSpeedChange(this.value)">
-              <div class="slider-labels"><span>1×</span><span>200×</span></div>
             </div>
           </div>
-        </div><!-- /dash-rail -->
+        </div><!-- /status-strip -->
 
         <!-- ── CENTER: Map ── -->
         <div class="dash-center">
@@ -166,8 +169,26 @@
           </div>
         </div><!-- /dash-center -->
 
-        <!-- ── PANEL: infos secondaires, un onglet à la fois ── -->
-        <div class="dash-panel">
+        <!-- ── Coupe verticale : toujours visible (avec la carte, c'est le plus utile) ── -->
+        <div class="dash-section">
+          <div class="panel-section-label">Coupe verticale</div>
+          <div class="section-canvas-wrap dash-section-wrap">
+            <canvas id="sectionCanvas"></canvas>
+          </div>
+          <div class="depth-row">
+            <div class="depth-item"><span class="depth-lbl">Eau</span><span class="depth-val"><span id="depthWater">—</span> m</span></div>
+            <div class="depth-item"><span class="depth-lbl">Vase</span><span class="depth-val"><span id="depthMud">—</span> m</span></div>
+            <div class="depth-item"><span class="depth-lbl">Pompe</span><span class="depth-val accent"><span id="depthPump">0.00</span> m</span></div>
+          </div>
+        </div><!-- /dash-section -->
+
+        <!-- ── TIROIR: infos secondaires, replié par défaut, un onglet à la fois ── -->
+        <div class="drawer-backdrop" id="drawerBackdrop" onclick="toggleDashDrawer()"></div>
+        <div class="dash-drawer" id="dashDrawer">
+          <div class="drawer-header">
+            <span>Détails</span>
+            <button class="btn btn-ghost btn-sm" onclick="toggleDashDrawer()">✕</button>
+          </div>
           <div class="panel-tabs" id="dashPanelTabs">
             <button class="panel-tab active" data-panel="selection">Sélection</button>
             <button class="panel-tab" data-panel="propulsion">Propulsion</button>
@@ -248,16 +269,6 @@
               </div>
             </div>
 
-            <div class="panel-section-label">Coupe verticale</div>
-            <div class="section-canvas-wrap dash-section-wrap">
-              <canvas id="sectionCanvas"></canvas>
-            </div>
-            <div class="depth-row">
-              <div class="depth-item"><span class="depth-lbl">Eau</span><span class="depth-val"><span id="depthWater">—</span> m</span></div>
-              <div class="depth-item"><span class="depth-lbl">Vase</span><span class="depth-val"><span id="depthMud">—</span> m</span></div>
-              <div class="depth-item"><span class="depth-lbl">Pompe</span><span class="depth-val accent"><span id="depthPump">0.00</span> m</span></div>
-            </div>
-
             <div class="panel-section-label">Progression totale — <span id="dashPondBottomName">—</span></div>
             <div class="progress-bar-wrap">
               <div class="progress-bar"><div id="pondTotalBar" class="progress-fill" style="width:0%"></div></div>
@@ -272,7 +283,7 @@
               <div class="vol-row"><span class="vol-lbl">Temps de travail</span><span class="vol-val" id="pondTotalTime">00:00:00</span></div>
             </div>
           </div>
-        </div><!-- /dash-panel -->
+        </div><!-- /dash-drawer -->
 
       </div><!-- /dashboard-main -->
     </section>
