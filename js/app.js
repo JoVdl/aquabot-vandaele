@@ -2225,7 +2225,10 @@ const MAP_STYLES = {
     url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image%2Fjpeg',
     labels: null,
     attribution: '© IGN Géoportail',
-    maxNativeZoom: 21,
+    // La résolution réelle de la BD ORTHO ne couvre pas le zoom 21 partout
+    // (zones rurales) — au-delà, le WMTS renvoie des tuiles vides. On
+    // plafonne à 19 (couverture fiable) et on laisse Leaflet suréchantillonner.
+    maxNativeZoom: 19,
   },
   ign_plan: {
     label: 'IGN Plan',
