@@ -1035,12 +1035,20 @@ function fitPond() {
   if (!state.pond) return;
   // Use dash canvas if visible, otherwise map canvas
   let canvas = document.getElementById('dashPondCanvas');
-  if (!canvas || !canvas.width) canvas = document.getElementById('pondCanvas');
+  const isDash = !!(canvas && canvas.width);
+  if (!isDash) canvas = document.getElementById('pondCanvas');
   if (!canvas || !canvas.width) return;
   const W = canvas.width, H = canvas.height;
   const { minX, maxX, minY, maxY } = state.pond.bbox;
   const pad = 40;
-  state.view.scale   = Math.min((W-pad*2)/(maxX-minX), (H-pad*2)/(maxY-minY));
+  // Sur le tableau de bord, la coupe verticale flotte en haut à droite du canvas :
+  // on réserve sa largeur pour garder l'étang centré côté gauche, jamais masqué dessous.
+  let usableW = W;
+  if (isDash) {
+    const widget = document.getElementById('sectionWidget');
+    if (widget) usableW = Math.max(120, W - widget.offsetWidth - 20);
+  }
+  state.view.scale   = Math.min((usableW-pad*2)/(maxX-minX), (H-pad*2)/(maxY-minY));
   state.view.offsetX = minX - pad/state.view.scale;
   state.view.offsetY = minY - pad/state.view.scale;
   renderAllPondCanvases();
@@ -2515,7 +2523,11 @@ function _rebuildBaseLayersDash() {
   const poly = L.polygon(polyLL, { color: '#0ea5e9', weight: 2, fillColor: '#0ea5e9', fillOpacity: 0.07 }).addTo(_leafletMapDash);
   _baseLayersDash.push(poly);
 
-  _leafletMapDash.fitBounds(poly.getBounds(), { padding: [40,40] });
+  // La coupe verticale flotte en haut à droite du canvas : on réserve sa largeur côté droit
+  // pour garder l'étang centré côté gauche, jamais masqué dessous.
+  const widget   = document.getElementById('sectionWidget');
+  const rightPad = 40 + (widget ? widget.offsetWidth + 20 : 0);
+  _leafletMapDash.fitBounds(poly.getBounds(), { paddingTopLeft: [40, 40], paddingBottomRight: [rightPad, 40] });
 }
 
 // HTML du marqueur robot (carré bleu + cercle vert pump + flèche de cap, comme le canvas)
