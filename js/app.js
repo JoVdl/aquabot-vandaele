@@ -2175,8 +2175,17 @@ function resizeSectionCanvas() {
   const wrap = document.querySelector('.dash-section-wrap');
   const canvas = document.getElementById('sectionCanvas');
   if (!wrap || !canvas) return;
-  canvas.width  = Math.min(wrap.clientWidth - 20, 500);
-  canvas.height = 200;
+  canvas.width  = Math.min(wrap.clientWidth - 4, 500);
+  canvas.height = 170;
+}
+
+// Mini-widget coupe verticale flottant — visible par défaut, repliable au clic sur l'en-tête
+function toggleSectionWidget(force) {
+  const widget = document.getElementById('sectionWidget');
+  if (!widget) return;
+  const collapsed = force !== undefined ? force : !widget.classList.contains('collapsed');
+  widget.classList.toggle('collapsed', collapsed);
+  if (!collapsed) { resizeSectionCanvas(); renderSectionCanvas(); }
 }
 
 // ============================================================

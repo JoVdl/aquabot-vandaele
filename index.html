@@ -166,21 +166,26 @@
               <button class="btn btn-primary" onclick="triggerKMLImport()">Importer KML</button>
               <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="loadDemoPond()">Charger étang démo</button>
             </div>
+
+            <!-- Coupe verticale : mini-widget flottant sur la carte, repliable -->
+            <div class="section-widget" id="sectionWidget">
+              <div class="section-widget-header" onclick="toggleSectionWidget()">
+                <span>Coupe verticale</span>
+                <button class="section-widget-toggle" id="sectionWidgetToggle">▾</button>
+              </div>
+              <div class="section-widget-body" id="sectionWidgetBody">
+                <div class="section-canvas-wrap dash-section-wrap">
+                  <canvas id="sectionCanvas"></canvas>
+                </div>
+                <div class="depth-row">
+                  <div class="depth-item"><span class="depth-lbl">Eau</span><span class="depth-val"><span id="depthWater">—</span> m</span></div>
+                  <div class="depth-item"><span class="depth-lbl">Vase</span><span class="depth-val"><span id="depthMud">—</span> m</span></div>
+                  <div class="depth-item"><span class="depth-lbl">Pompe</span><span class="depth-val accent"><span id="depthPump">0.00</span> m</span></div>
+                </div>
+              </div>
+            </div>
           </div>
         </div><!-- /dash-center -->
-
-        <!-- ── Coupe verticale : toujours visible (avec la carte, c'est le plus utile) ── -->
-        <div class="dash-section">
-          <div class="panel-section-label">Coupe verticale</div>
-          <div class="section-canvas-wrap dash-section-wrap">
-            <canvas id="sectionCanvas"></canvas>
-          </div>
-          <div class="depth-row">
-            <div class="depth-item"><span class="depth-lbl">Eau</span><span class="depth-val"><span id="depthWater">—</span> m</span></div>
-            <div class="depth-item"><span class="depth-lbl">Vase</span><span class="depth-val"><span id="depthMud">—</span> m</span></div>
-            <div class="depth-item"><span class="depth-lbl">Pompe</span><span class="depth-val accent"><span id="depthPump">0.00</span> m</span></div>
-          </div>
-        </div><!-- /dash-section -->
 
         <!-- ── TIROIR: infos secondaires, replié par défaut, un onglet à la fois ── -->
         <div class="drawer-backdrop" id="drawerBackdrop" onclick="toggleDashDrawer()"></div>
