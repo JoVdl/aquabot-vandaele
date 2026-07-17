@@ -2402,6 +2402,8 @@ function initLeafletMap() {
   }
 
   L.control.zoom({ position: 'bottomright' }).addTo(_leafletMap);
+  // Le robot est dessiné à sa taille réelle : recalculer l'icône à chaque changement de zoom
+  _leafletMap.on('zoomend', refreshRobotMarkerIconSize);
   updateLeafletOverlay();
 }
 
@@ -2414,6 +2416,12 @@ function updateRobotMarker() {
   if (!_robotMarkerLeaf || !_satMode) return;
   const ll = metersToLatLng(state.robot.x, state.robot.y);
   if (ll) _robotMarkerLeaf.setLatLng([ll.lat, ll.lng]);
+}
+
+function refreshRobotMarkerIconSize() {
+  if (!_robotMarkerLeaf || !_leafletMap) return;
+  const ll = metersToLatLng(state.robot.x, state.robot.y);
+  if (ll) _robotMarkerLeaf.setIcon(_robotIconForZoom(_leafletMap, ll.lat));
 }
 
 // ── Shared overlay builder (évite duplication) ──────────────────────────────
@@ -2460,7 +2468,7 @@ function _buildLeafletOverlay(lmap, layersArr) {
 
   let robotMarker = null;
   if (robotLL) {
-    const icon = L.divIcon({ html: _robotIconHtml(), className: '', iconSize: [36,36], iconAnchor: [18,18] });
+    const icon = _robotIconForZoom(lmap, robotLL.lat);
     robotMarker = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(lmap);
     layersArr.push(robotMarker);
     // GPS position
@@ -2530,14 +2538,29 @@ function _rebuildBaseLayersDash() {
   _leafletMapDash.fitBounds(poly.getBounds(), { paddingTopLeft: [40, 40], paddingBottomRight: [rightPad, 40] });
 }
 
-// HTML du marqueur robot (carré bleu + cercle vert pump + flèche de cap, comme le canvas)
-function _robotIconHtml() {
+// Pixels correspondant à `meters` mètres à la latitude et au zoom courant (Web Mercator, tuiles 256px) —
+// permet de dessiner le robot à sa taille réelle sur la carte, comme sur le schéma.
+function metersToPixelsAtZoom(map, lat, meters) {
+  const metersPerPixel = 156543.03392804097 * Math.cos(lat * Math.PI / 180) / Math.pow(2, map.getZoom());
+  return meters / metersPerPixel;
+}
+
+// Icône Leaflet du robot, carrée et à l'échelle réelle (ROBOT_SIZE mètres) au zoom courant
+function _robotIconForZoom(map, lat) {
+  const sizePx = Math.max(14, Math.round(metersToPixelsAtZoom(map, lat, ROBOT_SIZE)));
+  return L.divIcon({ html: _robotIconHtml(sizePx), className: '', iconSize: [sizePx, sizePx], iconAnchor: [sizePx/2, sizePx/2] });
+}
+
+// HTML du marqueur robot (carré + cercle vert pump + flèche de cap, comme le canvas)
+function _robotIconHtml(sizePx) {
   const pumping = state.robot.pumpState === 'pumping';
   const pumpColor = pumping ? 'rgba(16,185,129,0.95)' : 'rgba(16,185,129,0.45)';
   const heading = state.robot.heading || 0;
-  return `<div class="robot-marker-leaf-box">
-    <div class="robot-pump-leaf" style="background:${pumpColor}"></div>
-    <div class="heading-arrow-leaf" style="--heading:${heading}deg"></div>
+  const pumpSize = Math.max(4, Math.round(sizePx * 0.4));
+  const arrowLen = Math.max(6, Math.round(sizePx * 0.55));
+  return `<div class="robot-marker-leaf-box" style="width:${sizePx}px;height:${sizePx}px">
+    <div class="robot-pump-leaf" style="width:${pumpSize}px;height:${pumpSize}px;background:${pumpColor}"></div>
+    <div class="heading-arrow-leaf" style="height:${arrowLen}px;--heading:${heading}deg"></div>
   </div>`;
 }
 
@@ -2554,7 +2577,7 @@ function _rebuildDynamicLayersDash() {
   if (!robotLL) return;
 
   // Robot
-  const icon = L.divIcon({ html: _robotIconHtml(), className: '', iconSize: [36,36], iconAnchor: [18,18] });
+  const icon = _robotIconForZoom(_leafletMapDash, robotLL.lat);
   _robotMarkerDash = L.marker([robotLL.lat, robotLL.lng], { icon, zIndexOffset: 1000 }).addTo(_leafletMapDash);
   _dynamicLayersDash.push(_robotMarkerDash);
 
@@ -2661,6 +2684,8 @@ function initLeafletMapDash() {
     _labelsLayerDash = L.tileLayer(styleDash.labels, { attribution: '', maxZoom: 21, maxNativeZoom: styleDash.maxNativeZoom, opacity: 0.65 }).addTo(_leafletMapDash);
   }
   L.control.zoom({ position: 'bottomright' }).addTo(_leafletMapDash);
+  // Le robot est dessiné à sa taille réelle : recalculer l'icône à chaque changement de zoom
+  _leafletMapDash.on('zoomend', () => { if (_satModeDash) _rebuildDynamicLayersDash(); });
 
   _rebuildBaseLayersDash();
   _rebuildCellLayersDash();

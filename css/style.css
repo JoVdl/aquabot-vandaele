@@ -843,18 +843,17 @@ svg { display: block; }
   box-shadow: 0 0 14px rgba(14,165,233,0.8);
   animation: ledPulse 2s ease-in-out infinite;
 }
+/* Carré, comme le robot réel — la taille (largeur/hauteur) est fixée en inline style
+   par le JS, calculée à partir des dimensions réelles du robot et du zoom courant. */
 .robot-marker-leaf-box {
-  width: 36px; height: 36px;
   background: radial-gradient(circle at 35% 30%, #ffc169, #f59e0b 55%, #b45309 100%);
   border: 3px solid #fff;
-  border-radius: 50%;
   box-shadow: 0 0 0 4px rgba(245,158,11,0.35), 0 2px 10px rgba(0,0,0,0.55);
   position: relative;
 }
 .robot-marker-leaf-box::before {
   content: '';
-  position: absolute; inset: -9px;
-  border-radius: 50%;
+  position: absolute; inset: -25%;
   border: 2px solid rgba(245,158,11,0.65);
   animation: robotHaloPulse 1.8s ease-out infinite;
 }
