@@ -1726,7 +1726,7 @@ function updateUI() {
   const total = path.length;
   // Path-relative progress: count only cells in the current path that are completed
   const done  = path.filter(idx => state.cells[idx]?.completed).length;
-  const pct   = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  const pct   = total > 0 ? Math.min(100, (done / total) * 100) : 0;
 
   setText('rtPosX',      robot.x.toFixed(2));
   setText('rtPosY',      robot.y.toFixed(2));
@@ -1740,10 +1740,10 @@ function updateUI() {
 
   const el = document.getElementById('dashProgressBar');
   if (el) el.style.width = pct + '%';
-  setText('dashProgressPct', pct + '%');
+  setText('dashProgressPct', pct.toFixed(2) + '%');
   const heroEl = document.getElementById('heroProgressBar');
   if (heroEl) heroEl.style.width = pct + '%';
-  setText('heroProgressPct', pct + '%');
+  setText('heroProgressPct', pct.toFixed(2) + '%');
   setText('dashCellsDone',  done);
   setText('dashCellsTotal', total || '—');
 
@@ -1775,11 +1775,11 @@ function updateUI() {
   // Bottom bar — cumulative pond totals
   const pondDone  = state.cells.filter(c => c.completed).length;
   const pondTotal = state.cells.length;
-  const pondPct   = pondTotal > 0 ? Math.round((pondDone / pondTotal) * 100) : 0;
+  const pondPct   = pondTotal > 0 ? (pondDone / pondTotal) * 100 : 0;
   const allMudVol = mudVolumeForCells(pondTotal);
   setText('pondTotalDone',      pondDone);
   setText('pondTotalCells',     pondTotal || '—');
-  setText('pondTotalPct',       pondPct + '%');
+  setText('pondTotalPct',       pondPct.toFixed(2) + '%');
   setText('pondTotalVolume',    formatVolume(robot.volumePumped));
   setText('pondTotalMud',       allMudVol >= 1 ? allMudVol.toFixed(2)+' m³' : (allMudVol*1000).toFixed(0)+' L');
   setText('pondTotalTime',      formatTime(robot.elapsedSec));
