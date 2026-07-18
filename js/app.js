@@ -556,6 +556,20 @@ function polygonArea(poly) {
   return Math.abs(a/2);
 }
 
+// Bbox d'un étang — recalculée depuis son polygone si le champ stocké est absent ou
+// incomplet (étang enregistré avant l'ajout de ce champ). Ne jamais laisser une bbox
+// manquante planter fitPond()/planPath()/les vignettes de la liste des étangs.
+function getPondBbox(pond) {
+  const b = pond.bbox;
+  if (b && b.minX !== undefined && b.maxX !== undefined && b.minY !== undefined && b.maxY !== undefined) return b;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of pond.polygon) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+  }
+  return { minX, maxX, minY, maxY };
+}
+
 // Point le plus proche de (px,py) sur le contour du polygone (la berge) — utilisé pour
 // contraindre l'ancre du tuyau à toujours rester physiquement sur le bord de l'étang.
 function nearestPointOnPolygon(poly, px, py) {
@@ -749,14 +763,16 @@ function createPondFromKML({ name, polygon, origin }) {
 
 function loadPond(pond) {
   state.pond = pond;
-  // Reprise défensive : un étang enregistré avant l'ajout du tuyau peut ne pas avoir de bbox/
-  // polygone bien formé — ne jamais laisser cette reprise interrompre le reste du chargement.
-  if (!pond.hoseAnchor) {
-    try {
+  // Reprise défensive : un étang enregistré avant l'ajout de ces champs peut ne pas avoir
+  // de bbox valide — on la recalcule depuis le polygone pour ne jamais laisser fitPond(),
+  // planPath() ou le tuyau silencieusement casser/disparaître sur un vieil étang.
+  try {
+    pond.bbox = getPondBbox(pond);
+    if (!pond.hoseAnchor) {
       const { minX, minY, maxY } = pond.bbox;
       pond.hoseAnchor = nearestPointOnPolygon(pond.polygon, minX, (minY + maxY) / 2);
-    } catch (e) { console.warn('hoseAnchor backfill:', e.message); }
-  }
+    }
+  } catch (e) { console.warn('bbox/hoseAnchor backfill:', e.message); }
   state.cells = pond.cells.map(c => ({ ...c }));
 
   // Restore completed cells
@@ -1138,7 +1154,7 @@ function fitPond() {
   if (!isDash) canvas = document.getElementById('pondCanvas');
   if (!canvas || !canvas.width) return;
   const W = canvas.width, H = canvas.height;
-  const { minX, maxX, minY, maxY } = state.pond.bbox;
+  const { minX, maxX, minY, maxY } = getPondBbox(state.pond);
   const pad = 40;
   // Sur le tableau de bord, la coupe verticale flotte en haut à droite du canvas :
   // on réserve sa largeur pour garder l'étang centré côté gauche, jamais masqué dessous.
@@ -2280,7 +2296,7 @@ function drawPondThumb(pond) {
   const W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#0d1424'; ctx.fillRect(0, 0, W, H);
-  const { minX, maxX, minY, maxY } = pond.bbox;
+  const { minX, maxX, minY, maxY } = getPondBbox(pond);
   const sc = Math.min((W-10)/(maxX-minX), (H-10)/(maxY-minY));
   const ox = minX - (W/sc - (maxX-minX))/2;
   const oy = minY - (H/sc - (maxY-minY))/2;
