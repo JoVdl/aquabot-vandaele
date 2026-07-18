@@ -916,7 +916,7 @@ svg { display: block; }
 @media (max-width: 820px) {
   /* Allow natural document scroll on mobile */
   html, body { height: auto; overflow-y: auto; }
-  .app { height: auto; min-height: 100vh; overflow: visible; }
+  .app { height: auto; min-height: 100vh; min-height: 100svh; overflow: visible; }
   .main-content { overflow: visible; height: auto; flex: none; padding-bottom: 60px; }
   #panel-dashboard { overflow: visible; height: auto; }
 
@@ -931,7 +931,10 @@ svg { display: block; }
     overflow: visible;
     height: auto;
   }
-  .dash-center { min-height: 48vh; }
+  /* svh (small viewport height) ignore la barre d'adresse qui se cache/montre au scroll —
+     évite que cette hauteur change en boucle pendant qu'on essaie justement de scroller.
+     vh reste en repli pour les navigateurs plus anciens. */
+  .dash-center { min-height: 48vh; min-height: 48svh; }
   .status-strip { border-bottom: 1px solid var(--border); }
   .hero-progress { flex: 1 1 100%; order: 3; }
   /* Le popover s'ancre au bandeau entier (pas au petit bouton) pour occuper toute la largeur */
@@ -955,7 +958,7 @@ svg { display: block; }
   /* Onglet Carte plein écran : height:100% ne marche plus une fois le
      document en scroll naturel (parents en hauteur auto) — hauteur fixe. */
   #panel-map { height: auto; }
-  .map-layout { height: 75vh; }
+  .map-layout { height: 75vh; height: 75svh; }
 
   /* Navigation en bas de l'écran — plus facile à atteindre au pouce */
   .nav-tabs {

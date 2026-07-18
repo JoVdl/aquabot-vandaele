@@ -2052,13 +2052,20 @@ function initCanvasEvents() {
     const wrap   = document.getElementById(wrapId);
     if (!canvas || !wrap) continue;
 
-    // Resize observer — refit on first valid size, re-render on subsequent resizes
+    // Resize observer — refit on first valid size, re-render on subsequent resizes.
+    // Débouncé : sur mobile, la barre d'adresse de Safari qui se cache/montre pendant
+    // le scroll déclenche une rafale de micro-resize — sans ce délai, chaque frame
+    // relance un reflow du canvas et le scroll se fait "combattre" en boucle.
+    let resizeDebounce = null;
     new ResizeObserver(() => {
-      const prevW = canvas.width;
-      canvas.width  = wrap.clientWidth;
-      canvas.height = wrap.clientHeight;
-      if (prevW === 0 && state.pond) fitPond();
-      else renderPondCanvas(canvas);
+      clearTimeout(resizeDebounce);
+      resizeDebounce = setTimeout(() => {
+        const prevW = canvas.width;
+        canvas.width  = wrap.clientWidth;
+        canvas.height = wrap.clientHeight;
+        if (prevW === 0 && state.pond) fitPond();
+        else renderPondCanvas(canvas);
+      }, 120);
     }).observe(wrap);
 
     // Initial size
