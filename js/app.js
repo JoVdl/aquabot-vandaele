@@ -2061,6 +2061,12 @@ function initCanvasEvents() {
     // Débouncé : sur mobile, la barre d'adresse de Safari qui se cache/montre pendant
     // le scroll déclenche une rafale de micro-resize — sans ce délai, chaque frame
     // relance un reflow du canvas et le scroll se fait "combattre" en boucle.
+    //
+    // Le conteneur Leaflet partage ce même wrap : sans invalidateSize() ici, Leaflet garde
+    // une taille de conteneur périmée dès que le wrap change de taille (barre d'adresse,
+    // rotation, tiroir qui s'ouvre...), et ses calculs de position (marqueurs, zoom) dérivent
+    // petit à petit — d'où le robot qui semblait se décaler de l'étang sur le tableau de bord
+    // (dont la mise en page bouge beaucoup plus que celle de l'onglet Carte, plein écran).
     let resizeDebounce = null;
     new ResizeObserver(() => {
       clearTimeout(resizeDebounce);
@@ -2070,6 +2076,8 @@ function initCanvasEvents() {
         canvas.height = wrap.clientHeight;
         if (prevW === 0 && state.pond) fitPond();
         else renderPondCanvas(canvas);
+        const lmap = wrapId === 'dashCanvasWrap' ? _leafletMapDash : _leafletMap;
+        if (lmap) lmap.invalidateSize();
       }, 120);
     }).observe(wrap);
 
