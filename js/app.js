@@ -2435,6 +2435,21 @@ function setActiveTab(tab) {
         if (state.pond) { document.getElementById('modeToggle').style.display = 'flex'; }
       }
     });
+  } else if (tab === 'dashboard') {
+    // Le tableau de bord est l'onglet par défaut : sa carte Leaflet n'était resynchronisée
+    // qu'une fois au tout premier chargement de la page. En revenant d'un autre onglet, sa
+    // taille de conteneur avait pu changer entre-temps sans jamais être revérifiée — même
+    // souci que celui déjà corrigé pour l'onglet Carte, ici pour le retour sur le tableau de bord.
+    requestAnimationFrame(() => {
+      if (_satModeDash) {
+        if (!_leafletMapDash) initLeafletMapDash();
+        else { updateLeafletOverlayDash(); setTimeout(() => _leafletMapDash.invalidateSize(), 100); }
+      } else {
+        const c = document.getElementById('dashPondCanvas'), w = document.getElementById('dashCanvasWrap');
+        if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
+        renderPondCanvas(c);
+      }
+    });
   }
 }
 
