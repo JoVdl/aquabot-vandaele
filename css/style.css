@@ -920,6 +920,11 @@ svg { display: block; }
   .main-content { overflow: visible; height: auto; flex: none; padding-bottom: 60px; }
   #panel-dashboard { overflow: visible; height: auto; }
 
+  /* Toujours accessible même après avoir défilé loin dans la page (la carte
+     satellite capture le geste de balayage pour se déplacer, pas pour faire
+     défiler la page — l'en-tête fixe évite de rester "coincé" plus bas). */
+  .header { position: sticky; top: 0; z-index: 20; }
+
   /* La carte d'abord, puis le bandeau d'état */
   .dashboard-main {
     grid-template-areas: "map" "strip";

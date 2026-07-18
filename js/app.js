@@ -749,9 +749,13 @@ function createPondFromKML({ name, polygon, origin }) {
 
 function loadPond(pond) {
   state.pond = pond;
+  // Reprise défensive : un étang enregistré avant l'ajout du tuyau peut ne pas avoir de bbox/
+  // polygone bien formé — ne jamais laisser cette reprise interrompre le reste du chargement.
   if (!pond.hoseAnchor) {
-    const { minX, minY, maxY } = pond.bbox;
-    pond.hoseAnchor = nearestPointOnPolygon(pond.polygon, minX, (minY + maxY) / 2);
+    try {
+      const { minX, minY, maxY } = pond.bbox;
+      pond.hoseAnchor = nearestPointOnPolygon(pond.polygon, minX, (minY + maxY) / 2);
+    } catch (e) { console.warn('hoseAnchor backfill:', e.message); }
   }
   state.cells = pond.cells.map(c => ({ ...c }));
 
