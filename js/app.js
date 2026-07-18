@@ -2593,6 +2593,7 @@ let _cellLayersDash      = [];   // cases (mise à jour rapide)
 let _cellRectsDash       = [];   // références aux L.rectangle pour setStyle() rapide
 let _cellRendererDash    = null; // canvas renderer partagé
 let _robotMarkerDash     = null;
+let _gpsLabelMarkerDash  = null;
 let _hoseAnchorMarkerDash = null;
 let _hosePolylineDash    = null;
 let _hoseOutlineDash     = null; // liseré sombre sous le tuyau, pour le contraste
@@ -2826,9 +2827,14 @@ function metersToPixelsAtZoom(map, lat, meters) {
   return meters / metersPerPixel;
 }
 
-// Icône Leaflet du robot, carrée et à l'échelle réelle (ROBOT_SIZE mètres) au zoom courant
+// Icône Leaflet du robot, carrée et à l'échelle réelle (ROBOT_SIZE mètres) au zoom courant.
+// Un zoom transitoire (pendant une animation de pincer-zoomer) peut ponctuellement renvoyer une
+// valeur non exploitable — un icône de taille NaN casserait iconAnchor et ferait "voler" le
+// marqueur loin de sa vraie position, d'où le repli sur une taille par défaut raisonnable.
 function _robotIconForZoom(map, lat) {
-  const sizePx = Math.max(14, Math.round(metersToPixelsAtZoom(map, lat, ROBOT_SIZE)));
+  let sizePx = Math.round(metersToPixelsAtZoom(map, lat, ROBOT_SIZE));
+  if (!Number.isFinite(sizePx)) sizePx = 32;
+  sizePx = Math.max(14, sizePx);
   return L.divIcon({ html: _robotIconHtml(sizePx), className: '', iconSize: [sizePx, sizePx], iconAnchor: [sizePx/2, sizePx/2] });
 }
 
@@ -2845,11 +2851,15 @@ function _robotIconHtml(sizePx) {
   </div>`;
 }
 
-// Redessine le robot (mis à jour à chaque tick de simulation)
+// (Re)crée le robot + le tuyau — appelé au chargement de l'étang, changement de style/zoom,
+// PAS à chaque tick (voir _updateDynamicLayersDashPosition ci-dessous pour ça : détruire et
+// recréer les couches à chaque tick pouvait produire un marqueur mal positionné si le rendu
+// tombait pendant une transition de zoom Leaflet — d'où le robot qui semblait "sauter" hors
+// de l'étang après un pincer-zoomer).
 function _rebuildDynamicLayersDash() {
   for (const l of _dynamicLayersDash) { try { _leafletMapDash.removeLayer(l); } catch {} }
   _dynamicLayersDash.length = 0;
-  _robotMarkerDash = null;
+  _robotMarkerDash = null; _gpsLabelMarkerDash = null;
   if (!state.pond) return;
   const origin = state.pond.origin;
   if (!origin || (!origin.lat && !origin.lng)) return;
@@ -2863,14 +2873,12 @@ function _rebuildDynamicLayersDash() {
   _dynamicLayersDash.push(_robotMarkerDash);
 
   // Position GPS
-  const gpsLL = metersToLatLng(state.robot.x, state.robot.y);
-  if (gpsLL) {
-    const gpsIcon = L.divIcon({
-      html: `<div class="gps-pos-leaf">${gpsLL.lat.toFixed(6)}, ${gpsLL.lng.toFixed(6)}</div>`,
-      className: '', iconSize: [160,18], iconAnchor: [80,-18],
-    });
-    _dynamicLayersDash.push(L.marker([gpsLL.lat, gpsLL.lng], { icon: gpsIcon, zIndexOffset: 900 }).addTo(_leafletMapDash));
-  }
+  const gpsIcon = L.divIcon({
+    html: `<div class="gps-pos-leaf">${robotLL.lat.toFixed(6)}, ${robotLL.lng.toFixed(6)}</div>`,
+    className: '', iconSize: [160,18], iconAnchor: [80,-18],
+  });
+  _gpsLabelMarkerDash = L.marker([robotLL.lat, robotLL.lng], { icon: gpsIcon, zIndexOffset: 900 }).addTo(_leafletMapDash);
+  _dynamicLayersDash.push(_gpsLabelMarkerDash);
 
   // Tuyau d'évacuation flottant — courbe de l'ancre (berge, déplaçable) au robot
   _hosePolylineDash = null; _hoseOutlineDash = null;
@@ -2882,6 +2890,30 @@ function _rebuildDynamicLayersDash() {
       _hosePolylineDash = L.polyline(hosePts, { color: '#f97316', weight: 4, opacity: 0.95, lineCap: 'round' }).addTo(_leafletMapDash);
       _dynamicLayersDash.push(_hosePolylineDash);
     }
+  }
+}
+
+// Mise à jour légère appelée à chaque tick : repositionne les couches existantes (setLatLng/
+// setIcon/setLatLngs) au lieu de les détruire et recréer — bien moins coûteux, et surtout ne
+// crée jamais de nouvelle couche Leaflet pendant une transition de zoom en cours.
+function _updateDynamicLayersDashPosition() {
+  if (!_leafletMapDash || !state.pond || !_robotMarkerDash) return;
+  const robotLL = metersToLatLng(state.robot.x, state.robot.y);
+  if (!robotLL) return;
+
+  _robotMarkerDash.setLatLng([robotLL.lat, robotLL.lng]);
+  _robotMarkerDash.setIcon(_robotIconForZoom(_leafletMapDash, robotLL.lat));
+
+  if (_gpsLabelMarkerDash) {
+    _gpsLabelMarkerDash.setLatLng([robotLL.lat, robotLL.lng]);
+    const el = _gpsLabelMarkerDash.getElement()?.querySelector('.gps-pos-leaf');
+    if (el) el.textContent = `${robotLL.lat.toFixed(6)}, ${robotLL.lng.toFixed(6)}`;
+  }
+
+  if (state.pond.hoseAnchor) {
+    const pts = _hoseLatLngs(state.pond.hoseAnchor, state.robot);
+    if (_hosePolylineDash) _hosePolylineDash.setLatLngs(pts);
+    if (_hoseOutlineDash)  _hoseOutlineDash.setLatLngs(pts);
   }
 }
 
@@ -2978,7 +3010,11 @@ function initLeafletMapDash() {
   }
   L.control.zoom({ position: 'bottomright' }).addTo(_leafletMapDash);
   // Le robot est dessiné à sa taille réelle : recalculer l'icône à chaque changement de zoom
-  _leafletMapDash.on('zoomend', () => { if (_satModeDash) _rebuildDynamicLayersDash(); });
+  _leafletMapDash.on('zoomend', () => {
+    if (!_satModeDash) return;
+    if (_robotMarkerDash) _updateDynamicLayersDashPosition();
+    else _rebuildDynamicLayersDash();
+  });
 
   _rebuildBaseLayersDash();
   _rebuildCellLayersDash();
@@ -2997,7 +3033,8 @@ function updateLeafletOverlayDash() {
 
 function updateRobotMarkerDash() {
   if (!_satModeDash || !_leafletMapDash) return;
-  _rebuildDynamicLayersDash();
+  if (_robotMarkerDash) _updateDynamicLayersDashPosition();
+  else _rebuildDynamicLayersDash();
   _updateCellStylesDash();
 }
 
