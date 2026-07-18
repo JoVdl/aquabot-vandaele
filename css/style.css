@@ -254,8 +254,10 @@ svg { display: block; }
 .btn-warning:hover { background: rgba(245,158,11,.3); }
 .btn-danger  { background: rgba(239,68,68,.12);  color: var(--danger);  border-color: var(--danger); }
 .btn-danger:hover  { background: rgba(239,68,68,.3); }
-.btn-secondary { background: var(--bg-card-2); color: var(--text-2); border-color: var(--border); }
-.btn-secondary:hover { color: var(--text-1); border-color: var(--text-3); }
+/* text-1 (pas text-2) : sinon ces boutons pourtant actifs ressemblent à des boutons
+   désactivés à côté d'un bouton accent bien plus contrasté (surtout en thème clair). */
+.btn-secondary { background: var(--bg-card-2); color: var(--text-1); border-color: var(--border); font-weight: 600; }
+.btn-secondary:hover { border-color: var(--text-3); }
 .btn-accent { background: var(--accent-glow); color: var(--accent); border-color: var(--accent); }
 .btn-accent:hover { background: rgba(14,165,233,.35); }
 .btn-ghost { background: transparent; color: var(--text-2); border-color: transparent; }
