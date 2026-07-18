@@ -1279,12 +1279,17 @@ function renderPondCanvas(canvas) {
       const s = worldToScreen(p.x, p.y);
       i === 0 ? ctx.moveTo(s.x, s.y) : ctx.lineTo(s.x, s.y);
     });
-    ctx.strokeStyle = 'rgba(15,23,42,0.9)';
-    ctx.lineWidth   = Math.max(2, 0.12 * state.view.scale);
+    // Orange vif — comme les vrais tuyaux d'évacuation flottants (visibilité sur l'eau),
+    // et surtout largement visible sur le fond sombre du schéma.
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth   = Math.max(3, 0.16 * state.view.scale);
     ctx.lineCap     = 'round'; ctx.lineJoin = 'round';
     ctx.stroke();
+    ctx.strokeStyle = '#f97316';
+    ctx.lineWidth   = Math.max(2, 0.12 * state.view.scale);
+    ctx.stroke();
     // Petit reflet clair pour l'effet "boyau flottant"
-    ctx.strokeStyle = 'rgba(148,163,184,0.5)';
+    ctx.strokeStyle = 'rgba(255,237,213,0.6)';
     ctx.lineWidth   = Math.max(1, 0.05 * state.view.scale);
     ctx.stroke();
 
@@ -2576,6 +2581,7 @@ let _leafletMap          = null;
 let _leafletLayers       = [];
 let _robotMarkerLeaf     = null;
 let _hosePolylineLeaf    = null;
+let _hoseOutlineLeaf     = null; // liseré sombre sous le tuyau, pour le contraste
 let _hoseAnchorMarkerLeaf = null;
 let _satMode             = true; // vue satellite par défaut
 
@@ -2589,12 +2595,15 @@ let _cellRendererDash    = null; // canvas renderer partagé
 let _robotMarkerDash     = null;
 let _hoseAnchorMarkerDash = null;
 let _hosePolylineDash    = null;
+let _hoseOutlineDash     = null; // liseré sombre sous le tuyau, pour le contraste
 let _satModeDash         = true; // vue satellite par défaut
 
 // Met à jour la courbe du tuyau sans tout reconstruire (appelé pendant le glisser de l'ancre)
 function _refreshHosePolylineDash() {
   if (!_hosePolylineDash || !state.pond?.hoseAnchor) return;
-  _hosePolylineDash.setLatLngs(_hoseLatLngs(state.pond.hoseAnchor, state.robot));
+  const pts = _hoseLatLngs(state.pond.hoseAnchor, state.robot);
+  _hosePolylineDash.setLatLngs(pts);
+  if (_hoseOutlineDash) _hoseOutlineDash.setLatLngs(pts);
 }
 
 // Points lat/lng de la courbe du tuyau, pour un L.polyline
@@ -2633,7 +2642,9 @@ function updateRobotMarker() {
   const ll = metersToLatLng(state.robot.x, state.robot.y);
   if (ll) _robotMarkerLeaf.setLatLng([ll.lat, ll.lng]);
   if (_hosePolylineLeaf && state.pond?.hoseAnchor) {
-    _hosePolylineLeaf.setLatLngs(_hoseLatLngs(state.pond.hoseAnchor, state.robot));
+    const pts = _hoseLatLngs(state.pond.hoseAnchor, state.robot);
+    _hosePolylineLeaf.setLatLngs(pts);
+    if (_hoseOutlineLeaf) _hoseOutlineLeaf.setLatLngs(pts);
   }
 }
 
@@ -2698,12 +2709,16 @@ function _buildLeafletOverlay(lmap, layersArr) {
     layersArr.push(L.marker([robotLL.lat, robotLL.lng], { icon: gpsIcon, zIndexOffset: 900 }).addTo(lmap));
   }
 
-  // Tuyau d'évacuation flottant — courbe de l'ancre (berge, déplaçable) au robot
-  _hosePolylineLeaf = null; _hoseAnchorMarkerLeaf = null;
+  // Tuyau d'évacuation flottant — courbe de l'ancre (berge, déplaçable) au robot.
+  // Orange vif (comme les vrais tuyaux flottants) + liseré sombre pour rester visible
+  // quel que soit le fond (satellite clair, eau, terrain sombre...).
+  _hosePolylineLeaf = null; _hoseOutlineLeaf = null; _hoseAnchorMarkerLeaf = null;
   if (state.pond.hoseAnchor) {
     const hosePts = _hoseLatLngs(state.pond.hoseAnchor, state.robot);
     if (hosePts.length > 1) {
-      _hosePolylineLeaf = L.polyline(hosePts, { color: '#0f172a', weight: 4, opacity: 0.9, lineCap: 'round' }).addTo(lmap);
+      _hoseOutlineLeaf = L.polyline(hosePts, { color: '#000', weight: 7, opacity: 0.4, lineCap: 'round' }).addTo(lmap);
+      layersArr.push(_hoseOutlineLeaf);
+      _hosePolylineLeaf = L.polyline(hosePts, { color: '#f97316', weight: 4, opacity: 0.95, lineCap: 'round' }).addTo(lmap);
       layersArr.push(_hosePolylineLeaf);
     }
     const aLL = metersToLatLng(state.pond.hoseAnchor.x, state.pond.hoseAnchor.y);
@@ -2716,7 +2731,9 @@ function _buildLeafletOverlay(lmap, layersArr) {
         state.pond.hoseAnchor = snapped;
         const sLL = metersToLatLng(snapped.x, snapped.y);
         if (sLL) e.target.setLatLng([sLL.lat, sLL.lng]);
-        if (_hosePolylineLeaf) _hosePolylineLeaf.setLatLngs(_hoseLatLngs(snapped, state.robot));
+        const newPts = _hoseLatLngs(snapped, state.robot);
+        if (_hosePolylineLeaf) _hosePolylineLeaf.setLatLngs(newPts);
+        if (_hoseOutlineLeaf)  _hoseOutlineLeaf.setLatLngs(newPts);
       });
       _hoseAnchorMarkerLeaf.on('dragend', () => saveWork());
       layersArr.push(_hoseAnchorMarkerLeaf);
@@ -2856,11 +2873,13 @@ function _rebuildDynamicLayersDash() {
   }
 
   // Tuyau d'évacuation flottant — courbe de l'ancre (berge, déplaçable) au robot
-  _hosePolylineDash = null;
+  _hosePolylineDash = null; _hoseOutlineDash = null;
   if (state.pond.hoseAnchor) {
     const hosePts = _hoseLatLngs(state.pond.hoseAnchor, state.robot);
     if (hosePts.length > 1) {
-      _hosePolylineDash = L.polyline(hosePts, { color: '#0f172a', weight: 4, opacity: 0.9, lineCap: 'round' }).addTo(_leafletMapDash);
+      _hoseOutlineDash = L.polyline(hosePts, { color: '#000', weight: 7, opacity: 0.4, lineCap: 'round' }).addTo(_leafletMapDash);
+      _dynamicLayersDash.push(_hoseOutlineDash);
+      _hosePolylineDash = L.polyline(hosePts, { color: '#f97316', weight: 4, opacity: 0.95, lineCap: 'round' }).addTo(_leafletMapDash);
       _dynamicLayersDash.push(_hosePolylineDash);
     }
   }
