@@ -3194,7 +3194,13 @@ function toggleSatelliteView(on) {
     if (scaleInfo)     scaleInfo.style.display = 'none';
     if (leafletDiv)    leafletDiv.style.display = 'block';
     if (styleGroup)    styleGroup.style.display = '';
-    if (!_leafletMap) initLeafletMap();
+    if (!_leafletMap) {
+      // Un conteneur masqué (display:none, onglet Carte pas encore visité) a une taille
+      // nulle : Leaflet construit dessus reste cassé même après un invalidateSize() bien
+      // plus tard. On diffère la construction — setActiveTab('map') la fera au moment où
+      // l'onglet devient réellement visible pour la première fois.
+      if (document.getElementById('panel-map')?.classList.contains('active')) initLeafletMap();
+    }
     else { updateLeafletOverlay(); setTimeout(() => _leafletMap.invalidateSize(), 100); }
   } else {
     if (leafletDiv)    leafletDiv.style.display = 'none';
