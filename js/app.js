@@ -2714,6 +2714,12 @@ function initLeafletMap() {
   if (!container || typeof L === 'undefined') return;
 
   _leafletMap = L.map('leaflet-container', { zoomControl: false });
+  // Leaflet a besoin d'une vue (centre/zoom) déjà établie avant qu'on puisse lui ajouter
+  // le moindre calque vectoriel (polygone/ligne) — sinon ses calculs de bornes internes
+  // (_pxBounds) sont undefined et ça plante ("Cannot read properties of undefined
+  // (reading 'min')") dès le premier polygone ajouté, avant même le fitBounds() qui
+  // suit plus loin. Vue provisoire ici, recadrée par fitBounds() dès que l'étang est connu.
+  _leafletMap.setView([0, 0], 2);
 
   const style = MAP_STYLES[_currentMapStyle];
   _baseTileLayer = L.tileLayer(style.url, { attribution: style.attribution, maxZoom: 21, maxNativeZoom: style.maxNativeZoom }).addTo(_leafletMap);
@@ -3113,6 +3119,10 @@ function initLeafletMapDash() {
   if (!container || typeof L === 'undefined') return;
 
   _leafletMapDash = L.map('leaflet-container-dash', { zoomControl: false });
+  // Voir le commentaire équivalent dans initLeafletMap() : sans vue initiale, le premier
+  // calque vectoriel (polygone de l'étang) ajouté à la carte fait planter Leaflet en
+  // interne, silencieusement — c'était la vraie cause de "la carte n'affiche rien".
+  _leafletMapDash.setView([0, 0], 2);
 
   const styleDash = MAP_STYLES[_currentMapStyle];
   _baseTileLayerDash = L.tileLayer(styleDash.url, { attribution: styleDash.attribution, maxZoom: 21, maxNativeZoom: styleDash.maxNativeZoom }).addTo(_leafletMapDash);
@@ -3243,13 +3253,8 @@ function toggleSatelliteView(on) {
 // ============================================================
 function init() {
   applyThemeIcon();
-  // Schéma par défaut (pas Satellite) : le rendu Leaflet a été signalé cassé chez
-  // l'utilisateur alors que le schéma fonctionne de façon fiable — on démarre sur une
-  // vue qui marche à coup sûr, l'utilisateur peut toujours basculer en Satellite à la
-  // main via le bouton Vue. À remettre en Satellite par défaut une fois la cause
-  // trouvée (probablement liée au fournisseur de tuiles ou à un état Leaflet corrompu).
-  toggleSatelliteViewDash(false);
-  toggleSatelliteView(false);
+  toggleSatelliteViewDash(true);
+  toggleSatelliteView(true);
   loadPonds();
   try { const sp = localStorage.getItem('aquabot_params'); if (sp) Object.assign(params, JSON.parse(sp)); } catch {}
 
