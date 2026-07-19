@@ -369,6 +369,11 @@ svg { display: block; }
 .popover.open { display: flex; }
 .mode-popover { width: 220px; padding: 12px; }
 .map-options-popover { width: 220px; padding: 10px; }
+/* Popovers Sélection/Propulsion/Progression — même mécanique que les autres, juste plus
+   de contenu à l'intérieur, donc plus larges et défilables plutôt que le grand tiroir
+   plein écran d'avant. */
+.section-popover { width: 300px; max-height: 65vh; overflow-y: auto; padding: 6px 0; }
+.section-popover .sel-buttons { padding-top: 0; }
 .map-options-popover .toolbar-group-labeled + .toolbar-group-labeled {
   border-left: none; padding-left: 0; margin-left: 0;
   border-top: 1px solid var(--border); padding-top: 8px; margin-top: 2px;
@@ -480,32 +485,6 @@ svg { display: block; }
 }
 .zoom-btn-inline:hover { border-color: var(--accent); color: var(--accent); }
 
-/* Tiroir — Sélection / Propulsion / Progression, replié par défaut */
-.drawer-backdrop {
-  position: absolute; inset: 0; z-index: 55;
-  background: rgba(0,0,0,0.35);
-  display: none;
-}
-.drawer-backdrop.open { display: block; }
-.dash-drawer {
-  position: absolute; top: 0; right: -340px; bottom: 0; width: 320px;
-  max-width: 90vw;
-  display: flex; flex-direction: column;
-  border-left: 1px solid var(--border);
-  background: var(--bg-card);
-  box-shadow: -8px 0 30px rgba(0,0,0,0.35);
-  transition: right 0.22s var(--ease);
-  z-index: 60;
-  overflow: hidden;
-}
-.dash-drawer.open { right: 0; }
-.drawer-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px; font-size: 13px; font-weight: 700;
-  border-bottom: 1px solid var(--border); flex-shrink: 0;
-}
-.panel-content { display: none; overflow-y: auto; flex: 1; min-height: 0; }
-.panel-content.active { display: block; }
 .panel-section-label {
   font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
   color: var(--text-3); padding: 12px 14px 6px;
@@ -903,25 +882,17 @@ svg { display: block; }
   }
   /* svh (small viewport height) ignore la barre d'adresse qui se cache/montre au scroll —
      évite que cette hauteur change en boucle pendant qu'on essaie justement de scroller.
-     vh reste en repli pour les navigateurs plus anciens. */
-  .dash-center { min-height: 58vh; min-height: 58svh; }
+     vh reste en repli pour les navigateurs plus anciens. Un pourcentage fixe (ex. 58vh)
+     laissait un grand espace vide sous la barre d'actions maintenant qu'elle est fine et
+     que plus rien d'autre n'occupe la page en dessous : on retire plutôt la hauteur réelle
+     de l'en-tête/barre/nav-tabs pour que la carte occupe tout l'espace restant. */
+  .dash-center { min-height: calc(100vh - 165px); min-height: calc(100svh - 165px); }
   /* Le popover s'ancre à la barre entière (pas au petit bouton) pour occuper toute la largeur */
   .strip-popover-anchor { position: static; }
   .popover { right: 14px; left: 14px; width: auto; }
   .section-widget { width: 148px; }
   .mini-motor-lbl { font-size: 7px; }
   .mini-heading-compass { width: 22px; height: 22px; }
-
-  /* Le tiroir devient une feuille qui monte du bas, plus naturel au doigt */
-  .drawer-backdrop { position: fixed; }
-  .dash-drawer {
-    position: fixed; top: auto; right: 0; left: 0; bottom: -85vh;
-    width: auto; max-width: none; height: 80vh;
-    border-left: none; border-radius: 16px 16px 0 0;
-    transition: bottom 0.22s var(--ease);
-  }
-  .dash-drawer.open { bottom: 0; right: 0; }
-  .panel-content { max-height: none; }
 
   /* Onglet Carte plein écran : height:100% ne marche plus une fois le
      document en scroll naturel (parents en hauteur auto) — hauteur fixe. */

@@ -440,7 +440,12 @@ const state = {
     heading: 0,          // cap boussole, degrés (0 = Nord)
     motors: [0, 0, 0, 0],// poussée des 4 propulseurs, % (-100..100)
   },
-  sim: { running: false, speed: 1, intervalId: null, lastTick: 0, sessionElapsedAtStart: 0, lastSimSave: 0 },
+  sim: {
+    running: false, speed: 1, intervalId: null, lastTick: 0, sessionElapsedAtStart: 0, lastSimSave: 0,
+    // Rythme de travail (secondes/case) pour l'estimation restant/fin — recalculé
+    // seulement quand une case vient de se terminer, voir updateUI().
+    paceDoneCount: 0, paceSecPerCell: null,
+  },
   view: { offsetX: 0, offsetY: 0, scale: 10, canvasH: 600 },
   drag: { active: false, mode: 'add' }, // for drag-select
   hose: { dragging: false }, // déplacement à la main de l'ancrage du tuyau d'évacuation
@@ -1622,6 +1627,8 @@ function startSimulation() {
   if (state.robot.state === 'stopped') {
     state.robot.currentCellIdx = 0;
     state.sim.sessionElapsedAtStart = state.robot.elapsedSec;
+    state.sim.paceDoneCount  = 0;
+    state.sim.paceSecPerCell = null;
     autoSaveSelectionOnStart();
     const first = state.cells[state.plannedPath[0]];
     if (first) { state.robot.x = first.cx; state.robot.y = first.cy; }
@@ -1909,11 +1916,20 @@ function updateUI() {
   setText('dashCellsDone',  done);
   setText('dashCellsTotal', total || '—');
 
-  // Remaining time uses rate from current session only
+  // Rythme de travail (secondes/case) — recalculé seulement quand une case vient de se
+  // terminer, pas à chaque tick. Sinon le numérateur (temps écoulé) grandit en continu
+  // pendant qu'on attend la case en cours alors que le dénominateur (cases faites) ne
+  // bouge pas : la moyenne dérive sans arrêt, et "Restant"/"Fin estimée" se remettent à
+  // reculer puis sautent en avant à chaque case terminée — un temps de fin qui n'arrête
+  // pas de bouger. En ne recalculant qu'aux paliers (case terminée), le rythme reste
+  // stable entre deux cases et l'estimation ne fait que décompter normalement.
   const sessionElapsed = robot.elapsedSec - (state.sim.sessionElapsedAtStart || 0);
-  const remainingSec = (done > 0 && total > done)
-    ? (sessionElapsed / done) * (total - done)
-    : null;
+  if (done !== state.sim.paceDoneCount) {
+    state.sim.paceDoneCount  = done;
+    state.sim.paceSecPerCell = done > 0 ? sessionElapsed / done : null;
+  }
+  const pace = state.sim.paceSecPerCell;
+  const remainingSec = (pace != null && total > done) ? pace * (total - done) : null;
   setText('dashTimeElapsed',   formatTime(robot.elapsedSec));
   setText('dashTimeRemaining', remainingSec != null ? formatTime(remainingSec) : '—');
 
@@ -1929,9 +1945,10 @@ function updateUI() {
   setText('dashVolumePair', formatVolumePair(robot.volumePumped, totalVol));
   setText('dashMudVolume',  mudVol >= 1 ? mudVol.toFixed(2)+' m³' : (mudVol*1000).toFixed(0)+' L');
 
-  // Débit moyen — sur la session en cours uniquement (au-delà d'1 min, sinon trop bruité)
-  const sessionHours = sessionElapsed / 3600;
-  const ratePerHour = sessionHours > (1/60) ? robot.volumePumped / sessionHours : 0;
+  // Débit moyen — dérivé du même rythme stable (volume théorique/case ÷ secondes/case),
+  // pas d'un ratio volume pompé/temps écoulé brut qui oscille selon la phase en cours
+  // (ça pompe activement ou ça descend/remonte/se déplace).
+  const ratePerHour = (pace != null && pace > 0) ? (volumePerCell() / pace) * 3600 : 0;
   setText('dashRatePerHour', ratePerHour > 0 ? formatVolume(ratePerHour) + '/h' : '—');
   setText('dashRatePerDay',  ratePerHour > 0 ? formatVolume(ratePerHour * 24) + '/j' : '—');
 
@@ -2390,63 +2407,41 @@ function deletePond(id) {
 }
 
 // ============================================================
-// DASHBOARD DRAWER SECTIONS (Sélection / Propulsion / Progression)
+// POPOVERS DE LA BARRE D'ACTIONS
+// État/contrôles, options de carte, mode/vitesse, et les 3 sections Sélection/
+// Propulsion/Progression — tous le même mécanisme (repliés par défaut, un seul
+// ouvert à la fois), pas de grand tiroir à part pour les sections.
 // ============================================================
-const DASH_SECTION_TITLES = { selection: 'Sélection', propulsion: 'Propulsion', progression: 'Progression' };
+const DASH_POPOVERS = [
+  ['controlPopover',     'btnControlToggle'],
+  ['mapOptionsPopover',  'btnMapOptionsToggle'],
+  ['modePopover',        'btnModeToggle'],
+  ['selectionPopover',   'btnSectionSelection'],
+  ['propulsionPopover',  'btnSectionPropulsion'],
+  ['progressionPopover', 'btnSectionProgression'],
+];
 
-// Un bouton par section — l'ouvre directement dans le tiroir (pas d'onglets internes).
-// Recliquer sur la section déjà affichée referme le tiroir.
-function openDashSection(name) {
-  const drawer = document.getElementById('dashDrawer');
-  if (!drawer) return;
-  const alreadyShown = drawer.classList.contains('open') && drawer.dataset.section === name;
-  document.querySelectorAll('.panel-content').forEach(p => p.classList.toggle('active', p.dataset.content === name));
-  drawer.dataset.section = name;
-  setText('drawerTitle', DASH_SECTION_TITLES[name] || 'Détails');
-  document.querySelectorAll('.action-bar-section-btn').forEach(b => b.classList.toggle('active', b.dataset.section === name && !alreadyShown));
-  toggleDashDrawer(!alreadyShown);
-}
-
-// Tiroir Sélection/Propulsion/Progression — replié par défaut, ouvert au clic sur une section
-function toggleDashDrawer(force) {
-  const drawer   = document.getElementById('dashDrawer');
-  const backdrop = document.getElementById('drawerBackdrop');
-  if (!drawer) return;
-  const open = force !== undefined ? force : !drawer.classList.contains('open');
-  drawer.classList.toggle('open', open);
-  if (backdrop) backdrop.classList.toggle('open', open);
-  if (!open) document.querySelectorAll('.action-bar-section-btn').forEach(b => b.classList.remove('active'));
-}
-
-// Popover État/Contrôles — replié par défaut, ouvert au clic sur la LED
-function toggleControlPopover(force) {
-  const pop = document.getElementById('controlPopover');
+function toggleDashPopover(popId, force) {
+  const pop = document.getElementById(popId);
   if (!pop) return;
   const open = force !== undefined ? force : !pop.classList.contains('open');
   pop.classList.toggle('open', open);
-  if (open) { toggleModePopover(false); toggleMapOptionsPopover(false); }
+  if (open) {
+    for (const [otherId] of DASH_POPOVERS) {
+      if (otherId !== popId) document.getElementById(otherId)?.classList.remove('open');
+    }
+  }
 }
 
-// Popover Mode/Vitesse — replié par défaut, ouvert au clic sur ⚙
-function toggleModePopover(force) {
-  const pop = document.getElementById('modePopover');
-  if (!pop) return;
-  const open = force !== undefined ? force : !pop.classList.contains('open');
-  pop.classList.toggle('open', open);
-  if (open) { toggleMapOptionsPopover(false); toggleControlPopover(false); }
-}
-
-// Popover Options de carte (KML/Vue/Fond de carte/Outil) — replié par défaut, ouvert au clic sur 🗺
-function toggleMapOptionsPopover(force) {
-  const pop = document.getElementById('mapOptionsPopover');
-  if (!pop) return;
-  const open = force !== undefined ? force : !pop.classList.contains('open');
-  pop.classList.toggle('open', open);
-  if (open) { toggleModePopover(false); toggleControlPopover(false); }
-}
+function toggleControlPopover(force)     { toggleDashPopover('controlPopover', force); }
+function toggleMapOptionsPopover(force)  { toggleDashPopover('mapOptionsPopover', force); }
+function toggleModePopover(force)        { toggleDashPopover('modePopover', force); }
+function toggleSelectionPopover(force)   { toggleDashPopover('selectionPopover', force); }
+function togglePropulsionPopover(force)  { toggleDashPopover('propulsionPopover', force); }
+function toggleProgressionPopover(force) { toggleDashPopover('progressionPopover', force); }
 
 document.addEventListener('click', e => {
-  for (const [popId, btnId] of [['controlPopover', 'btnControlToggle'], ['modePopover', 'btnModeToggle'], ['mapOptionsPopover', 'btnMapOptionsToggle']]) {
+  for (const [popId, btnId] of DASH_POPOVERS) {
     const pop = document.getElementById(popId);
     if (!pop || !pop.classList.contains('open')) continue;
     if (e.target.closest(`#${popId}`) || e.target.closest(`#${btnId}`)) continue;

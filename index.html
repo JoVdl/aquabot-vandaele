@@ -229,107 +229,100 @@
 
           <div class="action-bar-sep"></div>
 
-          <button class="action-bar-btn action-bar-section-btn" id="btnSectionSelection"   data-section="selection"   onclick="openDashSection('selection')"   title="Sélection des cases">✏</button>
-          <button class="action-bar-btn action-bar-section-btn" id="btnSectionPropulsion"  data-section="propulsion"  onclick="openDashSection('propulsion')"  title="Propulsion">🧭</button>
-          <button class="action-bar-btn action-bar-section-btn" id="btnSectionProgression" data-section="progression" onclick="openDashSection('progression')" title="Progression">📊</button>
+          <div class="strip-popover-anchor">
+            <button class="action-bar-btn" id="btnSectionSelection" onclick="toggleSelectionPopover()" title="Sélection des cases">✏</button>
+            <div class="popover section-popover" id="selectionPopover">
+              <div class="sel-buttons">
+                <button class="btn btn-secondary btn-sm" id="btnSelectAll"       onclick="selectAllCells()"       disabled>☑ Toutes</button>
+                <button class="btn btn-secondary btn-sm" id="btnSelectRemaining" onclick="selectRemainingCells()" disabled>☑ Restantes</button>
+                <button class="btn btn-secondary btn-sm" id="btnDeselectAll"     onclick="deselectAllCells()"     disabled>☐ Aucune</button>
+                <button class="btn btn-accent    btn-sm" id="btnPlanRoute"       onclick="planRoute()"            disabled>↪ Planifier</button>
+              </div>
+              <div class="sel-history-wrap">
+                <div class="sel-save-row">
+                  <input type="text" id="selNameInput" class="sel-name-input" placeholder="Nom de la sélection…" maxlength="30">
+                  <button class="btn btn-primary btn-sm" onclick="saveCurrentSelection()">Sauver</button>
+                </div>
+                <div id="selectionHistoryList" class="sel-history-list">
+                  <div class="sel-empty">Aucune sélection sauvegardée</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="strip-popover-anchor">
+            <button class="action-bar-btn" id="btnSectionPropulsion" onclick="togglePropulsionPopover()" title="Propulsion">🧭</button>
+            <div class="popover section-popover" id="propulsionPopover">
+              <div class="motor-grid panel-motor-grid">
+                <div class="motor-item"><span class="motor-lbl">AV-G</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar0" style="width:0%"></div></div><span class="motor-val" id="motorVal0">0%</span></div>
+                <div class="motor-item"><span class="motor-lbl">AV-D</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar1" style="width:0%"></div></div><span class="motor-val" id="motorVal1">0%</span></div>
+                <div class="motor-item"><span class="motor-lbl">AR-G</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar2" style="width:0%"></div></div><span class="motor-val" id="motorVal2">0%</span></div>
+                <div class="motor-item"><span class="motor-lbl">AR-D</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar3" style="width:0%"></div></div><span class="motor-val" id="motorVal3">0%</span></div>
+              </div>
+              <div class="heading-wrap panel-heading-wrap">
+                <div class="heading-compass"><div class="heading-needle" id="headingNeedle"></div></div>
+                <div><div class="heading-val" id="headingVal">—°</div><div class="heading-lbl">Cap</div></div>
+              </div>
+              <div class="data-grid panel-data-grid">
+                <div class="data-item"><span class="data-label">Pos. X</span><span class="data-value" id="rtPosX">—</span><span class="data-unit">m</span></div>
+                <div class="data-item"><span class="data-label">Pos. Y</span><span class="data-value" id="rtPosY">—</span><span class="data-unit">m</span></div>
+                <div class="data-item"><span class="data-label">Prof. pompe</span><span class="data-value" id="rtPumpDepth">0.00</span><span class="data-unit">m</span></div>
+                <div class="data-item"><span class="data-label">État pompe</span><span class="data-value" id="rtPumpState">—</span></div>
+                <div class="data-item"><span class="data-label">Cap</span><span class="data-value" id="rtHeading">—</span><span class="data-unit">°</span></div>
+                <div class="data-item data-item-gps"><span class="data-label">Fix GPS</span><span class="data-value gps-fix" id="gpsFixLabel">—</span></div>
+                <div class="data-item data-item-gps"><span class="data-label">Précision</span><span class="data-value" id="gpsAccuracy">—</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="strip-popover-anchor">
+            <button class="action-bar-btn" id="btnSectionProgression" onclick="toggleProgressionPopover()" title="Progression">📊</button>
+            <div class="popover section-popover" id="progressionPopover">
+              <div class="pond-name-badge" id="dashPondBadge">Aucun étang</div>
+              <div class="progress-bar-wrap">
+                <div class="progress-bar">
+                  <div id="dashProgressBar" class="progress-fill" style="width:0%"></div>
+                </div>
+                <span id="dashProgressPct" class="progress-pct">0%</span>
+              </div>
+              <div class="summary-stats stats-4">
+                <div class="sum-stat"><span class="sum-val"><span id="dashCellsDone">0</span>/<span id="dashCellsTotal">—</span></span><span class="sum-label">Cases</span></div>
+                <div class="sum-stat"><span class="sum-val" id="dashVolumePair">0 / — L</span><span class="sum-label">Pompé / Total</span></div>
+                <div class="sum-stat"><span class="sum-val" id="dashRatePerHour">—</span><span class="sum-label">Débit / heure</span></div>
+                <div class="sum-stat"><span class="sum-val" id="dashRatePerDay">—</span><span class="sum-label">Débit / jour</span></div>
+              </div>
+              <div class="time-row">
+                <div class="time-item"><span class="time-lbl">Écoulé</span><span class="time-val" id="dashTimeElapsed">00:00:00</span></div>
+                <div class="time-item"><span class="time-lbl">Restant</span><span class="time-val" id="dashTimeRemaining">—</span></div>
+                <div class="time-item"><span class="time-lbl">Fin estimée</span><span class="time-val" id="dashETA">—</span></div>
+              </div>
+              <div class="vol-section">
+                <div class="vol-row vol-mode-row">
+                  <span class="vol-lbl">Mode</span>
+                  <span class="vol-val vol-mode-val" id="dashWorkModeLabel">—</span>
+                </div>
+                <div class="vol-row">
+                  <span class="vol-lbl">Volume vase</span>
+                  <span class="vol-val" id="dashMudVolume">—</span>
+                </div>
+              </div>
+
+              <div class="panel-section-label">Progression totale — <span id="dashPondBottomName">—</span></div>
+              <div class="progress-bar-wrap">
+                <div class="progress-bar"><div id="pondTotalBar" class="progress-fill" style="width:0%"></div></div>
+                <span id="pondTotalPct" class="progress-pct">0%</span>
+              </div>
+              <div class="summary-stats total-stats">
+                <div class="sum-stat"><span class="sum-val"><span id="pondTotalDone">0</span>/<span id="pondTotalCells">—</span></span><span class="sum-label">Cases</span></div>
+                <div class="sum-stat"><span class="sum-val" id="pondTotalVolumePair">0 / — L</span><span class="sum-label">Pompé / Total</span></div>
+              </div>
+              <div class="vol-section">
+                <div class="vol-row"><span class="vol-lbl">Volume vase total</span><span class="vol-val" id="pondTotalMud">—</span></div>
+                <div class="vol-row"><span class="vol-lbl">Temps de travail</span><span class="vol-val" id="pondTotalTime">00:00:00</span></div>
+              </div>
+            </div>
+          </div>
         </div><!-- /dash-action-bar -->
-
-        <!-- ── TIROIR: infos secondaires, replié par défaut, une section à la fois ── -->
-        <div class="drawer-backdrop" id="drawerBackdrop" onclick="toggleDashDrawer(false)"></div>
-        <div class="dash-drawer" id="dashDrawer">
-          <div class="drawer-header">
-            <span id="drawerTitle">Sélection</span>
-            <button class="btn btn-ghost btn-sm" onclick="toggleDashDrawer(false)">✕</button>
-          </div>
-
-          <!-- Section: Sélection des cases -->
-          <div class="panel-content active" data-content="selection">
-            <div class="sel-buttons">
-              <button class="btn btn-secondary btn-sm" id="btnSelectAll"       onclick="selectAllCells()"       disabled>☑ Toutes</button>
-              <button class="btn btn-secondary btn-sm" id="btnSelectRemaining" onclick="selectRemainingCells()" disabled>☑ Restantes</button>
-              <button class="btn btn-secondary btn-sm" id="btnDeselectAll"     onclick="deselectAllCells()"     disabled>☐ Aucune</button>
-              <button class="btn btn-accent    btn-sm" id="btnPlanRoute"       onclick="planRoute()"            disabled>↪ Planifier</button>
-            </div>
-            <div class="sel-history-wrap">
-              <div class="sel-save-row">
-                <input type="text" id="selNameInput" class="sel-name-input" placeholder="Nom de la sélection…" maxlength="30">
-                <button class="btn btn-primary btn-sm" onclick="saveCurrentSelection()">Sauver</button>
-              </div>
-              <div id="selectionHistoryList" class="sel-history-list">
-                <div class="sel-empty">Aucune sélection sauvegardée</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Onglet: Propulsion + télémétrie -->
-          <div class="panel-content" data-content="propulsion">
-            <div class="motor-grid panel-motor-grid">
-              <div class="motor-item"><span class="motor-lbl">AV-G</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar0" style="width:0%"></div></div><span class="motor-val" id="motorVal0">0%</span></div>
-              <div class="motor-item"><span class="motor-lbl">AV-D</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar1" style="width:0%"></div></div><span class="motor-val" id="motorVal1">0%</span></div>
-              <div class="motor-item"><span class="motor-lbl">AR-G</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar2" style="width:0%"></div></div><span class="motor-val" id="motorVal2">0%</span></div>
-              <div class="motor-item"><span class="motor-lbl">AR-D</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar3" style="width:0%"></div></div><span class="motor-val" id="motorVal3">0%</span></div>
-            </div>
-            <div class="heading-wrap panel-heading-wrap">
-              <div class="heading-compass"><div class="heading-needle" id="headingNeedle"></div></div>
-              <div><div class="heading-val" id="headingVal">—°</div><div class="heading-lbl">Cap</div></div>
-            </div>
-            <div class="data-grid panel-data-grid">
-              <div class="data-item"><span class="data-label">Pos. X</span><span class="data-value" id="rtPosX">—</span><span class="data-unit">m</span></div>
-              <div class="data-item"><span class="data-label">Pos. Y</span><span class="data-value" id="rtPosY">—</span><span class="data-unit">m</span></div>
-              <div class="data-item"><span class="data-label">Prof. pompe</span><span class="data-value" id="rtPumpDepth">0.00</span><span class="data-unit">m</span></div>
-              <div class="data-item"><span class="data-label">État pompe</span><span class="data-value" id="rtPumpState">—</span></div>
-              <div class="data-item"><span class="data-label">Cap</span><span class="data-value" id="rtHeading">—</span><span class="data-unit">°</span></div>
-              <div class="data-item data-item-gps"><span class="data-label">Fix GPS</span><span class="data-value gps-fix" id="gpsFixLabel">—</span></div>
-              <div class="data-item data-item-gps"><span class="data-label">Précision</span><span class="data-value" id="gpsAccuracy">—</span></div>
-            </div>
-          </div>
-
-          <!-- Section: Progression -->
-          <div class="panel-content" data-content="progression">
-            <div class="pond-name-badge" id="dashPondBadge">Aucun étang</div>
-            <div class="progress-bar-wrap">
-              <div class="progress-bar">
-                <div id="dashProgressBar" class="progress-fill" style="width:0%"></div>
-              </div>
-              <span id="dashProgressPct" class="progress-pct">0%</span>
-            </div>
-            <div class="summary-stats stats-4">
-              <div class="sum-stat"><span class="sum-val"><span id="dashCellsDone">0</span>/<span id="dashCellsTotal">—</span></span><span class="sum-label">Cases</span></div>
-              <div class="sum-stat"><span class="sum-val" id="dashVolumePair">0 / — L</span><span class="sum-label">Pompé / Total</span></div>
-              <div class="sum-stat"><span class="sum-val" id="dashRatePerHour">—</span><span class="sum-label">Débit / heure</span></div>
-              <div class="sum-stat"><span class="sum-val" id="dashRatePerDay">—</span><span class="sum-label">Débit / jour</span></div>
-            </div>
-            <div class="time-row">
-              <div class="time-item"><span class="time-lbl">Écoulé</span><span class="time-val" id="dashTimeElapsed">00:00:00</span></div>
-              <div class="time-item"><span class="time-lbl">Restant</span><span class="time-val" id="dashTimeRemaining">—</span></div>
-              <div class="time-item"><span class="time-lbl">Fin estimée</span><span class="time-val" id="dashETA">—</span></div>
-            </div>
-            <div class="vol-section">
-              <div class="vol-row vol-mode-row">
-                <span class="vol-lbl">Mode</span>
-                <span class="vol-val vol-mode-val" id="dashWorkModeLabel">—</span>
-              </div>
-              <div class="vol-row">
-                <span class="vol-lbl">Volume vase</span>
-                <span class="vol-val" id="dashMudVolume">—</span>
-              </div>
-            </div>
-
-            <div class="panel-section-label">Progression totale — <span id="dashPondBottomName">—</span></div>
-            <div class="progress-bar-wrap">
-              <div class="progress-bar"><div id="pondTotalBar" class="progress-fill" style="width:0%"></div></div>
-              <span id="pondTotalPct" class="progress-pct">0%</span>
-            </div>
-            <div class="summary-stats total-stats">
-              <div class="sum-stat"><span class="sum-val"><span id="pondTotalDone">0</span>/<span id="pondTotalCells">—</span></span><span class="sum-label">Cases</span></div>
-              <div class="sum-stat"><span class="sum-val" id="pondTotalVolumePair">0 / — L</span><span class="sum-label">Pompé / Total</span></div>
-            </div>
-            <div class="vol-section">
-              <div class="vol-row"><span class="vol-lbl">Volume vase total</span><span class="vol-val" id="pondTotalMud">—</span></div>
-              <div class="vol-row"><span class="vol-lbl">Temps de travail</span><span class="vol-val" id="pondTotalTime">00:00:00</span></div>
-            </div>
-          </div>
-        </div><!-- /dash-drawer -->
 
       </div><!-- /dashboard-main -->
     </section>
