@@ -2383,9 +2383,19 @@ function updatePondsList() {
     const area     = p.area ? (p.area >= 10000 ? (p.area/10000).toFixed(2)+' ha' : p.area.toFixed(0)+' m²') : '—';
     const lastUsed = p.lastUsed ? new Date(p.lastUsed).toLocaleDateString('fr-FR', {day:'2-digit',month:'short',year:'numeric'}) : '—';
     const active   = state.pond?.id === p.id;
-    const hasGPS   = !!(p.origin?.lat || p.origin?.lng);
+    const hasGPS   = isValidOrigin(p.origin);
     const statusClass = done === 0 ? 'pond-status-new' : done >= total ? 'pond-status-done' : 'pond-status-progress';
     const statusLabel = done === 0 ? 'Non commencé' : done >= total ? 'Terminé' : 'En cours';
+
+    // Volumes estimés (méthode/débit courants, mêmes formules que le tableau de bord) et
+    // longueur de tuyau nécessaire depuis le point de sortie actuel — pour choisir/
+    // comparer un étang sans avoir à le charger d'abord.
+    const waterVol   = totalVolumeForCells(total);
+    const mudVolM3   = mudVolumeForCells(total);
+    const hoseLen    = p.hoseAnchor ? computeRequiredHoseLength(p) : 0;
+    const hasDeposit = !!p.depositZone;
+    const depositArea = hasDeposit ? polygonArea(p.depositZone.polygon) : 0;
+
     return `
       <div class="pond-card ${active?'active-pond':''}" onclick="loadPondById('${p.id}')">
         <canvas id="thumb-${p.id}" class="pond-thumb" width="72" height="54"></canvas>
@@ -2396,10 +2406,16 @@ function updatePondsList() {
             <span class="pond-gps-badge ${hasGPS?'has-gps':''}">
               ${hasGPS ? '📍 GPS' : '📍 Sans GPS'}
             </span>
+            <span class="pond-gps-badge ${hasDeposit?'has-gps':''}">
+              ${hasDeposit ? `🎯 Zone de dépôt (${Math.round(depositArea)} m²)` : '🎯 Pas de zone de dépôt'}
+            </span>
           </div>
           <div class="pond-meta">
             <span class="pond-meta-item">Surface : <strong>${area}</strong></span>
             <span class="pond-meta-item"><strong>${total}</strong> cases</span>
+            <span class="pond-meta-item">Eau à pomper : <strong>${formatVolume(waterVol)}</strong></span>
+            <span class="pond-meta-item">Vase : <strong>${mudVolM3 >= 1 ? mudVolM3.toFixed(2)+' m³' : Math.round(mudVolM3*1000)+' L'}</strong></span>
+            ${hoseLen > 0 ? `<span class="pond-meta-item">Tuyau nécessaire : <strong>${Math.ceil(hoseLen)} m</strong></span>` : ''}
             <span class="pond-meta-item">Modifié : <strong>${lastUsed}</strong></span>
           </div>
           <div class="pond-progress">
@@ -3532,6 +3548,13 @@ function toggleDrawPondPanel(force) {
 function openDrawPondFromEmptyState() {
   toggleSatelliteView(true);
   toggleDrawPondPanel(true);
+}
+
+// Point d'entrée depuis l'onglet Étangs — le tracé lui-même a besoin d'une vraie carte
+// Leaflet, qui n'existe que sur l'onglet Carte ; on y bascule d'abord.
+function goToDrawPond() {
+  setActiveTab('map');
+  openDrawPondFromEmptyState();
 }
 
 function startContourDraw() {
