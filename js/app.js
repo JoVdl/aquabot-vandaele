@@ -2427,11 +2427,14 @@ function setActiveTab(tab) {
     requestAnimationFrame(() => {
       if (_satMode) {
         if (!_leafletMap) initLeafletMap();
-        // Juste invalidateSize() : les couches (cellules, robot) sont déjà tenues à jour en
-        // continu par les ticks, peu importe l'onglet actif — un rebuild complet ici rappellerait
-        // fitBounds() et écraserait le zoom/la position que l'utilisateur avait choisis, en plus
-        // de le faire AVANT que la taille du conteneur soit corrigée (vue faussée un instant).
-        else _leafletMap.invalidateSize();
+        else {
+          // invalidateSize() D'ABORD : sinon fitBounds() (dans updateLeafletOverlay) se
+          // calcule sur l'ancienne taille de conteneur, encore fausse pendant que l'onglet
+          // était masqué, et la carte peut se retrouver sur une vue incohérente ("n'affiche
+          // rien"). Une fois la taille corrigée, le recadrage peut se faire correctement.
+          _leafletMap.invalidateSize();
+          updateLeafletOverlay();
+        }
       } else {
         const c = document.getElementById('pondCanvas'), w = document.getElementById('canvasWrap');
         if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
@@ -2446,7 +2449,10 @@ function setActiveTab(tab) {
     requestAnimationFrame(() => {
       if (_satModeDash) {
         if (!_leafletMapDash) initLeafletMapDash();
-        else _leafletMapDash.invalidateSize();
+        else {
+          _leafletMapDash.invalidateSize();
+          updateLeafletOverlayDash();
+        }
       } else {
         const c = document.getElementById('dashPondCanvas'), w = document.getElementById('dashCanvasWrap');
         if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
