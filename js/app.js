@@ -821,7 +821,7 @@ function loadPond(pond) {
   if (!_satMode) document.getElementById('modeToggle').style.display = 'flex';
   document.getElementById('dashCanvasEmptyState').style.display = 'none';
   document.getElementById('canvasEmptyState').style.display    = 'none';
-  ['btnSelectAll','btnSelectRemaining','btnDeselectAll','btnPlanRoute'].forEach(id => {
+  ['btnSelectAll','btnSelectRemaining','btnDeselectAll','btnPlanRoute','btnDrawDeposit'].forEach(id => {
     const el = document.getElementById(id); if (el) el.disabled = false;
   });
 
@@ -1312,6 +1312,30 @@ function renderPondCanvas(canvas) {
     ctx.beginPath(); ctx.arc(aS.x, aS.y, 7, 0, Math.PI*2);
     ctx.fillStyle = '#f97316'; ctx.fill();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+
+    // Zone de dépôt des sédiments + segment de tuyau posé au sol (droit, pas ondulé —
+    // contrairement au segment flottant robot→ancre ci-dessus) qui l'y relie.
+    if (state.pond.depositZone) {
+      const dz = state.pond.depositZone;
+      ctx.beginPath();
+      dz.polygon.forEach((p, i) => {
+        const s = worldToScreen(p.x, p.y);
+        i === 0 ? ctx.moveTo(s.x, s.y) : ctx.lineTo(s.x, s.y);
+      });
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(146,64,14,0.35)';
+      ctx.fill();
+      ctx.strokeStyle = '#92400e';
+      ctx.lineWidth = Math.max(1.5, 0.08 * state.view.scale);
+      ctx.stroke();
+
+      const cS = worldToScreen(dz.centroid.x, dz.centroid.y);
+      ctx.beginPath(); ctx.moveTo(aS.x, aS.y); ctx.lineTo(cS.x, cS.y);
+      ctx.strokeStyle = '#f97316';
+      ctx.lineWidth = Math.max(2, 0.1 * state.view.scale);
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
   }
 
   // Robot
@@ -2659,6 +2683,8 @@ let _robotArrowLeaf      = null;
 let _hosePolylineLeaf    = null;
 let _hoseOutlineLeaf     = null; // liseré sombre sous le tuyau, pour le contraste
 let _hoseAnchorMarkerLeaf = null;
+let _depositZoneLeaf     = null; // zone de dépôt des sédiments
+let _depositSegmentLeaf  = null; // segment de tuyau posé au sol, ancre → zone de dépôt
 let _satMode             = true; // vue satellite par défaut
 
 let _leafletMapDash      = null;
@@ -2675,6 +2701,8 @@ let _gpsLabelMarkerDash  = null;
 let _hoseAnchorMarkerDash = null;
 let _hosePolylineDash    = null;
 let _hoseOutlineDash     = null; // liseré sombre sous le tuyau, pour le contraste
+let _depositZoneDash     = null; // zone de dépôt des sédiments
+let _depositSegmentDash  = null; // segment de tuyau posé au sol, ancre → zone de dépôt
 let _satModeDash         = true; // vue satellite par défaut
 
 // Met à jour la courbe du tuyau sans tout reconstruire (appelé pendant le glisser de l'ancre)
@@ -2683,6 +2711,10 @@ function _refreshHosePolylineDash() {
   const pts = _hoseLatLngs(state.pond.hoseAnchor, state.robot);
   _hosePolylineDash.setLatLngs(pts);
   if (_hoseOutlineDash) _hoseOutlineDash.setLatLngs(pts);
+  if (_depositSegmentDash && state.pond.depositZone) {
+    const anchorLL = metersToLatLng(state.pond.hoseAnchor.x, state.pond.hoseAnchor.y);
+    if (anchorLL) _depositSegmentDash.setLatLngs([[anchorLL.lat, anchorLL.lng], _depositSegmentDash.getLatLngs()[1]]);
+  }
 }
 
 // Points lat/lng de la courbe du tuyau, pour un L.polyline
@@ -2690,6 +2722,16 @@ function _hoseLatLngs(anchor, robot) {
   return computeHoseCurvePoints(anchor, robot)
     .map(p => { const ll = metersToLatLng(p.x, p.y); return ll ? [ll.lat, ll.lng] : null; })
     .filter(Boolean);
+}
+
+// Zone de dépôt des sédiments en coordonnées géographiques — polygone + centroïde, pour
+// le rendu Leaflet et le segment de tuyau (posé au sol, donc droit) qui la relie à l'ancre.
+function _depositZoneLatLngs(depositZone) {
+  const polyLL = depositZone.polygon
+    .map(p => { const ll = metersToLatLng(p.x, p.y); return ll ? [ll.lat, ll.lng] : null; })
+    .filter(Boolean);
+  const centroidLL = metersToLatLng(depositZone.centroid.x, depositZone.centroid.y);
+  return { polyLL, centroidLL };
 }
 
 // Coins (carré non tourné, comme sur le schéma) de ROBOT_SIZE mètres centré en (cx,cy) —
@@ -2870,9 +2912,28 @@ function _buildLeafletOverlayInner(lmap, layersArr, origin) {
         const newPts = _hoseLatLngs(snapped, state.robot);
         if (_hosePolylineLeaf) _hosePolylineLeaf.setLatLngs(newPts);
         if (_hoseOutlineLeaf)  _hoseOutlineLeaf.setLatLngs(newPts);
+        if (_depositSegmentLeaf) _depositSegmentLeaf.setLatLngs([[sLL.lat, sLL.lng], _depositSegmentLeaf.getLatLngs()[1]]);
       });
       _hoseAnchorMarkerLeaf.on('dragend', () => saveWork());
       layersArr.push(_hoseAnchorMarkerLeaf);
+    }
+  }
+
+  // Zone de dépôt des sédiments + segment de tuyau posé au sol (droit, pas ondulé) qui
+  // relie l'ancre à son centroïde.
+  _depositZoneLeaf = null; _depositSegmentLeaf = null;
+  if (state.pond.depositZone) {
+    const { polyLL, centroidLL } = _depositZoneLatLngs(state.pond.depositZone);
+    if (polyLL.length > 2) {
+      _depositZoneLeaf = L.polygon(polyLL, { color: '#92400e', weight: 2, fillColor: '#92400e', fillOpacity: 0.3 }).addTo(lmap);
+      layersArr.push(_depositZoneLeaf);
+    }
+    const anchorLL = metersToLatLng(state.pond.hoseAnchor.x, state.pond.hoseAnchor.y);
+    if (anchorLL && centroidLL) {
+      _depositSegmentLeaf = L.polyline([[anchorLL.lat, anchorLL.lng], [centroidLL.lat, centroidLL.lng]], {
+        color: '#f97316', weight: 4, opacity: 0.9,
+      }).addTo(lmap);
+      layersArr.push(_depositSegmentLeaf);
     }
   }
 
@@ -2944,6 +3005,24 @@ function _rebuildBaseLayersDash() {
       });
       _hoseAnchorMarkerDash.on('dragend', () => saveWork());
       _baseLayersDash.push(_hoseAnchorMarkerDash);
+    }
+  }
+
+  // Zone de dépôt des sédiments + segment de tuyau posé au sol (droit, pas ondulé) qui
+  // relie l'ancre à son centroïde.
+  _depositZoneDash = null; _depositSegmentDash = null;
+  if (state.pond.depositZone) {
+    const { polyLL: dzLL, centroidLL } = _depositZoneLatLngs(state.pond.depositZone);
+    if (dzLL.length > 2) {
+      _depositZoneDash = L.polygon(dzLL, { color: '#92400e', weight: 2, fillColor: '#92400e', fillOpacity: 0.3 }).addTo(_leafletMapDash);
+      _baseLayersDash.push(_depositZoneDash);
+    }
+    const anchorLL = metersToLatLng(state.pond.hoseAnchor.x, state.pond.hoseAnchor.y);
+    if (anchorLL && centroidLL) {
+      _depositSegmentDash = L.polyline([[anchorLL.lat, anchorLL.lng], [centroidLL.lat, centroidLL.lng]], {
+        color: '#f97316', weight: 4, opacity: 0.9,
+      }).addTo(_leafletMapDash);
+      _baseLayersDash.push(_depositSegmentDash);
     }
   }
 
@@ -3221,6 +3300,7 @@ function toggleSatelliteView(on) {
   const modeToggleMap = document.getElementById('modeToggle');
   const scaleInfo     = document.getElementById('scaleInfoMap');
   const styleGroup    = document.getElementById('mapMapStyleGroup');
+  const drawGroup     = document.getElementById('mapDrawGroup');
 
   if (on) {
     if (canvasWrap)    canvasWrap.style.display = 'none';
@@ -3229,6 +3309,7 @@ function toggleSatelliteView(on) {
     if (scaleInfo)     scaleInfo.style.display = 'none';
     if (leafletDiv)    leafletDiv.style.display = 'block';
     if (styleGroup)    styleGroup.style.display = '';
+    if (drawGroup)     drawGroup.style.display = '';
     if (!_leafletMap) {
       // Un conteneur masqué (display:none, onglet Carte pas encore visité) a une taille
       // nulle : Leaflet construit dessus reste cassé même après un invalidateSize() bien
@@ -3244,12 +3325,273 @@ function toggleSatelliteView(on) {
     if (modeToggleMap && state.pond) modeToggleMap.style.display = 'flex';
     if (scaleInfo)     scaleInfo.style.display = '';
     if (styleGroup)    styleGroup.style.display = 'none';
+    if (drawGroup)     drawGroup.style.display = 'none';
+    if (typeof cancelDraw === 'function') cancelDraw();
     requestAnimationFrame(() => {
       const c = document.getElementById('pondCanvas'), w = document.getElementById('canvasWrap');
       if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
       renderPondCanvas(document.getElementById('pondCanvas'));
     });
   }
+}
+
+// ============================================================
+// TRACÉ D'ÉTANG RÉEL — recherche d'adresse + dessin du contour / zone de dépôt
+// Onglet Carte, Satellite uniquement (besoin de voir le terrain pour tracer).
+// ============================================================
+
+// ── Recherche d'adresse (API Adresse — data.gouv.fr, gratuite, sans clé) ──
+// Port du bloc équivalent de site-vandaele/js/estimation.js (même API, même UX).
+let _addrDebounce = null, _addrFocusIndex = -1, _addrResults = [];
+
+function centerCarteMapOn(lat, lng, zoom = 18) {
+  if (!_leafletMap) return;
+  _leafletMap.setView([lat, lng], zoom);
+  _leafletMap.invalidateSize();
+}
+
+function _addrRenderDropdown(features) {
+  const dropdown = document.getElementById('drawAddressDropdown');
+  if (!dropdown) return;
+  _addrResults = features;
+  _addrFocusIndex = -1;
+  if (!features.length) { dropdown.classList.remove('open'); dropdown.innerHTML = ''; return; }
+  dropdown.innerHTML = features.map((f, i) => {
+    const p = f.properties;
+    const icon = p.type === 'municipality' ? '🏘️' : p.type === 'street' ? '🛣️' : '📍';
+    return `<li data-idx="${i}"><span class="ac-icon">${icon}</span><span><span class="ac-main">${p.name || p.label}</span><br><span class="ac-sub">${p.postcode || ''} ${p.city || ''}</span></span></li>`;
+  }).join('');
+  dropdown.classList.add('open');
+  dropdown.querySelectorAll('li').forEach(li => {
+    li.addEventListener('mousedown', e => { e.preventDefault(); _addrSelect(parseInt(li.dataset.idx)); });
+  });
+}
+
+function _addrSelect(idx) {
+  const f = _addrResults[idx];
+  if (!f) return;
+  const input = document.getElementById('drawAddressInput');
+  const dropdown = document.getElementById('drawAddressDropdown');
+  if (input) input.value = f.properties.label;
+  if (dropdown) { dropdown.classList.remove('open'); dropdown.innerHTML = ''; }
+  _addrResults = [];
+  const [lng, lat] = f.geometry.coordinates;
+  centerCarteMapOn(lat, lng, 18);
+}
+
+function _addrUpdateFocus() {
+  const dropdown = document.getElementById('drawAddressDropdown');
+  if (!dropdown) return;
+  const items = dropdown.querySelectorAll('li');
+  items.forEach((li, i) => li.classList.toggle('focused', i === _addrFocusIndex));
+  if (_addrFocusIndex >= 0 && items[_addrFocusIndex]) items[_addrFocusIndex].scrollIntoView({ block: 'nearest' });
+}
+
+function initAddressSearch() {
+  const input = document.getElementById('drawAddressInput');
+  const dropdown = document.getElementById('drawAddressDropdown');
+  if (!input || !dropdown || input.dataset.bound) return;
+  input.dataset.bound = '1';
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    clearTimeout(_addrDebounce);
+    if (q.length < 3) { dropdown.classList.remove('open'); dropdown.innerHTML = ''; return; }
+    dropdown.innerHTML = '<li class="autocomplete-loading">Recherche en cours…</li>';
+    dropdown.classList.add('open');
+    _addrDebounce = setTimeout(async () => {
+      try {
+        const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=6&autocomplete=1`;
+        const res = await fetch(url);
+        const data = await res.json();
+        _addrRenderDropdown(data.features || []);
+      } catch { dropdown.classList.remove('open'); dropdown.innerHTML = ''; }
+    }, 280);
+  });
+
+  input.addEventListener('keydown', e => {
+    const items = dropdown.querySelectorAll('li');
+    if (!dropdown.classList.contains('open') || !items.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); _addrFocusIndex = Math.min(_addrFocusIndex + 1, items.length - 1); _addrUpdateFocus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); _addrFocusIndex = Math.max(_addrFocusIndex - 1, 0); _addrUpdateFocus(); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (_addrFocusIndex >= 0) _addrSelect(_addrFocusIndex); else if (_addrResults.length) _addrSelect(0); }
+    else if (e.key === 'Escape') { dropdown.classList.remove('open'); dropdown.innerHTML = ''; }
+  });
+
+  document.addEventListener('click', e => {
+    if (!input.contains(e.target) && !dropdown.contains(e.target)) dropdown.classList.remove('open');
+  });
+}
+
+// ── Dessin (Leaflet.draw) ──────────────────────────────────────────────────
+let _drawMode = null;             // null | 'contour' | 'deposit'
+let _drawTool = null;             // instance L.Draw.Polygon partagée, créée une fois
+let _draftLayer = null;           // aperçu de la forme en cours de tracé
+let _draftContourLatLngs = null;  // sommets du dernier contour tracé, en attente de validation
+
+function setDrawStatus(msg) { const el = document.getElementById('drawStatusBar'); if (el) el.textContent = msg; }
+
+function _ensureDrawTool() {
+  if (!_leafletMap || typeof L === 'undefined' || !L.Draw) return null;
+  if (_drawTool) return _drawTool;
+
+  _drawTool = new L.Draw.Polygon(_leafletMap, {
+    allowIntersection: false,
+    showArea: true,
+    shapeOptions: { color: '#f97316', fillColor: '#f97316', fillOpacity: 0.15, weight: 2 },
+    metric: true, feet: false,
+  });
+
+  // Fermeture fiable au clic sur le 1er sommet OU via le bouton "Terminer" — même pattern
+  // que site-vandaele/js/estimation.js : disable() doit s'exécuter AVANT l'event CREATED,
+  // sinon les guides de tracé restent visibles une fois la forme validée.
+  _drawTool._finishShape = function() {
+    const pts = (this._markers || []).map(m => m.getLatLng());
+    if (pts.length < 3) return;
+    this.disable();
+    const layer = L.polygon([pts], { color: '#f97316', fillColor: '#f97316', fillOpacity: 0.15, weight: 2 });
+    _leafletMap.fire(L.Draw.Event.CREATED, { layer, layerType: 'polygon' });
+  };
+
+  _leafletMap.on('draw:drawvertex', () => {
+    if (!_drawTool._enabled || !_drawTool._markers || _drawTool._markers.length < 3) return;
+    const firstMarker = _drawTool._markers[0];
+    firstMarker.off('click').on('click', ev => { L.DomEvent.stop(ev); finishCurrentDrawing(); });
+  });
+
+  _leafletMap.on(L.Draw.Event.CREATED, _handleDrawCreated);
+  return _drawTool;
+}
+
+function toggleDrawPondPanel(force) {
+  const panel = document.getElementById('drawPondPanel');
+  if (!panel) return;
+  const open = force !== undefined ? force : panel.style.display === 'none';
+  if (!open) { cancelDraw(); return; }
+
+  if (!_satMode) toggleSatelliteView(true);
+  initAddressSearch();
+  _drawMode = null;
+  document.getElementById('drawAddressRow').style.display = '';
+  document.getElementById('drawNameRow').style.display = 'none';
+  document.getElementById('btnStartContour').style.display = '';
+  document.getElementById('btnFinishDraw').style.display = 'none';
+  setDrawStatus('Cliquez sur « Tracer le contour », puis délimitez l\'étang sur la carte.');
+  panel.style.display = 'flex';
+}
+
+function openDrawPondFromEmptyState() {
+  toggleSatelliteView(true);
+  toggleDrawPondPanel(true);
+}
+
+function startContourDraw() {
+  const tool = _ensureDrawTool();
+  if (!tool) { showToast('Passez en vue Satellite pour dessiner', 'error'); return; }
+  _drawMode = 'contour';
+  _draftContourLatLngs = null;
+  if (_draftLayer) { _leafletMap.removeLayer(_draftLayer); _draftLayer = null; }
+  document.getElementById('drawNameRow').style.display = 'none';
+  document.getElementById('btnStartContour').style.display = 'none';
+  document.getElementById('btnFinishDraw').style.display = '';
+  setDrawStatus('📐 Cliquez pour placer les sommets du contour. Cliquez sur le 1er point ou sur « Terminer » pour fermer.');
+  tool.enable();
+}
+
+// Actif dès qu'un étang est chargé (dessiné ou importé en KML) — retrace la zone de dépôt
+// existante si besoin, pas de drag-and-drop d'une forme entière après coup (hors scope).
+function startDepositZoneDraw() {
+  if (!state.pond) { showToast('Chargez ou dessinez un étang d\'abord', 'error'); return; }
+  const tool = _ensureDrawTool();
+  if (!tool) { showToast('Passez en vue Satellite pour dessiner', 'error'); return; }
+  if (!_satMode) toggleSatelliteView(true);
+  _drawMode = 'deposit';
+  const panel = document.getElementById('drawPondPanel');
+  if (panel) panel.style.display = 'flex';
+  document.getElementById('drawAddressRow').style.display = 'none';
+  document.getElementById('drawNameRow').style.display = 'none';
+  document.getElementById('btnStartContour').style.display = 'none';
+  document.getElementById('btnFinishDraw').style.display = '';
+  setDrawStatus('🎯 Délimitez la zone de dépôt des sédiments (là où ira le tuyau). Cliquez sur le 1er point ou sur « Terminer » pour fermer.');
+  tool.enable();
+}
+
+function finishCurrentDrawing() {
+  if (_drawTool && _drawTool._enabled) {
+    if ((_drawTool._markers || []).length < 3) { setDrawStatus('⚠️ Tracez au moins 3 points.'); return; }
+    _drawTool._finishShape();
+  }
+}
+
+function cancelDraw() {
+  if (_drawTool) _drawTool.disable();
+  if (_draftLayer && _leafletMap) { _leafletMap.removeLayer(_draftLayer); _draftLayer = null; }
+  _drawMode = null;
+  _draftContourLatLngs = null;
+  const panel = document.getElementById('drawPondPanel');
+  if (panel) panel.style.display = 'none';
+}
+
+function _handleDrawCreated(e) {
+  if (_draftLayer && _leafletMap) _leafletMap.removeLayer(_draftLayer);
+  _draftLayer = e.layer.addTo(_leafletMap);
+
+  const raw = e.layer.getLatLngs();
+  const lls = Array.isArray(raw[0]) ? raw[0] : raw;
+
+  if (_drawMode === 'contour') {
+    const areaM2 = Math.round(L.GeometryUtil.geodesicArea(lls));
+    // Garde-fou : generateGrid() construit une grille cols×rows à partir de la surface —
+    // un tracé démesuré (carte pas recentrée, clic malheureux) produirait une grille de
+    // plusieurs milliards de cases et fait planter l'onglet. 20 ha est déjà très généreux
+    // pour un étang réel.
+    if (areaM2 > 200000) {
+      _leafletMap.removeLayer(_draftLayer);
+      _draftLayer = null;
+      document.getElementById('btnStartContour').style.display = '';
+      document.getElementById('btnFinishDraw').style.display = 'none';
+      setDrawStatus(`⚠️ Surface bien trop grande (${areaM2.toLocaleString('fr-FR')} m²) — vérifiez que la carte est bien centrée sur l'étang, puis retracez.`);
+      return;
+    }
+    _draftContourLatLngs = lls.map(ll => ({ lat: ll.lat, lng: ll.lng }));
+    document.getElementById('drawNameRow').style.display = '';
+    document.getElementById('btnFinishDraw').style.display = 'none';
+    setDrawStatus(`✅ Surface tracée : ${areaM2.toLocaleString('fr-FR')} m². Donnez un nom à l'étang puis validez.`);
+  } else if (_drawMode === 'deposit') {
+    const origin = state.pond.origin;
+    const polygon = lls.map(ll => latLngToMeters(ll.lat, ll.lng, origin.lat, origin.lng));
+    const cx = polygon.reduce((s,p) => s+p.x, 0) / polygon.length;
+    const cy = polygon.reduce((s,p) => s+p.y, 0) / polygon.length;
+    state.pond.depositZone = { polygon, centroid: { x: cx, y: cy } };
+    state.pond.hoseAnchor  = nearestPointOnPolygon(state.pond.polygon, cx, cy);
+    saveWork();
+    if (_satMode)     updateLeafletOverlay();
+    if (_satModeDash) updateLeafletOverlayDash();
+    renderAllPondCanvases();
+    cancelDraw();
+    showToast('Zone de dépôt enregistrée — tuyau mis à jour', 'success');
+  }
+}
+
+function confirmNewPond() {
+  if (!_draftContourLatLngs || _draftContourLatLngs.length < 3) return;
+  const nameInput = document.getElementById('drawPondNameInput');
+  const name = (nameInput?.value || '').trim() || `Étang ${new Date().toLocaleDateString('fr-FR')}`;
+  const origin = _draftContourLatLngs[0];
+  const polygon = _draftContourLatLngs.map(ll => latLngToMeters(ll.lat, ll.lng, origin.lat, origin.lng));
+  const first = polygon[0], last = polygon[polygon.length - 1];
+  if (dist(first.x, first.y, last.x, last.y) > 0.1) polygon.push({ ...first });
+
+  const pond = createPondFromKML({ name, polygon, origin });
+  const idx = state.ponds.findIndex(p => p.name === pond.name);
+  if (idx !== -1) state.ponds[idx] = pond; else state.ponds.push(pond);
+  savePonds();
+
+  if (_draftLayer && _leafletMap) { _leafletMap.removeLayer(_draftLayer); _draftLayer = null; }
+  loadPond(pond);
+  updatePondsList();
+  cancelDraw();
+  showToast(`Étang « ${pond.name} » créé (${pond.cells.length} cases)`, 'success');
 }
 
 // ============================================================

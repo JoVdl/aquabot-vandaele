@@ -14,6 +14,7 @@
   </script>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" crossorigin=""/>
 </head>
 <body>
 <div class="app">
@@ -32,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v4</span>
+        <span class="logo-version" id="appVersion">v5</span>
       </div>
     </div>
     <div class="header-status">
@@ -341,6 +342,14 @@
               KML
             </button>
           </div>
+          <!-- Tracer un étang réel à la main — uniquement en Satellite (besoin de voir le terrain) -->
+          <div class="toolbar-group toolbar-group-labeled" id="mapDrawGroup" style="display:none">
+            <span class="toolbar-group-label">Étang réel</span>
+            <div style="display:flex;gap:5px">
+              <button class="btn btn-secondary btn-sm" id="btnDrawPond" onclick="toggleDrawPondPanel()">✏ Dessiner un étang</button>
+              <button class="btn btn-secondary btn-sm" id="btnDrawDeposit" onclick="startDepositZoneDraw()" disabled>🎯 Zone de dépôt</button>
+            </div>
+          </div>
           <!-- Vue Schéma / Satellite -->
           <div class="toolbar-group toolbar-group-labeled">
             <span class="toolbar-group-label">Vue</span>
@@ -371,6 +380,30 @@
           </div>
         </div>
 
+        <!-- Panneau de tracé — recherche d'adresse, tracé du contour (nouvel étang) ou de
+             la zone de dépôt (étang déjà chargé, dessiné ou importé) -->
+        <div class="draw-pond-panel" id="drawPondPanel" style="display:none">
+          <div class="draw-pond-row" id="drawAddressRow">
+            <div class="address-search-wrap">
+              <input type="text" id="drawAddressInput" class="address-search-input"
+                     placeholder="Chercher une adresse pour localiser l'étang…" autocomplete="off">
+              <ul class="address-dropdown" id="drawAddressDropdown"></ul>
+            </div>
+          </div>
+          <div class="draw-pond-row draw-pond-status" id="drawStatusBar">
+            Cliquez sur « Tracer le contour », puis délimitez l'étang sur la carte.
+          </div>
+          <div class="draw-pond-row draw-pond-actions">
+            <button class="btn btn-primary btn-sm" id="btnStartContour" onclick="startContourDraw()">✏ Tracer le contour</button>
+            <button class="btn btn-accent btn-sm" id="btnFinishDraw" onclick="finishCurrentDrawing()" style="display:none">✓ Terminer</button>
+            <button class="btn btn-ghost btn-sm" id="btnCancelDraw" onclick="cancelDraw()">✕ Annuler</button>
+          </div>
+          <div class="draw-pond-row" id="drawNameRow" style="display:none">
+            <input type="text" id="drawPondNameInput" class="sel-name-input" placeholder="Nom de l'étang…" maxlength="60">
+            <button class="btn btn-success btn-sm" onclick="confirmNewPond()">✓ Valider l'étang</button>
+          </div>
+        </div>
+
         <!-- Vue Schéma (canvas existant) -->
         <div class="canvas-wrap" id="canvasWrap">
           <canvas id="pondCanvas"></canvas>
@@ -379,8 +412,11 @@
               <svg viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="28" stroke="#0ea5e9" stroke-width="2" opacity="0.3"/><path d="M16 40 Q24 28 32 36 Q40 44 48 28" stroke="#0ea5e9" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M24 20 L32 12 L40 20 M32 12 L32 32" stroke="#0ea5e9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </div>
             <p class="empty-title">Aucun étang chargé</p>
-            <p class="empty-subtitle">Importez un fichier KML depuis Géoportail<br>ou sélectionnez un étang enregistré</p>
-            <button class="btn btn-primary" onclick="triggerKMLImport()">Importer un fichier KML</button>
+            <p class="empty-subtitle">Importez un fichier KML depuis Géoportail<br>ou dessinez l'étang directement sur la carte</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+              <button class="btn btn-primary" onclick="triggerKMLImport()">Importer un fichier KML</button>
+              <button class="btn btn-secondary" onclick="openDrawPondFromEmptyState()">✏ Dessiner un étang</button>
+            </div>
           </div>
           <div class="zoom-controls">
             <button class="zoom-btn" onclick="zoomIn()">+</button>
@@ -543,6 +579,7 @@
 
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js" crossorigin=""></script>
 <!-- Firebase v9 compat SDK -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
