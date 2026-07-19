@@ -2427,7 +2427,11 @@ function setActiveTab(tab) {
     requestAnimationFrame(() => {
       if (_satMode) {
         if (!_leafletMap) initLeafletMap();
-        else { updateLeafletOverlay(); setTimeout(() => _leafletMap.invalidateSize(), 100); }
+        // Juste invalidateSize() : les couches (cellules, robot) sont déjà tenues à jour en
+        // continu par les ticks, peu importe l'onglet actif — un rebuild complet ici rappellerait
+        // fitBounds() et écraserait le zoom/la position que l'utilisateur avait choisis, en plus
+        // de le faire AVANT que la taille du conteneur soit corrigée (vue faussée un instant).
+        else _leafletMap.invalidateSize();
       } else {
         const c = document.getElementById('pondCanvas'), w = document.getElementById('canvasWrap');
         if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
@@ -2438,12 +2442,11 @@ function setActiveTab(tab) {
   } else if (tab === 'dashboard') {
     // Le tableau de bord est l'onglet par défaut : sa carte Leaflet n'était resynchronisée
     // qu'une fois au tout premier chargement de la page. En revenant d'un autre onglet, sa
-    // taille de conteneur avait pu changer entre-temps sans jamais être revérifiée — même
-    // souci que celui déjà corrigé pour l'onglet Carte, ici pour le retour sur le tableau de bord.
+    // taille de conteneur avait pu changer entre-temps sans jamais être revérifiée.
     requestAnimationFrame(() => {
       if (_satModeDash) {
         if (!_leafletMapDash) initLeafletMapDash();
-        else { updateLeafletOverlayDash(); setTimeout(() => _leafletMapDash.invalidateSize(), 100); }
+        else _leafletMapDash.invalidateSize();
       } else {
         const c = document.getElementById('dashPondCanvas'), w = document.getElementById('dashCanvasWrap');
         if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
