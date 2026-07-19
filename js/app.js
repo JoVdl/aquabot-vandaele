@@ -636,22 +636,18 @@ function computeRequiredHoseLength(pond) {
 // Recalcule et affiche la longueur de tuyau nécessaire partout où elle apparaît — appelé
 // au chargement de l'étang et chaque fois que l'ancre (ou la zone de dépôt, qui la
 // recalcule) bouge, jamais à chaque tick (coût O(cases), inutile de le refaire en continu).
+// Affichée dans le mini-widget du tableau de bord, le popover Progression, et — par étang —
+// dans la fiche de l'onglet Étangs (updatePondsList()).
 function updateHoseLengthDisplay() {
-  const badgeMap  = document.getElementById('hoseLengthBadgeMap');
-  const groupMap  = document.getElementById('hoseLengthGroupMap');
   const dashBadge = document.getElementById('dashHoseLengthBadge');
   const dashStat  = document.getElementById('dashHoseLengthNeeded');
   if (!state.pond) {
-    if (groupMap) groupMap.style.display = 'none';
-    if (badgeMap)  badgeMap.textContent  = '—';
     if (dashBadge) dashBadge.textContent = '—';
     if (dashStat)  dashStat.textContent  = '—';
     return;
   }
   const lenM = computeRequiredHoseLength(state.pond);
   const txt = lenM > 0 ? `${Math.ceil(lenM)} m` : '—';
-  if (groupMap)  groupMap.style.display = '';
-  if (badgeMap)  badgeMap.textContent  = txt;
   if (dashBadge) dashBadge.textContent = lenM > 0 ? Math.ceil(lenM) : '—';
   if (dashStat)  dashStat.textContent  = txt;
 }
@@ -866,7 +862,7 @@ function loadPond(pond) {
   if (!_satMode) document.getElementById('modeToggle').style.display = 'flex';
   document.getElementById('dashCanvasEmptyState').style.display = 'none';
   document.getElementById('canvasEmptyState').style.display    = 'none';
-  ['btnSelectAll','btnSelectRemaining','btnDeselectAll','btnPlanRoute','btnDrawDeposit'].forEach(id => {
+  ['btnSelectAll','btnSelectRemaining','btnDeselectAll','btnPlanRoute'].forEach(id => {
     const el = document.getElementById(id); if (el) el.disabled = false;
   });
 
@@ -2425,6 +2421,7 @@ function updatePondsList() {
         </div>
         <div class="pond-actions">
           <button class="btn btn-primary btn-sm"    onclick="event.stopPropagation();loadPondById('${p.id}')">Charger</button>
+          <button class="btn btn-secondary btn-sm"  onclick="event.stopPropagation();startDepositZoneForPond('${p.id}')">🎯 Zone de dépôt</button>
           <button class="btn btn-secondary btn-sm"  onclick="event.stopPropagation();resetWork('${p.id}')">↺ RAZ</button>
           <button class="btn btn-danger btn-sm"     onclick="event.stopPropagation();deletePond('${p.id}')">✕</button>
         </div>
@@ -3365,7 +3362,6 @@ function toggleSatelliteView(on) {
   const modeToggleMap = document.getElementById('modeToggle');
   const scaleInfo     = document.getElementById('scaleInfoMap');
   const styleGroup    = document.getElementById('mapMapStyleGroup');
-  const drawGroup     = document.getElementById('mapDrawGroup');
 
   if (on) {
     if (canvasWrap)    canvasWrap.style.display = 'none';
@@ -3374,7 +3370,6 @@ function toggleSatelliteView(on) {
     if (scaleInfo)     scaleInfo.style.display = 'none';
     if (leafletDiv)    leafletDiv.style.display = 'block';
     if (styleGroup)    styleGroup.style.display = '';
-    if (drawGroup)     drawGroup.style.display = '';
     if (!_leafletMap) {
       // Un conteneur masqué (display:none, onglet Carte pas encore visité) a une taille
       // nulle : Leaflet construit dessus reste cassé même après un invalidateSize() bien
@@ -3390,7 +3385,6 @@ function toggleSatelliteView(on) {
     if (modeToggleMap && state.pond) modeToggleMap.style.display = 'flex';
     if (scaleInfo)     scaleInfo.style.display = '';
     if (styleGroup)    styleGroup.style.display = 'none';
-    if (drawGroup)     drawGroup.style.display = 'none';
     if (typeof cancelDraw === 'function') cancelDraw();
     requestAnimationFrame(() => {
       const c = document.getElementById('pondCanvas'), w = document.getElementById('canvasWrap');
@@ -3551,10 +3545,32 @@ function openDrawPondFromEmptyState() {
 }
 
 // Point d'entrée depuis l'onglet Étangs — le tracé lui-même a besoin d'une vraie carte
-// Leaflet, qui n'existe que sur l'onglet Carte ; on y bascule d'abord.
+// Leaflet, qui n'existe que sur l'onglet Carte ; on y bascule d'abord. Enveloppé dans un
+// try/catch : mieux vaut un message d'erreur visible qu'un clic silencieusement sans effet.
 function goToDrawPond() {
-  setActiveTab('map');
-  openDrawPondFromEmptyState();
+  try {
+    setActiveTab('map');
+    openDrawPondFromEmptyState();
+  } catch (err) {
+    console.error('[goToDrawPond]', err);
+    showToast('Erreur lors de l\'ouverture du tracé — voir la console', 'error');
+  }
+}
+
+// Point d'entrée depuis une fiche de l'onglet Étangs — charge l'étang si besoin, bascule
+// sur la carte satellite et lance directement le tracé de sa zone de dépôt.
+function startDepositZoneForPond(id) {
+  try {
+    const pond = state.ponds.find(p => p.id === id);
+    if (!pond) { showToast('Étang introuvable', 'error'); return; }
+    if (state.pond?.id !== id) loadPond(pond);
+    setActiveTab('map');
+    toggleSatelliteView(true);
+    startDepositZoneDraw();
+  } catch (err) {
+    console.error('[startDepositZoneForPond]', err);
+    showToast('Erreur lors de l\'ouverture du tracé — voir la console', 'error');
+  }
 }
 
 function startContourDraw() {
@@ -3641,6 +3657,7 @@ function _handleDrawCreated(e) {
     if (_satMode)     updateLeafletOverlay();
     if (_satModeDash) updateLeafletOverlayDash();
     renderAllPondCanvases();
+    updatePondsList();
     cancelDraw();
     showToast('Zone de dépôt enregistrée — tuyau mis à jour', 'success');
   }

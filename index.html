@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v7</span>
+        <span class="logo-version" id="appVersion">v8</span>
       </div>
     </div>
     <div class="header-status">
@@ -351,20 +351,6 @@
               <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
               KML
             </button>
-          </div>
-          <!-- Tracer un étang réel à la main — uniquement en Satellite (besoin de voir le terrain) -->
-          <div class="toolbar-group toolbar-group-labeled" id="mapDrawGroup" style="display:none">
-            <span class="toolbar-group-label">Étang réel</span>
-            <div style="display:flex;gap:5px">
-              <button class="btn btn-secondary btn-sm" id="btnDrawPond" onclick="toggleDrawPondPanel()">✏ Dessiner un étang</button>
-              <button class="btn btn-secondary btn-sm" id="btnDrawDeposit" onclick="startDepositZoneDraw()" disabled>🎯 Zone de dépôt</button>
-            </div>
-          </div>
-          <!-- Longueur de tuyau flottant nécessaire pour atteindre la case la plus éloignée
-               depuis le point de sortie sur la berge — recalculée si on déplace ce point. -->
-          <div class="toolbar-group toolbar-group-labeled" id="hoseLengthGroupMap" style="display:none">
-            <span class="toolbar-group-label">Tuyau nécessaire</span>
-            <span class="scale-badge" id="hoseLengthBadgeMap">—</span>
           </div>
           <!-- Vue Schéma / Satellite -->
           <div class="toolbar-group toolbar-group-labeled">
