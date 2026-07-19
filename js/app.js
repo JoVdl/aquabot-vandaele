@@ -3217,8 +3217,13 @@ function toggleSatelliteView(on) {
 // ============================================================
 function init() {
   applyThemeIcon();
-  toggleSatelliteViewDash(true);
-  toggleSatelliteView(true);
+  // Schéma par défaut (pas Satellite) : le rendu Leaflet a été signalé cassé chez
+  // l'utilisateur alors que le schéma fonctionne de façon fiable — on démarre sur une
+  // vue qui marche à coup sûr, l'utilisateur peut toujours basculer en Satellite à la
+  // main via le bouton Vue. À remettre en Satellite par défaut une fois la cause
+  // trouvée (probablement liée au fournisseur de tuiles ou à un état Leaflet corrompu).
+  toggleSatelliteViewDash(false);
+  toggleSatelliteView(false);
   loadPonds();
   try { const sp = localStorage.getItem('aquabot_params'); if (sp) Object.assign(params, JSON.parse(sp)); } catch {}
 
