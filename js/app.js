@@ -2557,10 +2557,15 @@ function showToast(msg, type='') {
 // ============================================================
 // COORDINATE CONVERSION — local ↔ GPS
 // ============================================================
+// {lat:0, lng:0} est une origine valide (voir metersToLatLng) — centralisé ici pour ne
+// pas répéter le même test de fausse "origine absente" à chaque site d'appel.
+function isValidOrigin(o) {
+  return !!o && typeof o.lat === 'number' && typeof o.lng === 'number' && !Number.isNaN(o.lat) && !Number.isNaN(o.lng);
+}
+
 function metersToLatLng(x, y) {
-  if (!state.pond?.origin) return null;
+  if (!isValidOrigin(state.pond?.origin)) return null;
   const { lat: lat0, lng: lng0 } = state.pond.origin;
-  if (!lat0 && !lng0) return null;
   return {
     lat: lat0 + y / 110540,
     lng: lng0 + x / (Math.cos(lat0 * Math.PI / 180) * 111320),
@@ -2754,8 +2759,20 @@ function _buildLeafletOverlay(lmap, layersArr) {
 
   if (!state.pond) return null;
   const origin = state.pond.origin;
-  if (!origin || (!origin.lat && !origin.lng)) return null;
+  if (!isValidOrigin(origin)) return null;
 
+  // Un throw ici (ex. coordonnées invalides) plantait tout l'overlay en silence — plus de
+  // polygone, plus de cases, plus de robot, sans rien dans la console pour comprendre
+  // pourquoi. On isole et on journalise pour un diagnostic rapide si ça se reproduit.
+  try {
+    _buildLeafletOverlayInner(lmap, layersArr, origin);
+  } catch (err) {
+    console.error('[leaflet-map] échec de la construction de l\'overlay:', err);
+  }
+  return null;
+}
+
+function _buildLeafletOverlayInner(lmap, layersArr, origin) {
   const renderer = L.canvas({ padding: 0.5 });
 
   const polyLL = state.pond.polygon.map(p => { const ll = metersToLatLng(p.x, p.y); return [ll.lat, ll.lng]; });
@@ -2894,7 +2911,7 @@ function _rebuildBaseLayersDash() {
   _baseLayersDash.length = 0;
   if (!state.pond) return;
   const origin = state.pond.origin;
-  if (!origin || (!origin.lat && !origin.lng)) return;
+  if (!isValidOrigin(origin)) return;
 
   const polyLL = state.pond.polygon.map(p => { const ll = metersToLatLng(p.x, p.y); return [ll.lat, ll.lng]; });
   const poly = L.polygon(polyLL, { color: '#0ea5e9', weight: 2, fillColor: '#0ea5e9', fillOpacity: 0.07 }).addTo(_leafletMapDash);
@@ -2935,7 +2952,7 @@ function _rebuildDynamicLayersDash() {
   _robotSquareDash = null; _robotPumpDash = null; _robotArrowDash = null; _gpsLabelMarkerDash = null;
   if (!state.pond) return;
   const origin = state.pond.origin;
-  if (!origin || (!origin.lat && !origin.lng)) return;
+  if (!isValidOrigin(origin)) return;
 
   const robotLL = metersToLatLng(state.robot.x, state.robot.y);
   if (!robotLL) return;
@@ -3017,7 +3034,7 @@ function _rebuildPathLayerDash() {
   _pathLayerDash.length = 0;
   if (!state.pond || state.plannedPath.length < 2) return;
   const origin = state.pond.origin;
-  if (!origin || (!origin.lat && !origin.lng)) return;
+  if (!isValidOrigin(origin)) return;
 
   const latlngs = [];
   for (const idx of state.plannedPath) {
@@ -3109,19 +3126,28 @@ function initLeafletMapDash() {
     else _rebuildDynamicLayersDash();
   });
 
-  _rebuildBaseLayersDash();
-  _rebuildCellLayersDash();
-  _rebuildPathLayerDash();
-  _rebuildDynamicLayersDash();
+  _rebuildLeafletDashLayers();
   _addSelectionHandlersDash();
+}
+
+// Un throw dans une étape (ex. polygone/case avec des coordonnées invalides) ne doit pas
+// empêcher les suivantes de s'exécuter — sinon une carte satellite "n'affiche rien du tout"
+// (ni tuiles, ni polygone, ni robot) et rien dans la console n'indique pourquoi. Chaque étape
+// est isolée et son échec journalisé avec une étiquette claire pour un diagnostic rapide.
+function _rebuildLeafletDashLayers() {
+  for (const [label, fn] of [
+    ['base',    _rebuildBaseLayersDash],
+    ['cells',   _rebuildCellLayersDash],
+    ['path',    _rebuildPathLayerDash],
+    ['dynamic', _rebuildDynamicLayersDash],
+  ]) {
+    try { fn(); } catch (err) { console.error(`[leaflet-dash] échec de la construction "${label}":`, err); }
+  }
 }
 
 function updateLeafletOverlayDash() {
   if (!_leafletMapDash) return;
-  _rebuildBaseLayersDash();
-  _rebuildCellLayersDash();
-  _rebuildPathLayerDash();
-  _rebuildDynamicLayersDash();
+  _rebuildLeafletDashLayers();
 }
 
 function updateRobotMarkerDash() {
