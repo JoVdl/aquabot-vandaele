@@ -611,6 +611,51 @@ function computeHoseCurvePoints(anchor, robot, segments = 24) {
   return pts;
 }
 
+// Longueur réelle de la courbe (pas la distance à vol d'oiseau) entre deux points —
+// la longueur physique de tuyau nécessaire suit les ondulations, pas une ligne droite.
+function _hoseCurveLength(anchor, target) {
+  const pts = computeHoseCurvePoints(anchor, target);
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) len += dist(pts[i-1].x, pts[i-1].y, pts[i].x, pts[i].y);
+  return len;
+}
+
+// Longueur de tuyau flottant nécessaire pour que le robot puisse atteindre n'importe quelle
+// case de l'étang depuis le point de sortie actuel sur la berge (hoseAnchor) — le pire cas,
+// donc la case la plus éloignée. Se recalcule à chaque déplacement de l'ancre.
+function computeRequiredHoseLength(pond) {
+  if (!pond?.hoseAnchor || !pond.cells?.length) return 0;
+  let maxLen = 0;
+  for (const cell of pond.cells) {
+    const len = _hoseCurveLength(pond.hoseAnchor, { x: cell.cx, y: cell.cy });
+    if (len > maxLen) maxLen = len;
+  }
+  return maxLen;
+}
+
+// Recalcule et affiche la longueur de tuyau nécessaire partout où elle apparaît — appelé
+// au chargement de l'étang et chaque fois que l'ancre (ou la zone de dépôt, qui la
+// recalcule) bouge, jamais à chaque tick (coût O(cases), inutile de le refaire en continu).
+function updateHoseLengthDisplay() {
+  const badgeMap  = document.getElementById('hoseLengthBadgeMap');
+  const groupMap  = document.getElementById('hoseLengthGroupMap');
+  const dashBadge = document.getElementById('dashHoseLengthBadge');
+  const dashStat  = document.getElementById('dashHoseLengthNeeded');
+  if (!state.pond) {
+    if (groupMap) groupMap.style.display = 'none';
+    if (badgeMap)  badgeMap.textContent  = '—';
+    if (dashBadge) dashBadge.textContent = '—';
+    if (dashStat)  dashStat.textContent  = '—';
+    return;
+  }
+  const lenM = computeRequiredHoseLength(state.pond);
+  const txt = lenM > 0 ? `${Math.ceil(lenM)} m` : '—';
+  if (groupMap)  groupMap.style.display = '';
+  if (badgeMap)  badgeMap.textContent  = txt;
+  if (dashBadge) dashBadge.textContent = lenM > 0 ? Math.ceil(lenM) : '—';
+  if (dashStat)  dashStat.textContent  = txt;
+}
+
 function formatTime(sec) {
   const s = Math.floor(Math.abs(sec));
   const days = Math.floor(s / 86400);
@@ -826,6 +871,7 @@ function loadPond(pond) {
   });
 
   setMode('select');
+  updateHoseLengthDisplay();
   showToast(`Étang "${pName}" chargé — ${state.cells.length} cases`, 'success');
 }
 
@@ -2218,6 +2264,7 @@ function initCanvasEvents() {
       if (state.hose.dragging) {
         state.hose.dragging = false;
         saveWork();
+        updateHoseLengthDisplay();
         canvas.style.cursor = state.view.mode === 'view' ? 'grab' : 'crosshair';
         return;
       }
@@ -2301,6 +2348,7 @@ function initCanvasEvents() {
         touchHoseDragActive = false;
         state.hose.dragging = false;
         saveWork();
+        updateHoseLengthDisplay();
         return;
       }
       if (touchDragActive && state.view.mode === 'select') debouncedSaveSelection();
@@ -2424,6 +2472,7 @@ function deletePond(id) {
     setText('dashPondBadge', 'Aucun étang');
     renderAllPondCanvases();
     renderSelectionHistory();
+    updateHoseLengthDisplay();
   }
   if (!USE_CLOUD) savePonds();
   updatePondsList();
@@ -2914,7 +2963,7 @@ function _buildLeafletOverlayInner(lmap, layersArr, origin) {
         if (_hoseOutlineLeaf)  _hoseOutlineLeaf.setLatLngs(newPts);
         if (_depositSegmentLeaf) _depositSegmentLeaf.setLatLngs([[sLL.lat, sLL.lng], _depositSegmentLeaf.getLatLngs()[1]]);
       });
-      _hoseAnchorMarkerLeaf.on('dragend', () => saveWork());
+      _hoseAnchorMarkerLeaf.on('dragend', () => { saveWork(); updateHoseLengthDisplay(); });
       layersArr.push(_hoseAnchorMarkerLeaf);
     }
   }
@@ -3003,7 +3052,7 @@ function _rebuildBaseLayersDash() {
         if (sLL) e.target.setLatLng([sLL.lat, sLL.lng]);
         _refreshHosePolylineDash();
       });
-      _hoseAnchorMarkerDash.on('dragend', () => saveWork());
+      _hoseAnchorMarkerDash.on('dragend', () => { saveWork(); updateHoseLengthDisplay(); });
       _baseLayersDash.push(_hoseAnchorMarkerDash);
     }
   }
@@ -3565,6 +3614,7 @@ function _handleDrawCreated(e) {
     state.pond.depositZone = { polygon, centroid: { x: cx, y: cy } };
     state.pond.hoseAnchor  = nearestPointOnPolygon(state.pond.polygon, cx, cy);
     saveWork();
+    updateHoseLengthDisplay();
     if (_satMode)     updateLeafletOverlay();
     if (_satModeDash) updateLeafletOverlayDash();
     renderAllPondCanvases();

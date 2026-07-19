@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v5</span>
+        <span class="logo-version" id="appVersion">v6</span>
       </div>
     </div>
     <div class="header-status">
@@ -144,6 +144,12 @@
                   <div class="depth-item"><span class="depth-lbl">Eau</span><span class="depth-val"><span id="depthWater">—</span> m</span></div>
                   <div class="depth-item"><span class="depth-lbl">Vase</span><span class="depth-val"><span id="depthMud">—</span> m</span></div>
                   <div class="depth-item"><span class="depth-lbl">Pompe</span><span class="depth-val accent"><span id="depthPump">0.00</span> m</span></div>
+                </div>
+                <div class="depth-row">
+                  <div class="depth-item" style="flex:1">
+                    <span class="depth-lbl">Tuyau nécessaire</span>
+                    <span class="depth-val accent"><span id="dashHoseLengthBadge">—</span> m</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -308,6 +314,10 @@
                   <span class="vol-lbl">Volume vase</span>
                   <span class="vol-val" id="dashMudVolume">—</span>
                 </div>
+                <div class="vol-row">
+                  <span class="vol-lbl">Tuyau nécessaire</span>
+                  <span class="vol-val" id="dashHoseLengthNeeded">—</span>
+                </div>
               </div>
 
               <div class="panel-section-label">Progression totale — <span id="dashPondBottomName">—</span></div>
@@ -349,6 +359,12 @@
               <button class="btn btn-secondary btn-sm" id="btnDrawPond" onclick="toggleDrawPondPanel()">✏ Dessiner un étang</button>
               <button class="btn btn-secondary btn-sm" id="btnDrawDeposit" onclick="startDepositZoneDraw()" disabled>🎯 Zone de dépôt</button>
             </div>
+          </div>
+          <!-- Longueur de tuyau flottant nécessaire pour atteindre la case la plus éloignée
+               depuis le point de sortie sur la berge — recalculée si on déplace ce point. -->
+          <div class="toolbar-group toolbar-group-labeled" id="hoseLengthGroupMap" style="display:none">
+            <span class="toolbar-group-label">Tuyau nécessaire</span>
+            <span class="scale-badge" id="hoseLengthBadgeMap">—</span>
           </div>
           <!-- Vue Schéma / Satellite -->
           <div class="toolbar-group toolbar-group-labeled">
