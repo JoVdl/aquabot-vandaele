@@ -2526,7 +2526,11 @@ function loadDemoPond() {
   }
   const pond = {
     id:'demo', name:'Étang démo (30×21m)',
-    origin:{lat:0,lng:0}, polygon,
+    // Un point quelconque en France (pas {lat:0,lng:0} — "null island", en pleine mer,
+    // hors de la couverture d'IGN Géoportail : les tuiles y renvoient 404 même une fois
+    // le rendu Leaflet correct, ce qui ressemble à tort à un bug). Position générique,
+    // sans rapport avec un étang réel.
+    origin:{lat:46.8, lng:2.5}, polygon,
     area: polygonArea(polygon),
     cells: generateGrid(polygon),
     work:{completedCells:[],volumePumped:0,elapsedSec:0},
@@ -2626,12 +2630,12 @@ function setMapStyle(styleKey) {
     if (tileRef)   { lmap.removeLayer(tileRef);   tileRef   = null; }
     if (labelsRef) { lmap.removeLayer(labelsRef); labelsRef = null; }
     tileRef = L.tileLayer(style.url, {
-      attribution: style.attribution, maxZoom: 21, maxNativeZoom: style.maxNativeZoom,
+      attribution: style.attribution, maxZoom: 23, maxNativeZoom: style.maxNativeZoom,
     }).addTo(lmap);
     tileRef.bringToBack();
     if (style.labels) {
       labelsRef = L.tileLayer(style.labels, {
-        attribution: '', maxZoom: 21, maxNativeZoom: style.maxNativeZoom, opacity: 0.65,
+        attribution: '', maxZoom: 23, maxNativeZoom: style.maxNativeZoom, opacity: 0.65,
       }).addTo(lmap);
     }
     return { tile: tileRef, labels: labelsRef };
@@ -2722,9 +2726,9 @@ function initLeafletMap() {
   _leafletMap.setView([0, 0], 2);
 
   const style = MAP_STYLES[_currentMapStyle];
-  _baseTileLayer = L.tileLayer(style.url, { attribution: style.attribution, maxZoom: 21, maxNativeZoom: style.maxNativeZoom }).addTo(_leafletMap);
+  _baseTileLayer = L.tileLayer(style.url, { attribution: style.attribution, maxZoom: 23, maxNativeZoom: style.maxNativeZoom }).addTo(_leafletMap);
   if (style.labels) {
-    _labelsLayer = L.tileLayer(style.labels, { attribution: '', maxZoom: 21, maxNativeZoom: style.maxNativeZoom, opacity: 0.65 }).addTo(_leafletMap);
+    _labelsLayer = L.tileLayer(style.labels, { attribution: '', maxZoom: 23, maxNativeZoom: style.maxNativeZoom, opacity: 0.65 }).addTo(_leafletMap);
   }
 
   L.control.zoom({ position: 'bottomright' }).addTo(_leafletMap);
@@ -3125,9 +3129,9 @@ function initLeafletMapDash() {
   _leafletMapDash.setView([0, 0], 2);
 
   const styleDash = MAP_STYLES[_currentMapStyle];
-  _baseTileLayerDash = L.tileLayer(styleDash.url, { attribution: styleDash.attribution, maxZoom: 21, maxNativeZoom: styleDash.maxNativeZoom }).addTo(_leafletMapDash);
+  _baseTileLayerDash = L.tileLayer(styleDash.url, { attribution: styleDash.attribution, maxZoom: 23, maxNativeZoom: styleDash.maxNativeZoom }).addTo(_leafletMapDash);
   if (styleDash.labels) {
-    _labelsLayerDash = L.tileLayer(styleDash.labels, { attribution: '', maxZoom: 21, maxNativeZoom: styleDash.maxNativeZoom, opacity: 0.65 }).addTo(_leafletMapDash);
+    _labelsLayerDash = L.tileLayer(styleDash.labels, { attribution: '', maxZoom: 23, maxNativeZoom: styleDash.maxNativeZoom, opacity: 0.65 }).addTo(_leafletMapDash);
   }
   L.control.zoom({ position: 'bottomright' }).addTo(_leafletMapDash);
   _leafletMapDash.on('zoomend', () => {
