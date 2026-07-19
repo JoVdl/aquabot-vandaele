@@ -19,6 +19,40 @@ function updateCloudStatus(status) {
   el.title = title;
 }
 
+// Compact cell-selection encoding: store whichever set (selected vs. deselected) is
+// smaller, tagged with its mode. A freshly-created pond has every cell selected, so a
+// raw index array would list ALL cells — for a real (non-demo) pond with thousands of
+// 0.4m cells this can exceed Firestore's 1MB document limit and silently fail to save.
+// "exclude" mode collapses that common case down to an empty array.
+function encodeSelection(cells) {
+  const total = cells.length;
+  let selectedCount = 0;
+  for (const c of cells) if (c.selected) selectedCount++;
+  if (total - selectedCount <= selectedCount) {
+    const idx = [];
+    for (let i = 0; i < total; i++) if (!cells[i].selected) idx.push(i);
+    return { mode: 'exclude', idx };
+  }
+  const idx = [];
+  for (let i = 0; i < total; i++) if (cells[i].selected) idx.push(i);
+  return { mode: 'include', idx };
+}
+
+// Decode into a Set of selected indices. `total` is the current cell count (needed to
+// expand "exclude" mode). Accepts legacy plain-array docs (pre-compaction) as-is.
+// Returns null when there's nothing to restore (caller keeps its default state).
+function decodeSelection(encoded, total) {
+  if (Array.isArray(encoded)) return new Set(encoded);
+  if (!encoded) return null;
+  if (encoded.mode === 'exclude') {
+    const excl = new Set(encoded.idx || []);
+    const set = new Set();
+    for (let i = 0; i < total; i++) if (!excl.has(i)) set.add(i);
+    return set;
+  }
+  return new Set(encoded.idx || []);
+}
+
 // Convert a local pond object → Firestore document (no cells, compact selections)
 function pondToFirestore(pond) {
   return {
@@ -29,6 +63,7 @@ function pondToFirestore(pond) {
     area:     pond.area     || 0,
     bbox:     pond.bbox,
     hoseAnchor: pond.hoseAnchor || null,
+    depositZone: pond.depositZone || null,
     lastUsed:   pond.lastUsed   || Date.now(),
     lastResetAt: pond.lastResetAt || 0,
     work: {
@@ -37,18 +72,16 @@ function pondToFirestore(pond) {
       elapsedSec:     pond.work?.elapsedSec     || 0,
     },
     // Live selection state (so other devices see which cells are highlighted)
-    currentSelectedIndices: (pond.cells || [])
-      .map((c,i) => c.selected ? i : -1)
-      .filter(i => i !== -1),
-    // Store selections as sparse index arrays (far smaller than boolean arrays)
+    currentSelectedIndices: encodeSelection(pond.cells || []),
+    // Store selections as compact index sets (far smaller than boolean arrays)
     selections: (pond.selections || []).map(s => ({
       id:        s.id,
       name:      s.name,
       timestamp: s.timestamp,
       count:     s.count,
       selectedIndices: s.cellStates
-        ? s.cellStates.reduce((acc, v, i) => { if (v) acc.push(i); return acc; }, [])
-        : (s.selectedIndices || []),
+        ? encodeSelection(s.cellStates.map(sel => ({ selected: sel })))
+        : { mode: 'include', idx: s.selectedIndices || [] },
     })),
   };
 }
@@ -89,9 +122,8 @@ function debouncedSaveSelection() {
   _localSelChanging = true;
   clearTimeout(_selDebounce);
   _selDebounce = setTimeout(() => {
-    const indices = state.cells.map((c,i) => c.selected ? i : -1).filter(i => i !== -1);
     window.db.collection('aquabot_ponds').doc(state.pond.id)
-      .update({ currentSelectedIndices: indices, lastUsed: Date.now() })
+      .update({ currentSelectedIndices: encodeSelection(state.cells), lastUsed: Date.now() })
       .catch(e => console.warn('selSync:', e.message));
     // Keep flag for 2s to absorb our own echo from onSnapshot
     setTimeout(() => { _localSelChanging = false; }, 2000);
@@ -388,15 +420,15 @@ function pondFromFirestore(data) {
   const completedSet = new Set(data.work?.completedCells || []);
   cells.forEach((c, i) => { c.completed = completedSet.has(i); });
   // Restore live selection state from remote
-  const selectedSet = new Set(data.currentSelectedIndices || []);
-  if (selectedSet.size > 0) cells.forEach((c, i) => { c.selected = selectedSet.has(i); });
+  const selectedSet = decodeSelection(data.currentSelectedIndices, cells.length);
+  if (selectedSet && selectedSet.size > 0) cells.forEach((c, i) => { c.selected = selectedSet.has(i); });
   return {
     ...data,
     cells,
     lastResetAt: data.lastResetAt || 0,
     work: data.work || { completedCells: [], volumePumped: 0, elapsedSec: 0 },
     selections: (data.selections || []).map(s => {
-      const set = new Set(s.selectedIndices || []);
+      const set = decodeSelection(s.selectedIndices, cells.length) || new Set();
       return { ...s, cellStates: cells.map((_, i) => set.has(i)) };
     }),
   };
@@ -1067,7 +1099,10 @@ function savePonds() {
     for (const pond of state.ponds) {
       window.db.collection('aquabot_ponds').doc(pond.id)
         .set(pondToFirestore(pond))
-        .catch(err => console.warn('Cloud save error:', err.message));
+        .catch(err => {
+          console.warn('Cloud save error:', err.message);
+          showToast(`Échec de l'enregistrement de « ${pond.name} » — ${err.message}`, 'error');
+        });
     }
   } else {
     localStorage.setItem('aquabot_ponds', JSON.stringify(state.ponds));
@@ -1102,7 +1137,7 @@ function loadPonds() {
             state.pond.selections      = remote.selections;
             // Sync live selection from other device (skip if we have pending local changes)
             if (!_localSelChanging && remote.currentSelectedIndices !== undefined) {
-              const selSet = new Set(remote.currentSelectedIndices);
+              const selSet = decodeSelection(remote.currentSelectedIndices, state.cells.length) || new Set();
               state.cells.forEach((c, i) => { c.selected = selSet.has(i); });
             }
             renderSelectionHistory();
