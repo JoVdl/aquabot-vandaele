@@ -324,8 +324,8 @@ svg { display: block; }
    ============================================================ */
 .dashboard-main {
   display: grid;
-  grid-template-rows: auto 1fr;
-  grid-template-areas: "strip" "map";
+  grid-template-rows: 1fr auto;
+  grid-template-areas: "map" "bar";
   position: relative;
   flex: 1;
   min-height: 0;
@@ -333,30 +333,35 @@ svg { display: block; }
   overflow: hidden;
 }
 
-/* Bandeau d'état — LED, statut, progression, contrôles essentiels */
-.status-strip {
-  grid-area: strip;
+/* Barre d'actions — en bas, boutons compacts uniquement (état/contrôles, options
+   carte, mode/vitesse et les 3 sections repliées dans le tiroir sont tous derrière
+   un clic ; rien d'autre à cet endroit pour laisser un maximum de place à la carte). */
+.dash-action-bar {
+  grid-area: bar;
   position: relative;
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
   padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
   background: var(--bg-card);
+  flex-wrap: nowrap;
 }
-.strip-controls { display: flex; gap: 5px; flex-shrink: 0; }
-.strip-icon-btn {
-  width: 30px; height: 30px; flex-shrink: 0;
+.action-bar-btn {
+  width: 40px; height: 40px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
   background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
-  color: var(--text-2); font-size: 14px; transition: all 0.15s;
+  color: var(--text-2); font-size: 16px; transition: all 0.15s;
 }
-.strip-icon-btn:hover { border-color: var(--accent); color: var(--accent); }
-.strip-details-btn { width: auto; padding: 0 10px; gap: 5px; font-size: 11px; font-weight: 700; }
-.strip-details-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.action-bar-btn:hover { border-color: var(--accent); color: var(--accent); }
+.action-bar-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.action-bar-led { width: 14px; height: 14px; }
+.action-bar-sep { width: 1px; align-self: stretch; margin: 2px 2px; background: var(--border); flex-shrink: 0; }
 
-/* Popovers du bandeau — repliés par défaut, chacun ancré à son propre bouton */
+/* Popovers de la barre — repliés par défaut, chacun ancré à son propre bouton.
+   La barre est tout en bas de l'écran : le popover s'ouvre vers le haut. */
 .strip-popover-anchor { position: relative; flex-shrink: 0; }
 .popover {
   display: none;
-  position: absolute; top: 100%; right: 0; margin-top: 6px;
+  position: absolute; bottom: 100%; right: 0; margin-bottom: 8px;
   background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: var(--shadow-card); z-index: 70;
   flex-direction: column; gap: 8px;
@@ -499,14 +504,6 @@ svg { display: block; }
   padding: 12px 14px; font-size: 13px; font-weight: 700;
   border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
-.panel-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.panel-tab {
-  flex: 1; background: none; border: none; border-bottom: 2px solid transparent;
-  padding: 11px 4px; font-size: 11px; font-weight: 700; color: var(--text-2);
-  transition: color 0.15s;
-}
-.panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-.panel-tab:hover:not(.active) { color: var(--text-1); }
 .panel-content { display: none; overflow-y: auto; flex: 1; min-height: 0; }
 .panel-content.active { display: block; }
 .panel-section-label {
@@ -564,6 +561,11 @@ svg { display: block; }
 .sum-stat:last-child { border-right: none; }
 .sum-val { font-size: 13px; font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums; }
 .sum-label { font-size: 10px; color: var(--text-2); margin-top: 2px; text-align: center; }
+/* Variante à 4 cases (2×2) : la 2e case de chaque ligne n'a pas de voisine de droite,
+   la 1re ligne garde une séparation avec la 2e. */
+.summary-stats.stats-4 > .sum-stat:nth-child(2) { border-right: none; }
+.summary-stats.stats-4 > .sum-stat:nth-child(1),
+.summary-stats.stats-4 > .sum-stat:nth-child(2) { border-bottom: 1px solid var(--border); }
 
 .time-row { display: flex; border-top: 1px solid var(--border); }
 .time-item { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 8px 4px; border-right: 1px solid var(--border); }
@@ -893,19 +895,17 @@ svg { display: block; }
      défiler la page — l'en-tête fixe évite de rester "coincé" plus bas). */
   .header { position: sticky; top: 0; z-index: 20; }
 
-  /* La carte d'abord, puis le bandeau d'état */
+  /* La carte d'abord, puis la barre d'actions */
   .dashboard-main {
-    grid-template-areas: "map" "strip";
+    grid-template-areas: "map" "bar";
     overflow: visible;
     height: auto;
   }
   /* svh (small viewport height) ignore la barre d'adresse qui se cache/montre au scroll —
      évite que cette hauteur change en boucle pendant qu'on essaie justement de scroller.
      vh reste en repli pour les navigateurs plus anciens. */
-  .dash-center { min-height: 48vh; min-height: 48svh; }
-  .status-strip { border-bottom: 1px solid var(--border); }
-  .hero-progress { flex: 1 1 100%; order: 3; }
-  /* Le popover s'ancre au bandeau entier (pas au petit bouton) pour occuper toute la largeur */
+  .dash-center { min-height: 58vh; min-height: 58svh; }
+  /* Le popover s'ancre à la barre entière (pas au petit bouton) pour occuper toute la largeur */
   .strip-popover-anchor { position: static; }
   .popover { right: 14px; left: 14px; width: auto; }
   .section-widget { width: 148px; }

@@ -78,79 +78,6 @@
     <section class="tab-panel active" id="panel-dashboard">
       <div class="dashboard-main">
 
-        <!-- ── BANDEAU: état + contrôles essentiels, toujours visible ── -->
-        <div class="status-strip">
-          <div id="heroLed" class="led-large led-blue"></div>
-          <div class="hero-status-text">
-            <div id="heroStatus" class="status-title">Arrêté</div>
-            <div id="heroSubStatus" class="status-subtitle">Prêt à démarrer</div>
-          </div>
-          <div class="hero-progress">
-            <div class="progress-bar"><div id="heroProgressBar" class="progress-fill" style="width:0%"></div></div>
-            <span id="heroProgressPct" class="progress-pct">0%</span>
-          </div>
-          <div class="strip-controls">
-            <button id="btnStart"  class="btn btn-success btn-sm"  onclick="handleStart()">▶ Démarrer</button>
-            <button id="btnPause"  class="btn btn-warning btn-sm"  onclick="handlePause()"  disabled>⏸ Pause</button>
-            <button id="btnStop"   class="btn btn-danger  btn-sm"  onclick="handleStop()"   disabled>⏹ Arrêt</button>
-          </div>
-          <div class="strip-popover-anchor">
-            <button class="strip-icon-btn" id="btnMapOptionsToggle" onclick="toggleMapOptionsPopover()" title="Options de carte">🗺</button>
-            <!-- KML / Vue / Fond de carte / Outil — repliés, affichés au clic -->
-            <div class="popover map-options-popover" id="mapOptionsPopover">
-              <div class="toolbar-group">
-                <button class="btn btn-primary btn-sm" onclick="triggerKMLImport()">📁 Importer KML</button>
-                <input type="file" id="kmlInput" accept=".kml,.KML" style="display:none" onchange="handleKMLFile(this)">
-              </div>
-              <div class="toolbar-group toolbar-group-labeled">
-                <span class="toolbar-group-label">Vue</span>
-                <div class="view-toggle-group">
-                  <button class="view-toggle-btn active" id="btnSchemaViewDash" onclick="toggleSatelliteViewDash(false)">📐 Schéma</button>
-                  <button class="view-toggle-btn" id="btnSatViewDash" onclick="toggleSatelliteViewDash(true)">🛰 Satellite</button>
-                </div>
-              </div>
-              <div class="toolbar-group toolbar-group-labeled" id="dashMapStyleGroup" style="display:none">
-                <span class="toolbar-group-label">Fond de carte</span>
-                <div class="map-style-group">
-                  <button class="map-style-btn"         data-style="esri"      onclick="setMapStyle('esri')">Esri</button>
-                  <button class="map-style-btn active"  data-style="ign_ortho" onclick="setMapStyle('ign_ortho')">IGN Photo</button>
-                  <button class="map-style-btn"         data-style="ign_plan"  onclick="setMapStyle('ign_plan')">IGN Plan</button>
-                </div>
-              </div>
-              <div class="toolbar-group toolbar-group-labeled" id="dashSchemaTools">
-                <span class="toolbar-group-label">Outil</span>
-                <div style="display:flex;gap:5px">
-                  <button class="mode-btn active" id="btnModeSelect" onclick="setMode('select')">✏ Sélection</button>
-                  <button class="mode-btn" id="btnModeView" onclick="setMode('view')">✋ Vue</button>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="strip-popover-anchor">
-            <button class="strip-icon-btn" id="btnModeToggle" onclick="toggleModePopover()" title="Mode & vitesse">⚙</button>
-            <!-- Mode / vitesse — repliés, affichés au clic -->
-            <div class="popover mode-popover" id="modePopover">
-              <div class="rail-label">Mode</div>
-              <div class="hero-mode-toggle">
-                <button id="modeSimBtn"  class="mode-toggle-btn active" onclick="setRobotMode('simulation')">⚙ Simulation</button>
-                <button id="modeRealBtn" class="mode-toggle-btn"        onclick="setRobotMode('real')">📡 Robot réel</button>
-              </div>
-              <div id="speedControlCard">
-                <div class="speed-control rail-speed">
-                  <div class="speed-header">
-                    <svg viewBox="0 0 20 20" fill="currentColor" style="width:12px;height:12px"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd"/></svg>
-                    Vitesse simulation
-                    <span id="speedValue" class="speed-badge">1×</span>
-                  </div>
-                  <input type="range" id="speedSlider" class="slider" min="1" max="200" value="1" oninput="handleSpeedChange(this.value)">
-                  <div class="slider-labels"><span>1×</span><span>200×</span></div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <button class="strip-icon-btn strip-details-btn" id="btnDrawerToggle" onclick="toggleDashDrawer()" title="Sélection, propulsion, progression détaillée">☰ Détails</button>
-        </div><!-- /status-strip -->
-
         <!-- ── CENTER: Map ── -->
         <div class="dash-center">
           <div class="canvas-wrap" id="dashCanvasWrap">
@@ -220,20 +147,102 @@
           </div>
         </div><!-- /dash-center -->
 
-        <!-- ── TIROIR: infos secondaires, replié par défaut, un onglet à la fois ── -->
-        <div class="drawer-backdrop" id="drawerBackdrop" onclick="toggleDashDrawer()"></div>
-        <div class="dash-drawer" id="dashDrawer">
-          <div class="drawer-header">
-            <span>Détails</span>
-            <button class="btn btn-ghost btn-sm" onclick="toggleDashDrawer()">✕</button>
-          </div>
-          <div class="panel-tabs" id="dashPanelTabs">
-            <button class="panel-tab active" data-panel="selection">Sélection</button>
-            <button class="panel-tab" data-panel="propulsion">Propulsion</button>
-            <button class="panel-tab" data-panel="progression">Progression</button>
+        <!-- ── BARRE D'ACTIONS: en bas, boutons compacts uniquement ── -->
+        <div class="dash-action-bar">
+          <div class="strip-popover-anchor">
+            <button class="action-bar-btn" id="btnControlToggle" onclick="toggleControlPopover()" title="État et contrôles">
+              <span id="heroLed" class="led action-bar-led led-blue"></span>
+            </button>
+            <!-- Statut + Démarrer/Pause/Arrêt — repliés, affichés au clic -->
+            <div class="popover control-popover" id="controlPopover">
+              <div class="hero-status-text">
+                <div id="heroStatus" class="status-title">Arrêté</div>
+                <div id="heroSubStatus" class="status-subtitle">Prêt à démarrer</div>
+              </div>
+              <div class="hero-progress">
+                <div class="progress-bar"><div id="heroProgressBar" class="progress-fill" style="width:0%"></div></div>
+                <span id="heroProgressPct" class="progress-pct">0%</span>
+              </div>
+              <div class="strip-controls">
+                <button id="btnStart"  class="btn btn-success btn-sm"  onclick="handleStart()">▶ Démarrer</button>
+                <button id="btnPause"  class="btn btn-warning btn-sm"  onclick="handlePause()"  disabled>⏸ Pause</button>
+                <button id="btnStop"   class="btn btn-danger  btn-sm"  onclick="handleStop()"   disabled>⏹ Arrêt</button>
+              </div>
+            </div>
           </div>
 
-          <!-- Onglet: Sélection des cases -->
+          <div class="strip-popover-anchor">
+            <button class="action-bar-btn" id="btnMapOptionsToggle" onclick="toggleMapOptionsPopover()" title="Options de carte">🗺</button>
+            <!-- KML / Vue / Fond de carte / Outil — repliés, affichés au clic -->
+            <div class="popover map-options-popover" id="mapOptionsPopover">
+              <div class="toolbar-group">
+                <button class="btn btn-primary btn-sm" onclick="triggerKMLImport()">📁 Importer KML</button>
+                <input type="file" id="kmlInput" accept=".kml,.KML" style="display:none" onchange="handleKMLFile(this)">
+              </div>
+              <div class="toolbar-group toolbar-group-labeled">
+                <span class="toolbar-group-label">Vue</span>
+                <div class="view-toggle-group">
+                  <button class="view-toggle-btn active" id="btnSchemaViewDash" onclick="toggleSatelliteViewDash(false)">📐 Schéma</button>
+                  <button class="view-toggle-btn" id="btnSatViewDash" onclick="toggleSatelliteViewDash(true)">🛰 Satellite</button>
+                </div>
+              </div>
+              <div class="toolbar-group toolbar-group-labeled" id="dashMapStyleGroup" style="display:none">
+                <span class="toolbar-group-label">Fond de carte</span>
+                <div class="map-style-group">
+                  <button class="map-style-btn"         data-style="esri"      onclick="setMapStyle('esri')">Esri</button>
+                  <button class="map-style-btn active"  data-style="ign_ortho" onclick="setMapStyle('ign_ortho')">IGN Photo</button>
+                  <button class="map-style-btn"         data-style="ign_plan"  onclick="setMapStyle('ign_plan')">IGN Plan</button>
+                </div>
+              </div>
+              <div class="toolbar-group toolbar-group-labeled" id="dashSchemaTools">
+                <span class="toolbar-group-label">Outil</span>
+                <div style="display:flex;gap:5px">
+                  <button class="mode-btn active" id="btnModeSelect" onclick="setMode('select')">✏ Sélection</button>
+                  <button class="mode-btn" id="btnModeView" onclick="setMode('view')">✋ Vue</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="strip-popover-anchor">
+            <button class="action-bar-btn" id="btnModeToggle" onclick="toggleModePopover()" title="Mode & vitesse">⚙</button>
+            <!-- Mode / vitesse — repliés, affichés au clic -->
+            <div class="popover mode-popover" id="modePopover">
+              <div class="rail-label">Mode</div>
+              <div class="hero-mode-toggle">
+                <button id="modeSimBtn"  class="mode-toggle-btn active" onclick="setRobotMode('simulation')">⚙ Simulation</button>
+                <button id="modeRealBtn" class="mode-toggle-btn"        onclick="setRobotMode('real')">📡 Robot réel</button>
+              </div>
+              <div id="speedControlCard">
+                <div class="speed-control rail-speed">
+                  <div class="speed-header">
+                    <svg viewBox="0 0 20 20" fill="currentColor" style="width:12px;height:12px"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd"/></svg>
+                    Vitesse simulation
+                    <span id="speedValue" class="speed-badge">1×</span>
+                  </div>
+                  <input type="range" id="speedSlider" class="slider" min="1" max="200" value="1" oninput="handleSpeedChange(this.value)">
+                  <div class="slider-labels"><span>1×</span><span>200×</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="action-bar-sep"></div>
+
+          <button class="action-bar-btn action-bar-section-btn" id="btnSectionSelection"   data-section="selection"   onclick="openDashSection('selection')"   title="Sélection des cases">✏</button>
+          <button class="action-bar-btn action-bar-section-btn" id="btnSectionPropulsion"  data-section="propulsion"  onclick="openDashSection('propulsion')"  title="Propulsion">🧭</button>
+          <button class="action-bar-btn action-bar-section-btn" id="btnSectionProgression" data-section="progression" onclick="openDashSection('progression')" title="Progression">📊</button>
+        </div><!-- /dash-action-bar -->
+
+        <!-- ── TIROIR: infos secondaires, replié par défaut, une section à la fois ── -->
+        <div class="drawer-backdrop" id="drawerBackdrop" onclick="toggleDashDrawer(false)"></div>
+        <div class="dash-drawer" id="dashDrawer">
+          <div class="drawer-header">
+            <span id="drawerTitle">Sélection</span>
+            <button class="btn btn-ghost btn-sm" onclick="toggleDashDrawer(false)">✕</button>
+          </div>
+
+          <!-- Section: Sélection des cases -->
           <div class="panel-content active" data-content="selection">
             <div class="sel-buttons">
               <button class="btn btn-secondary btn-sm" id="btnSelectAll"       onclick="selectAllCells()"       disabled>☑ Toutes</button>
@@ -275,7 +284,7 @@
             </div>
           </div>
 
-          <!-- Onglet: Progression -->
+          <!-- Section: Progression -->
           <div class="panel-content" data-content="progression">
             <div class="pond-name-badge" id="dashPondBadge">Aucun étang</div>
             <div class="progress-bar-wrap">
@@ -284,22 +293,21 @@
               </div>
               <span id="dashProgressPct" class="progress-pct">0%</span>
             </div>
-            <div class="summary-stats">
+            <div class="summary-stats stats-4">
               <div class="sum-stat"><span class="sum-val"><span id="dashCellsDone">0</span>/<span id="dashCellsTotal">—</span></span><span class="sum-label">Cases</span></div>
-              <div class="sum-stat"><span class="sum-val" id="dashVolumePumped">0 L</span><span class="sum-label">Pompé</span></div>
+              <div class="sum-stat"><span class="sum-val" id="dashVolumePair">0 / — L</span><span class="sum-label">Pompé / Total</span></div>
+              <div class="sum-stat"><span class="sum-val" id="dashRatePerHour">—</span><span class="sum-label">Débit / heure</span></div>
+              <div class="sum-stat"><span class="sum-val" id="dashRatePerDay">—</span><span class="sum-label">Débit / jour</span></div>
             </div>
             <div class="time-row">
               <div class="time-item"><span class="time-lbl">Écoulé</span><span class="time-val" id="dashTimeElapsed">00:00:00</span></div>
               <div class="time-item"><span class="time-lbl">Restant</span><span class="time-val" id="dashTimeRemaining">—</span></div>
+              <div class="time-item"><span class="time-lbl">Fin estimée</span><span class="time-val" id="dashETA">—</span></div>
             </div>
             <div class="vol-section">
               <div class="vol-row vol-mode-row">
                 <span class="vol-lbl">Mode</span>
                 <span class="vol-val vol-mode-val" id="dashWorkModeLabel">—</span>
-              </div>
-              <div class="vol-row">
-                <span class="vol-lbl">Eau à pomper (estimé)</span>
-                <span class="vol-val" id="dashVolumeTotal">—</span>
               </div>
               <div class="vol-row">
                 <span class="vol-lbl">Volume vase</span>
@@ -314,7 +322,7 @@
             </div>
             <div class="summary-stats total-stats">
               <div class="sum-stat"><span class="sum-val"><span id="pondTotalDone">0</span>/<span id="pondTotalCells">—</span></span><span class="sum-label">Cases</span></div>
-              <div class="sum-stat"><span class="sum-val" id="pondTotalVolume">0 L</span><span class="sum-label">Pompé</span></div>
+              <div class="sum-stat"><span class="sum-val" id="pondTotalVolumePair">0 / — L</span><span class="sum-label">Pompé / Total</span></div>
             </div>
             <div class="vol-section">
               <div class="vol-row"><span class="vol-lbl">Volume vase total</span><span class="vol-val" id="pondTotalMud">—</span></div>

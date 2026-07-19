@@ -608,12 +608,21 @@ function computeHoseCurvePoints(anchor, robot, segments = 24) {
 
 function formatTime(sec) {
   const s = Math.floor(Math.abs(sec));
-  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+  const days = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  const hms = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+  return days > 0 ? `${days}j ${hms}` : hms;
 }
 
 function formatVolume(l) {
   return l >= 1000 ? `${(l/1000).toFixed(2)} m³` : `${Math.round(l)} L`;
+}
+
+// Pompé/total avec la même unité pour les deux valeurs — comparer "1 250 L" à
+// "4.80 m³" au premier coup d'œil est trompeur, on choisit l'unité selon le total.
+function formatVolumePair(pumped, total) {
+  if (total >= 1000) return `${(pumped/1000).toFixed(2)} / ${(total/1000).toFixed(2)} m³`;
+  return `${Math.round(pumped)} / ${Math.round(total)} L`;
 }
 
 function setText(id, val) { const e = document.getElementById(id); if (e) e.textContent = val; }
@@ -1902,19 +1911,29 @@ function updateUI() {
 
   // Remaining time uses rate from current session only
   const sessionElapsed = robot.elapsedSec - (state.sim.sessionElapsedAtStart || 0);
-  const remaining = (done > 0 && total > done)
-    ? formatTime((sessionElapsed / done) * (total - done))
-    : '—';
+  const remainingSec = (done > 0 && total > done)
+    ? (sessionElapsed / done) * (total - done)
+    : null;
   setText('dashTimeElapsed',   formatTime(robot.elapsedSec));
-  setText('dashTimeRemaining', remaining);
+  setText('dashTimeRemaining', remainingSec != null ? formatTime(remainingSec) : '—');
 
-  // Selection/path volumes
+  // Fin estimée — date/heure absolue, pas juste une durée (visible dès que "Restant" l'est)
+  setText('dashETA', remainingSec != null
+    ? new Date(Date.now() + remainingSec * 1000).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : '—');
+
+  // Selection/path volumes — pompé et total affichés dans la même unité pour rester cohérents
   const selCount = total || state.cells.filter(c => c.selected).length;
   const totalVol = totalVolumeForCells(selCount);
   const mudVol   = mudVolumeForCells(selCount);
-  setText('dashVolumePumped', formatVolume(robot.volumePumped));
-  setText('dashVolumeTotal',  formatVolume(totalVol));
-  setText('dashMudVolume',    mudVol >= 1 ? mudVol.toFixed(2)+' m³' : (mudVol*1000).toFixed(0)+' L');
+  setText('dashVolumePair', formatVolumePair(robot.volumePumped, totalVol));
+  setText('dashMudVolume',  mudVol >= 1 ? mudVol.toFixed(2)+' m³' : (mudVol*1000).toFixed(0)+' L');
+
+  // Débit moyen — sur la session en cours uniquement (au-delà d'1 min, sinon trop bruité)
+  const sessionHours = sessionElapsed / 3600;
+  const ratePerHour = sessionHours > (1/60) ? robot.volumePumped / sessionHours : 0;
+  setText('dashRatePerHour', ratePerHour > 0 ? formatVolume(ratePerHour) + '/h' : '—');
+  setText('dashRatePerDay',  ratePerHour > 0 ? formatVolume(ratePerHour * 24) + '/j' : '—');
 
   // Work mode label
   const wm = WORK_MODES[params.workMode];
@@ -1930,10 +1949,11 @@ function updateUI() {
   const pondTotal = state.cells.length;
   const pondPct   = pondTotal > 0 ? (pondDone / pondTotal) * 100 : 0;
   const allMudVol = mudVolumeForCells(pondTotal);
+  const pondTargetVol = totalVolumeForCells(pondTotal);
   setText('pondTotalDone',      pondDone);
   setText('pondTotalCells',     pondTotal || '—');
   setText('pondTotalPct',       pondPct.toFixed(2) + '%');
-  setText('pondTotalVolume',    formatVolume(robot.volumePumped));
+  setText('pondTotalVolumePair', formatVolumePair(robot.volumePumped, pondTargetVol));
   setText('pondTotalMud',       allMudVol >= 1 ? allMudVol.toFixed(2)+' m³' : (allMudVol*1000).toFixed(0)+' L');
   setText('pondTotalTime',      formatTime(robot.elapsedSec));
   setText('dashPondBottomName', state.pond?.name || '—');
@@ -2370,23 +2390,41 @@ function deletePond(id) {
 }
 
 // ============================================================
-// DASHBOARD PANEL TABS (Sélection / Propulsion / Progression)
+// DASHBOARD DRAWER SECTIONS (Sélection / Propulsion / Progression)
 // ============================================================
-function setPanelTab(tab) {
-  document.querySelectorAll('.panel-tab').forEach(b => b.classList.toggle('active', b.dataset.panel === tab));
-  document.querySelectorAll('.panel-content').forEach(p => p.classList.toggle('active', p.dataset.content === tab));
+const DASH_SECTION_TITLES = { selection: 'Sélection', propulsion: 'Propulsion', progression: 'Progression' };
+
+// Un bouton par section — l'ouvre directement dans le tiroir (pas d'onglets internes).
+// Recliquer sur la section déjà affichée referme le tiroir.
+function openDashSection(name) {
+  const drawer = document.getElementById('dashDrawer');
+  if (!drawer) return;
+  const alreadyShown = drawer.classList.contains('open') && drawer.dataset.section === name;
+  document.querySelectorAll('.panel-content').forEach(p => p.classList.toggle('active', p.dataset.content === name));
+  drawer.dataset.section = name;
+  setText('drawerTitle', DASH_SECTION_TITLES[name] || 'Détails');
+  document.querySelectorAll('.action-bar-section-btn').forEach(b => b.classList.toggle('active', b.dataset.section === name && !alreadyShown));
+  toggleDashDrawer(!alreadyShown);
 }
 
-// Tiroir Sélection/Propulsion/Progression — replié par défaut, ouvert au clic
+// Tiroir Sélection/Propulsion/Progression — replié par défaut, ouvert au clic sur une section
 function toggleDashDrawer(force) {
   const drawer   = document.getElementById('dashDrawer');
   const backdrop = document.getElementById('drawerBackdrop');
-  const btn      = document.getElementById('btnDrawerToggle');
   if (!drawer) return;
   const open = force !== undefined ? force : !drawer.classList.contains('open');
   drawer.classList.toggle('open', open);
   if (backdrop) backdrop.classList.toggle('open', open);
-  if (btn) btn.classList.toggle('active', open);
+  if (!open) document.querySelectorAll('.action-bar-section-btn').forEach(b => b.classList.remove('active'));
+}
+
+// Popover État/Contrôles — replié par défaut, ouvert au clic sur la LED
+function toggleControlPopover(force) {
+  const pop = document.getElementById('controlPopover');
+  if (!pop) return;
+  const open = force !== undefined ? force : !pop.classList.contains('open');
+  pop.classList.toggle('open', open);
+  if (open) { toggleModePopover(false); toggleMapOptionsPopover(false); }
 }
 
 // Popover Mode/Vitesse — replié par défaut, ouvert au clic sur ⚙
@@ -2395,7 +2433,7 @@ function toggleModePopover(force) {
   if (!pop) return;
   const open = force !== undefined ? force : !pop.classList.contains('open');
   pop.classList.toggle('open', open);
-  if (open) toggleMapOptionsPopover(false);
+  if (open) { toggleMapOptionsPopover(false); toggleControlPopover(false); }
 }
 
 // Popover Options de carte (KML/Vue/Fond de carte/Outil) — replié par défaut, ouvert au clic sur 🗺
@@ -2404,11 +2442,11 @@ function toggleMapOptionsPopover(force) {
   if (!pop) return;
   const open = force !== undefined ? force : !pop.classList.contains('open');
   pop.classList.toggle('open', open);
-  if (open) toggleModePopover(false);
+  if (open) { toggleModePopover(false); toggleControlPopover(false); }
 }
 
 document.addEventListener('click', e => {
-  for (const [popId, btnId] of [['modePopover', 'btnModeToggle'], ['mapOptionsPopover', 'btnMapOptionsToggle']]) {
+  for (const [popId, btnId] of [['controlPopover', 'btnControlToggle'], ['modePopover', 'btnModeToggle'], ['mapOptionsPopover', 'btnMapOptionsToggle']]) {
     const pop = document.getElementById(popId);
     if (!pop || !pop.classList.contains('open')) continue;
     if (e.target.closest(`#${popId}`) || e.target.closest(`#${btnId}`)) continue;
@@ -3186,7 +3224,6 @@ function init() {
   syncParamsToDOM();
 
   document.querySelectorAll('.nav-tab').forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
-  document.querySelectorAll('.panel-tab').forEach(btn => btn.addEventListener('click', () => setPanelTab(btn.dataset.panel)));
 
   initCanvasEvents();
 
