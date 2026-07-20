@@ -624,23 +624,66 @@ function nearestPointOnPolygon(poly, px, py) {
   return best || { x: px, y: py };
 }
 
+// Longueur de tuyau requise pour couvrir tout l'étang (case la plus éloignée), mise en cache
+// par updateHoseLengthDisplay() — ne dépend que de l'ancre/des cases, jamais de la position du
+// robot, donc pas besoin de la recalculer (coûteux, O(cases)) à chaque frame de rendu.
+let _hoseRequiredLenCache = 0;
+
 // Points d'une courbe légèrement sinueuse entre l'ancre (berge) et le robot — un tuyau qui
 // flotte ne file jamais droit, il ondule doucement ; l'amplitude retombe à zéro aux deux
 // bouts (sin(πt)) pour que la courbe reste toujours accrochée exactement à l'ancre et au robot.
-function computeHoseCurvePoints(anchor, robot, segments = 24) {
+//
+// Si targetLen est fourni (longueur physique totale du tuyau déployé — la longueur nécessaire
+// pour atteindre la case la plus éloignée), la courbe ondule davantage pour que sa longueur
+// réelle approche targetLen même quand le robot est près de l'ancre : un tuyau déjà déroulé sur
+// toute sa longueur ne se raccourcit pas quand le robot s'approche du bord, il forme du mou.
+function computeHoseCurvePoints(anchor, robot, segments = 24, targetLen = null) {
   const dx = robot.x - anchor.x, dy = robot.y - anchor.y;
   const L  = Math.hypot(dx, dy) || 0.001;
   const ux = dx / L, uy = dy / L;   // direction
   const nx = -uy, ny = ux;          // perpendiculaire
-  const amp = Math.min(L * 0.12, 1.5);
-  const pts = [];
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    const win  = Math.sin(Math.PI * t);
-    const wave = win * (Math.sin(t * 5.3 + L * 0.7) * amp + Math.sin(t * 2.1 + L * 0.3) * amp * 0.4);
-    pts.push({ x: anchor.x + dx * t + nx * wave, y: anchor.y + dy * t + ny * wave });
+
+  const slackRatio = targetLen ? Math.max(0, (targetLen - L) / L) : 0;
+  const freqScale = 1 + Math.min(slackRatio, 8);
+  const segs = slackRatio > 0.15 ? Math.min(Math.round(segments * (1 + Math.min(slackRatio, 8))), 160) : segments;
+
+  const buildPoints = (amp) => {
+    const out = [];
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const win  = Math.sin(Math.PI * t);
+      const wave = win * (Math.sin(t * 5.3 * freqScale + L * 0.7) * amp + Math.sin(t * 2.1 * freqScale + L * 0.3) * amp * 0.4);
+      out.push({ x: anchor.x + dx * t + nx * wave, y: anchor.y + dy * t + ny * wave });
+    }
+    return out;
+  };
+  const pointsLen = (pts) => {
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) len += dist(pts[i-1].x, pts[i-1].y, pts[i].x, pts[i].y);
+    return len;
+  };
+
+  let amp = Math.min(L * 0.12, 1.5);
+  if (slackRatio > 0) {
+    // Recherche par dichotomie de l'amplitude d'ondulation qui donne une longueur de courbe
+    // ≈ targetLen ; si même l'amplitude plafond n'y suffit pas (mou très important), on s'y
+    // tient plutôt que de faire onduler le tuyau de façon irréaliste. Le plafond suit la
+    // longueur totale visée (donc l'échelle de l'étang), pas la distance actuelle au robot —
+    // c'est justement quand le robot est proche de l'ancre (distance actuelle minime) qu'il
+    // faut le plus de mou pour représenter la longueur déployée.
+    const ampCap = Math.min(Math.max(targetLen * 0.2, L * 0.9 + 2), 15);
+    if (pointsLen(buildPoints(ampCap)) < targetLen) {
+      amp = ampCap;
+    } else {
+      let lo = 0, hi = ampCap;
+      for (let i = 0; i < 12; i++) {
+        const mid = (lo + hi) / 2;
+        if (pointsLen(buildPoints(mid)) < targetLen) lo = mid; else hi = mid;
+      }
+      amp = (lo + hi) / 2;
+    }
   }
-  return pts;
+  return buildPoints(amp);
 }
 
 // Longueur réelle de la courbe (pas la distance à vol d'oiseau) entre deux points —
@@ -674,11 +717,13 @@ function updateHoseLengthDisplay() {
   const dashBadge = document.getElementById('dashHoseLengthBadge');
   const dashStat  = document.getElementById('dashHoseLengthNeeded');
   if (!state.pond) {
+    _hoseRequiredLenCache = 0;
     if (dashBadge) dashBadge.textContent = '—';
     if (dashStat)  dashStat.textContent  = '—';
     return;
   }
   const lenM = computeRequiredHoseLength(state.pond);
+  _hoseRequiredLenCache = lenM;
   const txt = lenM > 0 ? `${Math.ceil(lenM)} m` : '—';
   if (dashBadge) dashBadge.textContent = lenM > 0 ? Math.ceil(lenM) : '—';
   if (dashStat)  dashStat.textContent  = txt;
@@ -1364,7 +1409,7 @@ function renderPondCanvas(canvas) {
 
   // Tuyau d'évacuation flottant — de l'ancre (berge) au robot, en petites courbes
   if (state.pond.hoseAnchor) {
-    const hosePts = computeHoseCurvePoints(state.pond.hoseAnchor, state.robot);
+    const hosePts = computeHoseCurvePoints(state.pond.hoseAnchor, state.robot, 24, _hoseRequiredLenCache);
     ctx.beginPath();
     hosePts.forEach((p, i) => {
       const s = worldToScreen(p.x, p.y);
@@ -2630,6 +2675,8 @@ function toggleSectionWidget(force) {
   if (!widget) return;
   const collapsed = force !== undefined ? force : !widget.classList.contains('collapsed');
   widget.classList.toggle('collapsed', collapsed);
+  const toggleBtn = document.getElementById('sectionWidgetToggle');
+  if (toggleBtn) toggleBtn.textContent = collapsed ? '+' : '−';
   if (!collapsed) { resizeSectionCanvas(); renderSectionCanvas(); }
 }
 
@@ -2816,7 +2863,7 @@ function _refreshHosePolylineDash() {
 
 // Points lat/lng de la courbe du tuyau, pour un L.polyline
 function _hoseLatLngs(anchor, robot) {
-  return computeHoseCurvePoints(anchor, robot)
+  return computeHoseCurvePoints(anchor, robot, 24, _hoseRequiredLenCache)
     .map(p => { const ll = metersToLatLng(p.x, p.y); return ll ? [ll.lat, ll.lng] : null; })
     .filter(Boolean);
 }
