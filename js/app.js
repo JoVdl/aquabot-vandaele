@@ -499,7 +499,11 @@ function computeInstantPowerBreakdown(robot) {
     return POWER_SPECS.thrusterMaxW * Math.pow(frac, 1.5);
   });
   const thrustersTotalW = thrusterWs.reduce((a, b) => a + b, 0);
-  const pumpActive  = robot.pumpState === 'pumping';
+  // La pompe d'aspiration reste allumée en continu tout au long des mini-cycles d'une même
+  // case (descente → pompage → remontée partielle → redescente...) — elle ne s'arrête
+  // vraiment qu'entre deux cases (pumpState 'idle'). Des coupures courtes et répétées
+  // risqueraient de laisser la vase déjà aspirée refluer dans le tuyau à chaque arrêt.
+  const pumpActive  = robot.pumpState !== 'idle';
   const winchActive = robot.pumpState === 'descending' || robot.pumpState === 'ascending' || robot.pumpState === 'partial_ascending';
   const pumpW         = pumpActive  ? POWER_SPECS.pumpW  : 0;
   const winchW         = winchActive ? POWER_SPECS.winchW : 0;
