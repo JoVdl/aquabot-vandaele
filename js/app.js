@@ -593,10 +593,9 @@ const ROBOT_SIZE  = 2.0;
 const CELL_SIZE   = 0.4;
 const SIM_TICK_MS = 50;
 // Intervalle entre deux écritures Firestore de miroir cross-appareils pendant la simulation
-// (voir simulationTick). Plus bas = plus fluide sur les appareils suiveurs, mais plus
-// d'écritures facturées sur le plan Blaze (~180$/million d'écritures) : 300ms est un bon
-// compromis fluidité/coût pour un robot qui se déplace lentement.
-const SIM_SAVE_INTERVAL_MS = 300;
+// (voir simulationTick). Valeur d'origine (200ms) pour retrouver la fluidité initiale entre
+// appareils, maintenant que le plan Blaze facture simplement l'usage au lieu de le bloquer.
+const SIM_SAVE_INTERVAL_MS = 200;
 const CANVAS_IDS  = ['dashPondCanvas', 'pondCanvas'];
 
 // 4 propulseurs en configuration X (avant-gauche, avant-droit, arrière-gauche, arrière-droit)
@@ -2534,10 +2533,10 @@ function simulationTick() {
   // Sauvegarde périodique Firestore pour le miroir quasi temps réel sur les autres appareils.
   // Sur le plan payant (Blaze), le quota gratuit journalier n'est plus qu'un seuil de
   // facturation (et non plus un mur bloquant) : on privilégie donc la fluidité entre appareils
-  // plutôt que de rester sous le quota gratuit à tout prix. Pour référence, à ce rythme, un
-  // fonctionnement réel de ~20h/jour représente environ 240 000 écritures/jour, soit ~10-12
-  // €/mois au tarif Firestore standard si le robot tourne tous les jours — voir
-  // SIM_SAVE_INTERVAL_MS ci-dessous pour ajuster ce compromis fluidité/coût.
+  // plutôt que de rester sous le quota gratuit à tout prix. Pour référence, à ce rythme
+  // (200ms), un fonctionnement réel de ~20h/jour représente environ 360 000 écritures/jour,
+  // soit ~15-18 €/mois au tarif Firestore standard si le robot tourne tous les jours — voir
+  // SIM_SAVE_INTERVAL_MS ci-dessus pour ajuster ce compromis fluidité/coût.
   const nowMs = Date.now();
   if (USE_CLOUD && nowMs - state.sim.lastSimSave > SIM_SAVE_INTERVAL_MS) {
     state.sim.lastSimSave = nowMs;
