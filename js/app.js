@@ -646,6 +646,35 @@ function computeInstantPowerBreakdown(robot) {
   return { thrusterWs, thrustersTotalW, pumpW, winchW, electronicsW, totalW };
 }
 
+/// Estimation théorique de l'énergie nécessaire pour traiter UNE case, à partir du modèle de
+// puissance et de la durée de chaque phase du mini-cycle (descente → pompage → remontée
+// partielle → redescente... → remontée finale). Ignore le déplacement entre cases (quelques
+// secondes de propulseurs à 55W max, négligeable face à la pompe à 1800W pendant tout le
+// cycle) — sert de base aux estimations "étang complet" / "zone sélectionnée" de l'onglet
+// Énergie, avant même d'avoir une seule case réellement terminée pour mesurer un vrai rythme.
+function computeCellCycleEnergyWh() {
+  const fullDepth    = params.waterDepth + params.mudDepth;
+  const partialDepth = params.waterDepth;
+  const nbCycles     = effectiveMiniCycles();
+  const idle = pumpState => ({ pumpState, motors: [0, 0, 0, 0] });
+
+  const descentTime       = params.pumpDescentSpeed > 0 ? fullDepth / params.pumpDescentSpeed : 0;
+  const pumpingTime        = params.pumpTime;
+  const partialAscentTime  = params.pumpAscentSpeed > 0 ? (fullDepth - partialDepth) / params.pumpAscentSpeed : 0;
+  const finalAscentTime    = params.pumpAscentSpeed > 0 ? fullDepth / params.pumpAscentSpeed : 0;
+  const partialAscents     = Math.max(0, nbCycles - 1);
+
+  const pDescent = computeInstantPowerBreakdown(idle('descending')).totalW;
+  const pPumping = computeInstantPowerBreakdown(idle('pumping')).totalW;
+  const pPartial = computeInstantPowerBreakdown(idle('partial_ascending')).totalW;
+  const pFinal   = computeInstantPowerBreakdown(idle('ascending')).totalW;
+
+  const totalWs = (pDescent * descentTime + pPumping * pumpingTime) * nbCycles
+                + pPartial * partialAscentTime * partialAscents
+                + pFinal * finalAscentTime;
+  return (totalWs / 3600) * passes();
+}
+
 // Puissance de pointe (pic simultané max : 4 propulseurs à 100% + pompe + treuil + électronique)
 // — c'est la capacité minimale que doit fournir l'alimentation/batterie pour ne jamais être
 // sous-dimensionnée, pas la consommation "normale" de fonctionnement.
@@ -854,6 +883,18 @@ function updateEnergyTab() {
   setText('energyPumpVsThrust', breakdown.totalW > 0
     ? `Pompe ${(breakdown.pumpW / breakdown.totalW * 100).toFixed(0)}% · Propulsion ${(breakdown.thrustersTotalW / breakdown.totalW * 100).toFixed(0)}%`
     : '—');
+
+  // Estimations — étang complet / zone actuellement sélectionnée, à partir du modèle de
+  // puissance théorique (pas d'un rythme mesuré) : utile dès avant le premier coup de pompe.
+  const cellWh        = hasPond ? computeCellCycleEnergyWh() : 0;
+  const totalCells    = state.cells.length;
+  const selectedCells = state.cells.filter(c => c.selected).length;
+  setText('energyEstPondCells', hasPond ? totalCells.toLocaleString('fr-FR') : '—');
+  setText('energyEstPondWh',    hasPond ? formatEnergyWh(cellWh * totalCells) : '—');
+  setText('energyEstPondCost',  hasPond ? formatEnergyCost(cellWh * totalCells, tariff) : '—');
+  setText('energyEstSelCells',  hasPond ? selectedCells.toLocaleString('fr-FR') : '—');
+  setText('energyEstSelWh',     hasPond ? formatEnergyWh(cellWh * selectedCells) : '—');
+  setText('energyEstSelCost',   hasPond ? formatEnergyCost(cellWh * selectedCells, tariff) : '—');
 
   // Panneaux solaires — dimensionnement indépendant de l'état de la simulation
   ['pSolarHours', 'pSolarPeakSun', 'pSolarEff'].forEach((id, i) => {

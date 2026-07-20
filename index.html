@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v29</span>
+        <span class="logo-version" id="appVersion">v30</span>
       </div>
     </div>
     <div class="header-status">
@@ -547,6 +547,23 @@
               <div class="vol-row"><span class="vol-lbl">Énergie par m³ de vase pompée</span><span class="vol-val" id="energyPerM3">—</span></div>
               <div class="vol-row"><span class="vol-lbl">Part pompe / propulsion</span><span class="vol-val" id="energyPumpVsThrust">—</span></div>
             </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Estimation — étang complet <span class="energy-card-sub" id="energyEstPondCells">—</span> cases</div>
+            <div class="vol-section">
+              <div class="vol-row"><span class="vol-lbl">Énergie estimée</span><span class="vol-val" id="energyEstPondWh">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Coût estimé</span><span class="vol-val" id="energyEstPondCost">—</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Estimation — zone sélectionnée <span class="energy-card-sub" id="energyEstSelCells">—</span> cases</div>
+            <div class="vol-section">
+              <div class="vol-row"><span class="vol-lbl">Énergie estimée</span><span class="vol-val" id="energyEstSelWh">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Coût estimé</span><span class="vol-val" id="energyEstSelCost">—</span></div>
+            </div>
+            <p class="energy-disclaimer">Estimation théorique d'après le modèle de puissance (temps de descente/pompage/remontée par case) — pas un rythme mesuré, utilisable dès avant de démarrer.</p>
           </div>
 
           <div class="card param-card">
