@@ -4406,6 +4406,44 @@ function init() {
   // périmé (voir updateButtonStates) — sans ça, ça ne se rafraîchissait qu'au prochain
   // événement (snapshot ou clic), ce qui pouvait laisser le bouton bloqué en apparence.
   setInterval(() => { if (!state.sim.running) updateButtonStates(); }, 1000);
+
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+}
+
+// Un onglet mis en arrière-plan (écran éteint, changement d'appli sur mobile) continue de
+// détenir le pilotage tant que ses écritures Firestore régulières (saveSimState(), toutes les
+// ~200ms tant que state.sim.running est vrai) réaffirment son driverId — mais un onglet
+// suffisamment longtemps en arrière-plan peut voir son intervalle ralenti au lieu d'arrêté, ou
+// même sa connexion Firestore se couper puis se reconnecter par intermittence. Dans ce cas il
+// peut resurgir de temps à autre et réaffirmer son driverId sans jamais avoir "vu" qu'un autre
+// appareil avait légitimement repris la main pendant son absence — ce qui redonnait l'illusion
+// que Démarrer, ailleurs, se grisait un instant avant de se redébloquer tout seul, sans jamais
+// que le robot ne travaille vraiment. On arrête donc nous-mêmes explicitement la boucle locale
+// dès la mise en arrière-plan (sans annoncer d'arrêt : les autres appareils reprendront après
+// l'expiration normale du battement de cœur), puis on ne la relance qu'après avoir revérifié le
+// pilotage au retour au premier plan.
+async function handleVisibilityChange() {
+  if (document.hidden) {
+    if (state.sim.running && state.sim.intervalId) {
+      clearInterval(state.sim.intervalId);
+      state.sim.intervalId = null;
+      state.sim.backgroundPaused = true;
+    }
+    return;
+  }
+  if (!state.sim.backgroundPaused) return;
+  state.sim.backgroundPaused = false;
+  if (!state.sim.running || !state.pond) return;
+  const owns = !USE_CLOUD || await claimSimOwnership(state.pond.id);
+  if (!owns) {
+    // Un autre appareil a légitimement repris la main pendant notre absence — on redevient
+    // simple suiveur, subscribeSimState() reflète déjà son état exact.
+    state.sim.running = false;
+    updateButtonStates();
+    return;
+  }
+  state.sim.lastTick = performance.now();
+  state.sim.intervalId = setInterval(simulationTick, SIM_TICK_MS);
 }
 
 window.addEventListener('DOMContentLoaded', init);
