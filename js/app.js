@@ -5,11 +5,29 @@
 // ============================================================
 const USE_CLOUD = typeof window !== 'undefined' && !!window.db;
 
-// Identifiant unique de cet appareil/onglet pour cette session — sert à savoir qui calcule
+// Identifiant unique de cet onglet, stable à travers une actualisation de page (sessionStorage,
+// pas un simple random réinitialisé à chaque chargement) — sert à savoir qui calcule
 // actuellement la simulation (voir claimSimOwnership ci-dessous). Un seul « cerveau » actif à
 // la fois, exactement comme pour le robot réel : les autres appareils ne sont que des vues qui
 // reflètent le même état et envoient des commandes, jamais une seconde simulation en parallèle.
-const _deviceSessionId = 'dev_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+// La stabilité au fil des actualisations est cruciale : sans elle, actualiser la page pendant
+// qu'on pilote fait apparaître cet onglet comme un « étranger » aux yeux de checkAndResumeSim,
+// qui attend alors bêtement l'expiration du délai avant de reprendre — d'où la vitesse qui
+// semblait « revenir en arrière » et le robot qui paraissait s'arrêter après actualisation.
+// sessionStorage (pas localStorage) pour qu'un second onglet du même navigateur obtienne bien
+// un identifiant différent, plutôt que d'entrer en conflit avec le premier.
+const _deviceSessionId = (() => {
+  try {
+    let id = sessionStorage.getItem('aquabot_device_id');
+    if (!id) {
+      id = 'dev_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+      sessionStorage.setItem('aquabot_device_id', id);
+    }
+    return id;
+  } catch {
+    return 'dev_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+  }
+})();
 
 // Au-delà de ce délai sans nouvelle écriture, on considère qu'un appareil qui prétendait
 // piloter est en réalité silencieux (onglet mis en arrière-plan sur mobile, navigateur qui a
@@ -312,7 +330,13 @@ function checkAndResumeSim(pondId) {
     if (pondResetAt > 0 && (sim.lastUpdate || 0) < pondResetAt) { console.log('[checkAndResumeSim] SKIP: antérieur au RAZ'); return; }
     if (offlineMs > 7200000) { console.log('[checkAndResumeSim] SKIP: trop ancien (>2h)'); return; }
 
-    if (offlineMs < ACTIVE_DRIVER_THRESHOLD_MS) {
+    // Si le document porte déjà NOTRE identifiant (typiquement : cet onglet vient d'être
+    // actualisé pendant qu'il pilotait), aucune ambiguïté possible — on reprend tout de suite,
+    // sans attendre l'expiration du délai. Sans ça, actualiser la page pendant le pilotage
+    // faisait paraître le robot arrêté et la vitesse « revenue en arrière » pendant plusieurs
+    // secondes à chaque fois, alors que l'ancien pilote (cet onglet, avant actualisation) est
+    // de toute façon définitivement parti.
+    if (offlineMs < ACTIVE_DRIVER_THRESHOLD_MS && sim.driverId !== _deviceSessionId) {
       // Un autre appareil écrit encore là, maintenant — rester simple suiveur passif
       // (subscribeSimState s'en charge déjà) et revérifier une fois passé le délai, au cas
       // où cet appareil s'arrêterait entre-temps sans clôturer proprement la simulation.
