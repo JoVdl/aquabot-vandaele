@@ -2732,9 +2732,13 @@ function updateButtonStates() {
 // ============================================================
 // HANDLERS
 // ============================================================
-function handleStart()  { startSimulation(); }
-function handlePause()  { pauseSimulation(); }
-function handleStop()   { stopSimulation(); }
+// startSimulation()/pauseSimulation()/stopSimulation() sont async (elles attendent
+// claimSimOwnership) : sans .catch() ici, une exception dedans (ex. accès réseau Firestore en
+// échec) devient une "unhandled promise rejection" invisible — le bouton semble ne rien faire,
+// sans aucun message. On la remonte donc explicitement à l'écran.
+function handleStart()  { startSimulation().catch(e => { console.error('handleStart:', e); showToast('Erreur au démarrage : ' + e.message, 'error'); }); }
+function handlePause()  { pauseSimulation().catch(e => { console.error('handlePause:', e); showToast('Erreur : ' + e.message, 'error'); }); }
+function handleStop()   { stopSimulation().catch(e => { console.error('handleStop:', e); showToast('Erreur : ' + e.message, 'error'); }); }
 function handleSpeedChange(v) {
   state.sim.speed = parseFloat(v);
   setText('speedValue', v + '×');
