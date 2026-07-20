@@ -140,13 +140,32 @@ function subscribeSimState(pondId) {
   if (!USE_CLOUD) return;
   _simUnsubscribe = window.db.collection('aquabot_sim').doc(pondId)
     .onSnapshot(doc => {
-      if (!doc.exists || state.sim.running) return;
+      if (!doc.exists) return;
       const sim = doc.data();
       if (!sim) return;
 
       // Ignorer les données antérieures au dernier RAZ
       const pondResetAt = state.pond?.lastResetAt || 0;
       if (pondResetAt > 0 && (sim.lastUpdate || 0) < pondResetAt) return;
+
+      // Commandes distantes (vitesse, mode de travail) : à appliquer même sur l'appareil qui
+      // pilote activement la simulation — sinon un changement fait depuis un autre appareil (ou
+      // un onglet resté suiveur) se fait aussitôt écraser par la prochaine sauvegarde
+      // périodique du pilote, qui continue de réécrire son ancienne valeur locale sans jamais
+      // savoir qu'elle a changé ailleurs. C'était la cause du "la vitesse revient à l'ancienne
+      // valeur après actualisation" : le pilote ignorait totalement ces snapshots.
+      if (sim.speed && sim.speed !== state.sim.speed) {
+        state.sim.speed = sim.speed;
+        const speedEl = document.getElementById('speedSlider');
+        if (speedEl) { speedEl.value = sim.speed; setText('speedValue', sim.speed + '×'); }
+      }
+      if (sim.workMode)   params.workMode   = sim.workMode;
+      if (sim.miniCycles) params.miniCycles = sim.miniCycles;
+
+      // Le reste (position, état pompe, cases complétées...) reste réservé aux appareils
+      // suiveurs : le pilote ne doit jamais se resynchroniser sur l'écho de ses propres
+      // écritures de position/physique, seulement sur les commandes distantes ci-dessus.
+      if (state.sim.running) return;
 
       const offlineMs  = Date.now() - (sim.lastUpdate || Date.now());
       const offlineSec = (offlineMs / 1000) * (sim.speed || 1);
@@ -160,13 +179,6 @@ function subscribeSimState(pondId) {
       }
 
       if (sim.plannedPath?.length) state.plannedPath = sim.plannedPath;
-      if (sim.speed && sim.speed !== state.sim.speed) {
-        state.sim.speed = sim.speed;
-        const speedEl = document.getElementById('speedSlider');
-        if (speedEl) { speedEl.value = sim.speed; setText('speedValue', sim.speed + '×'); }
-      }
-      if (sim.workMode)   params.workMode   = sim.workMode;
-      if (sim.miniCycles) params.miniCycles = sim.miniCycles;
 
       state.robot.state          = sim.robotState  || 'stopped';
       state.robot.elapsedSec     = sim.elapsedSec + (sim.simRunning ? offlineSec : 0);
