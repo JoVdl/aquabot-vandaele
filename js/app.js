@@ -70,6 +70,7 @@ function pondToFirestore(pond) {
       completedCells: pond.work?.completedCells || [],
       volumePumped:   pond.work?.volumePumped   || 0,
       elapsedSec:     pond.work?.elapsedSec     || 0,
+      energyWh:       pond.work?.energyWh       || 0,
     },
     // Live selection state (so other devices see which cells are highlighted)
     currentSelectedIndices: encodeSelection(pond.cells || []),
@@ -107,6 +108,7 @@ function saveSimState() {
     motors:         state.robot.motors,
     elapsedSec:     state.robot.elapsedSec,
     volumePumped:   state.robot.volumePumped,
+    energyWh:       state.robot.energyWh,
     plannedPath:    state.plannedPath,
     completedCells: completedIdxs,
     speed:          state.sim.speed,
@@ -169,6 +171,7 @@ function subscribeSimState(pondId) {
       state.robot.state          = sim.robotState  || 'stopped';
       state.robot.elapsedSec     = sim.elapsedSec + (sim.simRunning ? offlineSec : 0);
       state.robot.volumePumped   = sim.volumePumped || 0;
+      state.robot.energyWh       = sim.energyWh || 0;
       state.robot.x              = sim.x ?? state.robot.x;
       state.robot.y              = sim.y ?? state.robot.y;
       state.robot.pumpDepth      = sim.pumpDepth  ?? 0;
@@ -307,6 +310,7 @@ function _resumeSimFromCloud(sim) {
   state.robot.pumpTimer      = 0;   // timer inconnu après déconnexion, redémarre le cycle
   state.robot.elapsedSec     = sim.elapsedSec + offlineSec;
   state.robot.volumePumped   = sim.volumePumped || 0;
+  state.robot.energyWh       = sim.energyWh || 0;
   state.robot.heading        = sim.heading ?? state.robot.heading;
   state.robot.motors         = sim.motors  ?? state.robot.motors;
 
@@ -453,7 +457,7 @@ function pondFromFirestore(data) {
     ...data,
     cells,
     lastResetAt: data.lastResetAt || 0,
-    work: data.work || { completedCells: [], volumePumped: 0, elapsedSec: 0 },
+    work: data.work || { completedCells: [], volumePumped: 0, elapsedSec: 0, energyWh: 0 },
     selections: (data.selections || []).map(s => {
       const set = decodeSelection(s.selectedIndices, cells.length) || new Set();
       return { ...s, cellStates: cells.map((_, i) => set.has(i)) };
@@ -471,6 +475,140 @@ const CANVAS_IDS  = ['dashPondCanvas', 'pondCanvas'];
 
 // 4 propulseurs en configuration X (avant-gauche, avant-droit, arrière-gauche, arrière-droit)
 const MOTOR_LABELS = ['AV-G', 'AV-D', 'AR-G', 'AR-D'];
+
+// ============================================================
+// CONSOMMATION ÉLECTRIQUE (estimation — pas de télémétrie réelle)
+// ============================================================
+// Puissances nominales estimées par composant, à pleine charge (W). Valeurs plausibles pour
+// un robot de curage de cette taille (propulseurs ROV compacts, pompe submersible à 500 L/h) —
+// affichées comme telles dans l'UI, pas comme des mesures réelles tant qu'aucun capteur de
+// courant n'est câblé sur le robot physique.
+const POWER_SPECS = {
+  thrusterMaxW:  55,  // W par propulseur (×4), à 100% de poussée
+  pumpW:        450,  // W pompe d'aspiration submersible, active en phase "pumping"
+  winchW:        80,  // W moteur de profondeur (descente/remontée du bras de pompage)
+  electronicsW:   8,  // W électronique de contrôle (ESP32, capteurs, wifi, LED) — en veille
+};
+
+// Répartition de la puissance instantanée par composant (W). La poussée d'un propulseur ne
+// consomme pas linéairement avec le %, la puissance suit plutôt le cube de la vitesse pour une
+// hélice — on prend un exposant 1.5 comme compromis simple et lisible entre linéaire et cubique.
+function computeInstantPowerBreakdown(robot) {
+  const thrusterWs = (robot.motors || [0, 0, 0, 0]).map(m => {
+    const frac = Math.min(1, Math.abs(m) / 100);
+    return POWER_SPECS.thrusterMaxW * Math.pow(frac, 1.5);
+  });
+  const thrustersTotalW = thrusterWs.reduce((a, b) => a + b, 0);
+  const pumpActive  = robot.pumpState === 'pumping';
+  const winchActive = robot.pumpState === 'descending' || robot.pumpState === 'ascending' || robot.pumpState === 'partial_ascending';
+  const pumpW         = pumpActive  ? POWER_SPECS.pumpW  : 0;
+  const winchW         = winchActive ? POWER_SPECS.winchW : 0;
+  const electronicsW  = POWER_SPECS.electronicsW; // toujours actif tant que le robot est allumé
+  const totalW = thrustersTotalW + pumpW + winchW + electronicsW;
+  return { thrusterWs, thrustersTotalW, pumpW, winchW, electronicsW, totalW };
+}
+
+// Puissance de pointe (pic simultané max : 4 propulseurs à 100% + pompe + treuil + électronique)
+// — c'est la capacité minimale que doit fournir l'alimentation/batterie pour ne jamais être
+// sous-dimensionnée, pas la consommation "normale" de fonctionnement.
+function computePeakPowerW() {
+  return POWER_SPECS.thrusterMaxW * 4 + POWER_SPECS.pumpW + POWER_SPECS.winchW + POWER_SPECS.electronicsW;
+}
+
+function updateElecTariff(value) {
+  const v = parseFloat(value);
+  params.elecTariff = Number.isFinite(v) && v >= 0 ? v : 0;
+  localStorage.setItem('aquabot_params', JSON.stringify(params));
+  updateEnergyTab();
+}
+
+const ENERGY_STATE_LABELS = {
+  stopped: 'À l\'arrêt — électronique en veille',
+  moving:  'En déplacement',
+  pumping: 'En pompage',
+  paused:  'En pause',
+  error:   'Erreur',
+};
+
+// Rafraîchit tout l'onglet Énergie. Appelé depuis updateUI() (donc à chaque tick de simulation
+// ET à chaque snapshot Firestore reçu par un appareil suiveur) mais se coupe immédiatement si
+// l'onglet n'est pas affiché — pas la peine de reconstruire cette liste à chaque frame pour rien.
+function updateEnergyTab() {
+  if (state.activeTab !== 'energy') return;
+  const elTotal = document.getElementById('energyTotalW');
+  if (!elTotal) return;
+
+  const robot = state.robot;
+  const hasPond = !!state.pond;
+  const breakdown = computeInstantPowerBreakdown(robot);
+
+  // Ne pas écraser la saisie en cours si l'utilisateur est en train de modifier le tarif
+  const tariffInput = document.getElementById('pElecTariff');
+  if (tariffInput && document.activeElement !== tariffInput) tariffInput.value = params.elecTariff;
+
+  elTotal.textContent = hasPond ? Math.round(breakdown.totalW).toLocaleString('fr-FR') : '0';
+  setText('energyLiveStatus', hasPond ? (ENERGY_STATE_LABELS[robot.state] || '—') : 'Aucun étang chargé');
+
+  // Répartition par composant
+  const rows = [
+    ...MOTOR_LABELS.map((lbl, i) => ({ label: `Propulseur ${lbl}`, w: breakdown.thrusterWs[i], max: POWER_SPECS.thrusterMaxW })),
+    { label: 'Pompe d\'aspiration',      w: breakdown.pumpW,        max: POWER_SPECS.pumpW },
+    { label: 'Moteur de profondeur',     w: breakdown.winchW,       max: POWER_SPECS.winchW },
+    { label: 'Électronique de contrôle', w: breakdown.electronicsW, max: POWER_SPECS.electronicsW },
+  ];
+  const listEl = document.getElementById('energyComponentList');
+  if (listEl) {
+    listEl.innerHTML = rows.map(r => {
+      const barPct = r.max > 0 ? Math.min(100, (r.w / r.max) * 100) : 0;
+      const sharePct = breakdown.totalW > 0 ? (r.w / breakdown.totalW) * 100 : 0;
+      return `
+        <div class="energy-comp-row">
+          <span class="energy-comp-lbl">${r.label}</span>
+          <div class="energy-comp-bar-wrap"><div class="energy-comp-bar" style="width:${barPct.toFixed(0)}%"></div></div>
+          <span class="energy-comp-val">${r.w.toFixed(1)} W <span class="energy-comp-pct">(${sharePct.toFixed(0)}%)</span></span>
+        </div>`;
+    }).join('');
+  }
+
+  setText('energyIdleW', `${POWER_SPECS.electronicsW} W`);
+  setText('energyPeakW', `${computePeakPowerW()} W`);
+
+  // Partie en cours (depuis l'ouverture de cet étang) — dérivée d'un instantané pris au
+  // chargement, pas d'un compteur séparé : fonctionne aussi bien sur un appareil suiveur.
+  const sessionWh  = Math.max(0, robot.energyWh - state.sim.sessionEnergyBaselineWh);
+  const sessionSec = Math.max(0, robot.elapsedSec - state.sim.sessionElapsedBaselineSec);
+  const tariff = params.elecTariff || 0;
+
+  // Débit horaire — puissance moyenne réelle de la partie en cours (énergie/durée), pas la
+  // puissance instantanée qui saute sans arrêt selon la phase du cycle en cours.
+  const avgW = sessionSec > 0 ? (sessionWh * 3600) / sessionSec : 0;
+  setText('energyRateHour', avgW > 0 ? `${avgW.toFixed(0)} Wh` : '—');
+  setText('energyRateDay',  avgW > 0 ? `${(avgW * 24 / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} kWh` : '—');
+
+  setText('energySessionWh',   hasPond ? formatEnergyWh(sessionWh) : '—');
+  setText('energySessionCost', hasPond ? formatEnergyCost(sessionWh, tariff) : '—');
+  setText('energyTotalWh',     hasPond ? formatEnergyWh(robot.energyWh) : '—');
+  setText('energyTotalCost',   hasPond ? formatEnergyCost(robot.energyWh, tariff) : '—');
+
+  // Stats — sur le cumul total de l'étang (plus stable qu'une session qui vient de commencer)
+  const doneCells  = robot.completedCells || 0;
+  const totalCost  = (robot.energyWh / 1000) * tariff;
+  setText('energyCostPerCell', doneCells > 0 ? `${(totalCost / doneCells).toFixed(3)} €` : '—');
+  const m3Pumped = (robot.volumePumped || 0) / 1000;
+  setText('energyPerM3', m3Pumped > 0.001 ? `${(robot.energyWh / m3Pumped).toFixed(0)} Wh/m³` : '—');
+  // Répartition instantanée (pas un cumul par composant, qu'on ne suit pas séparément) — donne
+  // une idée de "où part l'énergie" pendant que le robot travaille activement.
+  setText('energyPumpVsThrust', breakdown.totalW > 0
+    ? `Pompe ${(breakdown.pumpW / breakdown.totalW * 100).toFixed(0)}% · Propulsion ${(breakdown.thrustersTotalW / breakdown.totalW * 100).toFixed(0)}%`
+    : '—');
+}
+
+function formatEnergyWh(wh) {
+  return wh >= 1000 ? `${(wh / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} kWh` : `${wh.toFixed(1)} Wh`;
+}
+function formatEnergyCost(wh, tariff) {
+  return `${((wh / 1000) * tariff).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })} €`;
+}
 
 // ============================================================
 // STATE
@@ -492,6 +630,7 @@ const state = {
     currentCellIdx: 0,
     completedCells: 0,
     volumePumped: 0,
+    energyWh: 0,          // énergie cumulée depuis le dernier RAZ (persistée), voir sessionEnergyWh
     elapsedSec: 0,
     pumpTimer: 0,
     miniCyclesDone: 0,   // mini-cycles completed at current cell
@@ -504,6 +643,15 @@ const state = {
     // Rythme de travail (secondes/case) pour l'estimation restant/fin — recalculé
     // seulement quand une case vient de se terminer, voir updateUI().
     paceDoneCount: 0, paceSecPerCell: null,
+    // Valeur de robot.energyWh au moment de l'ouverture de cet étang — la « partie en cours »
+    // affichée est dérivée (energyWh - sessionEnergyBaselineWh), pas accumulée séparément :
+    // ça marche aussi bien sur l'appareil qui pilote que sur un appareil suiveur (qui ne fait
+    // jamais tourner simulationTick() localement, seulement robot.energyWh via Firestore).
+    sessionEnergyBaselineWh: 0,
+    // Même principe pour le temps écoulé, afin de calculer une puissance moyenne sur cette
+    // partie (énergie / durée) plutôt que d'extrapoler depuis la puissance instantanée, qui
+    // fluctue sans arrêt selon la phase du cycle (déplacement/descente/pompage/remontée).
+    sessionElapsedBaselineSec: 0,
   },
   view: { offsetX: 0, offsetY: 0, scale: 10, canvasH: 600 },
   drag: { active: false, mode: 'add' }, // for drag-select
@@ -525,6 +673,7 @@ let params = {
   workMode: 'mini-cycles',   // standard | mini-cycles | double-pass | intensive
   wifiType: 'ap', wifiSSID: 'WETAP-ESP8266',
   wifiPassword: '507317123456789', wifiIP: '192.168.42.1',
+  elecTariff: 0.20,   // €/kWh — tarif estimé, modifiable dans l'onglet Énergie
 };
 
 // ============================================================
@@ -910,7 +1059,7 @@ function createPondFromKML({ name, polygon, origin }) {
   const cells = generateGrid(polygon);
   return {
     id: Date.now().toString(), name, origin, polygon, area, cells,
-    work: { completedCells: [], volumePumped: 0, elapsedSec: 0 },
+    work: { completedCells: [], volumePumped: 0, elapsedSec: 0, energyWh: 0 },
     selections: [],
     lastUsed: Date.now(),
     bbox: { minX, maxX, minY, maxY },
@@ -941,8 +1090,13 @@ function loadPond(pond) {
 
   state.robot.completedCells = pond.work.completedCells?.length || 0;
   state.robot.volumePumped   = pond.work.volumePumped  || 0;
+  state.robot.energyWh       = pond.work.energyWh      || 0;
   state.robot.elapsedSec     = pond.work.elapsedSec    || 0;
   state.plannedPath = [];
+  // « Partie en cours » : repart de zéro à chaque (ré)ouverture de cet étang, distincte du
+  // cumul persistant ci-dessus qui, lui, ne se remet à zéro qu'au RAZ.
+  state.sim.sessionEnergyBaselineWh   = state.robot.energyWh;
+  state.sim.sessionElapsedBaselineSec = state.robot.elapsedSec;
 
   subscribeSimState(pond.id);
   checkAndResumeSim(pond.id);
@@ -987,6 +1141,7 @@ function saveWork() {
     completedCells: completedIdxs,
     volumePumped: state.robot.volumePumped,
     elapsedSec: state.robot.elapsedSec,
+    energyWh: state.robot.energyWh,
   };
   // Persist cell completion state into pond.cells
   state.pond.cells = state.cells.map(c => ({ ...c }));
@@ -1009,7 +1164,7 @@ function resetWork(pondId) {
     state.robot.state = 'stopped';
   }
 
-  pond.work = { completedCells: [], volumePumped: 0, elapsedSec: 0 };
+  pond.work = { completedCells: [], volumePumped: 0, elapsedSec: 0, energyWh: 0 };
   pond.cells?.forEach(c => { c.completed = false; });
   pond.lastResetAt = Date.now();
   pond.lastUsed    = Date.now();
@@ -1020,7 +1175,10 @@ function resetWork(pondId) {
     state.cells.forEach(c => { c.completed = false; });
     state.robot.completedCells = 0;
     state.robot.volumePumped   = 0;
+    state.robot.energyWh       = 0;
     state.robot.elapsedSec     = 0;
+    state.sim.sessionEnergyBaselineWh   = 0;
+    state.sim.sessionElapsedBaselineSec = 0;
     state.plannedPath = [];
     renderAllPondCanvases();
     updateUI();
@@ -1037,6 +1195,7 @@ function resetWork(pondId) {
       simRunning:     false,
       completedCells: [],
       volumePumped:   0,
+      energyWh:       0,
       elapsedSec:     0,
       pumpDepth:      0,
       pumpState:      'idle',
@@ -1203,6 +1362,7 @@ function loadPonds() {
             remote.cells.forEach((c, i) => { if (state.cells[i]) state.cells[i].completed = c.completed; });
             state.robot.completedCells = remote.work.completedCells?.length || 0;
             state.robot.volumePumped   = remote.work.volumePumped || 0;
+            state.robot.energyWh       = remote.work.energyWh     || 0;
             state.robot.elapsedSec     = remote.work.elapsedSec   || 0;
             state.pond.lastResetAt     = remote.lastResetAt || 0;
             state.pond.work            = remote.work;
@@ -1977,6 +2137,10 @@ function simulationTick() {
     }
   }
 
+  // Énergie consommée pendant ce tick — même base de temps que volumePumped/elapsedSec
+  // (secondes simulées, donc accélérée par state.sim.speed comme le reste de la simulation).
+  robot.energyWh += computeInstantPowerBreakdown(robot).totalW * dt / 3600;
+
   // Periodic Firestore save (every 200ms) for near-real-time mirror on other devices
   const nowMs = Date.now();
   if (USE_CLOUD && nowMs - state.sim.lastSimSave > 200) {
@@ -2063,6 +2227,7 @@ function updateUI() {
   if (dashEmpty) dashEmpty.style.display = state.pond ? 'none' : 'flex';
   const mapEmpty = document.getElementById('canvasEmptyState');
   if (mapEmpty) mapEmpty.style.display = state.pond ? 'none' : 'flex';
+  updateEnergyTab();
 
   const robot = state.robot, path = state.plannedPath;
   const total = path.length;
@@ -2685,6 +2850,8 @@ function setActiveTab(tab) {
         renderPondCanvas(c);
       }
     });
+  } else if (tab === 'energy') {
+    updateEnergyTab();
   }
 }
 
@@ -2728,7 +2895,7 @@ function loadDemoPond() {
     origin:{lat:46.8, lng:2.5}, polygon,
     area: polygonArea(polygon),
     cells: generateGrid(polygon),
-    work:{completedCells:[],volumePumped:0,elapsedSec:0},
+    work:{completedCells:[],volumePumped:0,elapsedSec:0,energyWh:0},
     selections:[],
     lastUsed:Date.now(),
     bbox:{minX,maxX,minY,maxY},

@@ -743,6 +743,37 @@ svg { display: block; }
 .params-actions { display: flex; gap: 8px; flex-wrap: wrap; padding-bottom: 20px; }
 
 /* ============================================================
+   ENERGY TAB
+   ============================================================ */
+.energy-layout { max-width: 880px; margin: 0 auto; padding-bottom: 20px; }
+.energy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 660px) { .energy-grid { grid-template-columns: 1fr; } }
+.energy-card-sub { text-transform: none; font-weight: 500; letter-spacing: 0; color: var(--text-3); }
+
+.energy-live-card { grid-column: 1 / -1; }
+.energy-live-total {
+  display: flex; align-items: baseline; justify-content: center; gap: 6px;
+  padding: 22px 14px 6px;
+}
+.energy-live-value { font-size: 42px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; line-height: 1; }
+.energy-live-unit { font-size: 16px; font-weight: 700; color: var(--text-2); }
+.energy-live-status { text-align: center; font-size: 12px; color: var(--text-2); padding-bottom: 16px; }
+
+.energy-comp-list { padding: 4px 0; }
+.energy-comp-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 14px; border-bottom: 1px solid var(--border);
+}
+.energy-comp-row:last-child { border-bottom: none; }
+.energy-comp-lbl { font-size: 11px; color: var(--text-2); width: 130px; flex-shrink: 0; }
+.energy-comp-bar-wrap { flex: 1; height: 6px; border-radius: 3px; background: var(--bg-card-2); overflow: hidden; }
+.energy-comp-bar { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.2s var(--ease); }
+.energy-comp-val { font-size: 11px; font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums; width: 108px; text-align: right; flex-shrink: 0; }
+.energy-comp-pct { font-weight: 500; color: var(--text-3); }
+
+.energy-disclaimer { font-size: 10px; color: var(--text-3); padding: 0 14px 12px; line-height: 1.4; }
+
+/* ============================================================
    PONDS TAB
    ============================================================ */
 .ponds-layout { max-width: 780px; margin: 0 auto; }

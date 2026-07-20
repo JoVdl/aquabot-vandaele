@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v13</span>
+        <span class="logo-version" id="appVersion">v14</span>
       </div>
     </div>
     <div class="header-status">
@@ -65,6 +65,10 @@
     <button class="nav-tab" data-tab="parameters">
       <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
       <span>Paramètres</span>
+    </button>
+    <button class="nav-tab" data-tab="energy">
+      <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/></svg>
+      <span>Énergie</span>
     </button>
     <button class="nav-tab" data-tab="ponds">
       <svg viewBox="0 0 20 20" fill="currentColor"><path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
@@ -555,6 +559,80 @@
         <div class="params-actions">
           <button class="btn btn-primary btn-lg" onclick="saveParameters()">💾 Enregistrer les paramètres</button>
           <button class="btn btn-ghost" onclick="loadDefaultParameters()">↺ Valeurs par défaut</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================
+         TAB: ÉNERGIE
+    ============================= -->
+    <section class="tab-panel" id="panel-energy">
+      <div class="energy-layout">
+        <div class="energy-grid">
+
+          <div class="card energy-live-card">
+            <div class="card-header">Consommation instantanée</div>
+            <div class="energy-live-total">
+              <span class="energy-live-value" id="energyTotalW">0</span>
+              <span class="energy-live-unit">W</span>
+            </div>
+            <div class="energy-live-status" id="energyLiveStatus">Aucun étang chargé</div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Répartition par composant</div>
+            <div class="energy-comp-list" id="energyComponentList"></div>
+          </div>
+
+          <div class="card param-card">
+            <div class="card-header">Dimensionnement de l'alimentation</div>
+            <div class="param-list">
+              <div class="param-row"><span class="param-lbl">Puissance à vide (électronique seule)</span><span class="vol-val" id="energyIdleW">— W</span></div>
+              <div class="param-row"><span class="param-lbl">Puissance mini. requise (pic simultané)</span><span class="vol-val" id="energyPeakW">— W</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Débit de consommation</div>
+            <div class="summary-stats stats-4">
+              <div class="sum-stat"><span class="sum-val" id="energyRateHour">—</span><span class="sum-label">Wh / heure</span></div>
+              <div class="sum-stat"><span class="sum-val" id="energyRateDay">—</span><span class="sum-label">Proj. / jour (24h continu)</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Partie en cours <span class="energy-card-sub">(depuis l'ouverture de cet étang)</span></div>
+            <div class="vol-section">
+              <div class="vol-row"><span class="vol-lbl">Énergie consommée</span><span class="vol-val" id="energySessionWh">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Coût estimé</span><span class="vol-val" id="energySessionCost">—</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Total sur l'étang <span class="energy-card-sub">(toutes les parties, jusqu'au prochain RAZ)</span></div>
+            <div class="vol-section">
+              <div class="vol-row"><span class="vol-lbl">Énergie cumulée</span><span class="vol-val" id="energyTotalWh">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Coût cumulé estimé</span><span class="vol-val" id="energyTotalCost">—</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Statistiques</div>
+            <div class="vol-section">
+              <div class="vol-row"><span class="vol-lbl">Coût par case nettoyée</span><span class="vol-val" id="energyCostPerCell">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Énergie par m³ de vase pompée</span><span class="vol-val" id="energyPerM3">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Part pompe / propulsion</span><span class="vol-val" id="energyPumpVsThrust">—</span></div>
+            </div>
+          </div>
+
+          <div class="card param-card">
+            <div class="card-header">Tarif électrique</div>
+            <div class="param-list">
+              <div class="param-row"><span class="param-lbl">Prix du kWh (€)</span><input type="number" step="0.01" min="0" class="param-input" id="pElecTariff" value="0.20" oninput="updateElecTariff(this.value)"></div>
+            </div>
+            <p class="energy-disclaimer">Consommation estimée par modèle (pas de mesure réelle de courant) — puissances nominales approximatives par composant.</p>
+          </div>
+
         </div>
       </div>
     </section>
