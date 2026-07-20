@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v27</span>
+        <span class="logo-version" id="appVersion">v28</span>
       </div>
     </div>
     <div class="header-status">
@@ -57,10 +57,6 @@
     <button class="nav-tab active" data-tab="dashboard">
       <svg viewBox="0 0 20 20" fill="currentColor"><path d="M2 11l8-8 8 8v7a1 1 0 01-1 1h-5v-5H8v5H3a1 1 0 01-1-1v-7z"/></svg>
       <span>Tableau de bord</span>
-    </button>
-    <button class="nav-tab" data-tab="map">
-      <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12 1.586l-4 4v12.828l4-4V1.586zM3.707 3.293A1 1 0 002 4v10a1 1 0 00.293.707L6 18.414V5.586L3.707 3.293zM17.707 5.293L14 1.586v12.828l2.293 2.293A1 1 0 0018 16V6a1 1 0 00-.293-.707z" clip-rule="evenodd"/></svg>
-      <span>Carte</span>
     </button>
     <button class="nav-tab" data-tab="parameters">
       <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
@@ -95,8 +91,11 @@
                 <svg viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="28" stroke="#0ea5e9" stroke-width="2" opacity="0.3"/><path d="M16 40 Q24 28 32 36 Q40 44 48 28" stroke="#0ea5e9" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M24 20 L32 12 L40 20 M32 12 L32 32" stroke="#0ea5e9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </div>
               <p class="empty-title">Aucun étang chargé</p>
-              <p class="empty-subtitle">Importez un fichier KML<br>ou sélectionnez un étang enregistré</p>
-              <button class="btn btn-primary" onclick="triggerKMLImport()">Importer KML</button>
+              <p class="empty-subtitle">Importez un fichier KML, dessinez l'étang<br>ou sélectionnez un étang enregistré</p>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+                <button class="btn btn-primary" onclick="triggerKMLImport()">Importer KML</button>
+                <button class="btn btn-secondary" onclick="openDrawPondFromEmptyState()">✏ Dessiner un étang</button>
+              </div>
               <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="loadDemoPond()">Charger étang démo</button>
             </div>
 
@@ -155,6 +154,32 @@
                     <span class="depth-val accent"><span id="dashHoseLengthBadge">—</span> m</span>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <!-- Panneau de tracé — recherche d'adresse, tracé du contour (nouvel étang) ou de
+                 la zone de dépôt (étang déjà chargé, dessiné ou importé). Flotte sur la carte
+                 du tableau de bord (vue satellite) plutôt que sur un onglet Carte séparé, pour
+                 n'avoir jamais qu'une seule carte Leaflet active à la fois. -->
+            <div class="draw-pond-panel" id="drawPondPanel" style="display:none">
+              <div class="draw-pond-row" id="drawAddressRow">
+                <div class="address-search-wrap">
+                  <input type="text" id="drawAddressInput" class="address-search-input"
+                         placeholder="Chercher une adresse pour localiser l'étang…" autocomplete="off">
+                  <ul class="address-dropdown" id="drawAddressDropdown"></ul>
+                </div>
+              </div>
+              <div class="draw-pond-row draw-pond-status" id="drawStatusBar">
+                Cliquez sur « Tracer le contour », puis délimitez l'étang sur la carte.
+              </div>
+              <div class="draw-pond-row draw-pond-actions">
+                <button class="btn btn-primary btn-sm" id="btnStartContour" onclick="startContourDraw()">✏ Tracer le contour</button>
+                <button class="btn btn-accent btn-sm" id="btnFinishDraw" onclick="finishCurrentDrawing()" style="display:none">✓ Terminer</button>
+                <button class="btn btn-ghost btn-sm" id="btnCancelDraw" onclick="cancelDraw()">✕ Annuler</button>
+              </div>
+              <div class="draw-pond-row" id="drawNameRow" style="display:none">
+                <input type="text" id="drawPondNameInput" class="sel-name-input" placeholder="Nom de l'étang…" maxlength="60">
+                <button class="btn btn-success btn-sm" onclick="confirmNewPond()">✓ Valider l'étang</button>
               </div>
             </div>
           </div>
@@ -347,112 +372,6 @@
     <!-- ============================
          TAB: CARTE (full interactive)
     ============================= -->
-    <section class="tab-panel" id="panel-map">
-      <div class="map-layout">
-        <div class="map-toolbar">
-          <div class="toolbar-group">
-            <button class="btn btn-primary btn-sm" onclick="triggerKMLImport()">
-              <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
-              KML
-            </button>
-          </div>
-          <!-- Vue Schéma / Satellite -->
-          <div class="toolbar-group toolbar-group-labeled">
-            <span class="toolbar-group-label">Vue</span>
-            <div class="view-toggle-group">
-              <button class="view-toggle-btn active" id="btnSchemaView" onclick="toggleSatelliteView(false)">📐 Schéma</button>
-              <button class="view-toggle-btn" id="btnSatView" onclick="toggleSatelliteView(true)">🛰 Satellite</button>
-            </div>
-          </div>
-          <div class="toolbar-group toolbar-group-labeled" id="mapMapStyleGroup" style="display:none">
-            <span class="toolbar-group-label">Fond de carte</span>
-            <div class="map-style-group">
-              <button class="map-style-btn"         data-style="esri"      onclick="setMapStyle('esri')">Esri</button>
-              <button class="map-style-btn active"  data-style="ign_ortho" onclick="setMapStyle('ign_ortho')">IGN Photo</button>
-              <button class="map-style-btn"         data-style="ign_plan"  onclick="setMapStyle('ign_plan')">IGN Plan</button>
-            </div>
-          </div>
-          <div class="toolbar-group toolbar-group-labeled">
-            <span class="toolbar-group-label">Sélection</span>
-            <div style="display:flex;gap:5px">
-              <button class="btn btn-secondary btn-sm" onclick="selectAllCells()">☑ Toutes</button>
-              <button class="btn btn-secondary btn-sm" onclick="deselectAllCells()">☐ Aucune</button>
-              <button class="btn btn-accent btn-sm" onclick="planRoute()">↪ Planifier</button>
-            </div>
-          </div>
-          <div class="toolbar-group toolbar-group-right">
-            <span class="scale-badge" id="scaleInfoMap">—</span>
-            <button class="btn btn-ghost btn-sm" id="btnFitMap" onclick="fitPond()">⊡</button>
-          </div>
-        </div>
-
-        <!-- Panneau de tracé — recherche d'adresse, tracé du contour (nouvel étang) ou de
-             la zone de dépôt (étang déjà chargé, dessiné ou importé) -->
-        <div class="draw-pond-panel" id="drawPondPanel" style="display:none">
-          <div class="draw-pond-row" id="drawAddressRow">
-            <div class="address-search-wrap">
-              <input type="text" id="drawAddressInput" class="address-search-input"
-                     placeholder="Chercher une adresse pour localiser l'étang…" autocomplete="off">
-              <ul class="address-dropdown" id="drawAddressDropdown"></ul>
-            </div>
-          </div>
-          <div class="draw-pond-row draw-pond-status" id="drawStatusBar">
-            Cliquez sur « Tracer le contour », puis délimitez l'étang sur la carte.
-          </div>
-          <div class="draw-pond-row draw-pond-actions">
-            <button class="btn btn-primary btn-sm" id="btnStartContour" onclick="startContourDraw()">✏ Tracer le contour</button>
-            <button class="btn btn-accent btn-sm" id="btnFinishDraw" onclick="finishCurrentDrawing()" style="display:none">✓ Terminer</button>
-            <button class="btn btn-ghost btn-sm" id="btnCancelDraw" onclick="cancelDraw()">✕ Annuler</button>
-          </div>
-          <div class="draw-pond-row" id="drawNameRow" style="display:none">
-            <input type="text" id="drawPondNameInput" class="sel-name-input" placeholder="Nom de l'étang…" maxlength="60">
-            <button class="btn btn-success btn-sm" onclick="confirmNewPond()">✓ Valider l'étang</button>
-          </div>
-        </div>
-
-        <!-- Vue Schéma (canvas existant) -->
-        <div class="canvas-wrap" id="canvasWrap">
-          <canvas id="pondCanvas"></canvas>
-          <div class="canvas-empty-state" id="canvasEmptyState">
-            <div class="empty-icon">
-              <svg viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="28" stroke="#0ea5e9" stroke-width="2" opacity="0.3"/><path d="M16 40 Q24 28 32 36 Q40 44 48 28" stroke="#0ea5e9" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M24 20 L32 12 L40 20 M32 12 L32 32" stroke="#0ea5e9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </div>
-            <p class="empty-title">Aucun étang chargé</p>
-            <p class="empty-subtitle">Importez un fichier KML depuis Géoportail<br>ou dessinez l'étang directement sur la carte</p>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
-              <button class="btn btn-primary" onclick="triggerKMLImport()">Importer un fichier KML</button>
-              <button class="btn btn-secondary" onclick="openDrawPondFromEmptyState()">✏ Dessiner un étang</button>
-            </div>
-          </div>
-          <div class="zoom-controls">
-            <button class="zoom-btn" onclick="zoomIn()">+</button>
-            <button class="zoom-btn" onclick="zoomOut()">−</button>
-          </div>
-          <div class="mode-toggle" id="modeToggle" style="display:none">
-            <button class="mode-btn active" id="btnModeSelectMap" onclick="setMode('select')">✏ Sélection</button>
-            <button class="mode-btn" id="btnModeViewMap" onclick="setMode('view')">✋ Vue</button>
-          </div>
-        </div>
-
-        <!-- Vue Satellite (Leaflet) -->
-        <div id="leaflet-container"></div>
-
-        <div class="propulsion-panel" id="propulsionPanelMap" style="display:none">
-          <div class="propulsion-panel-title">Propulsion</div>
-          <div class="motor-grid">
-            <div class="motor-item"><span class="motor-lbl">AV-G</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar0map" style="width:0%"></div></div><span class="motor-val" id="motorVal0map">0%</span></div>
-            <div class="motor-item"><span class="motor-lbl">AV-D</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar1map" style="width:0%"></div></div><span class="motor-val" id="motorVal1map">0%</span></div>
-            <div class="motor-item"><span class="motor-lbl">AR-G</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar2map" style="width:0%"></div></div><span class="motor-val" id="motorVal2map">0%</span></div>
-            <div class="motor-item"><span class="motor-lbl">AR-D</span><div class="motor-bar-track"><div class="motor-bar-fill" id="motorBar3map" style="width:0%"></div></div><span class="motor-val" id="motorVal3map">0%</span></div>
-          </div>
-          <div class="heading-wrap">
-            <div class="heading-compass"><div class="heading-needle" id="headingNeedleMap"></div></div>
-            <div><div class="heading-val" id="headingValMap">—°</div><div class="heading-lbl">Cap</div></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- ============================
          TAB: PARAMÈTRES
     ============================= -->

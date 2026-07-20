@@ -652,16 +652,6 @@ svg { display: block; }
 .heading-val { font-size: 12px; font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums; }
 .heading-lbl { font-size: 9px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.5px; }
 
-/* ============================================================
-   MAP TAB (full screen)
-   ============================================================ */
-#panel-map { padding: 0; overflow: hidden; }
-.map-layout { display: flex; flex-direction: column; height: 100%; }
-.map-toolbar {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  padding: 7px 12px;
-  background: var(--bg-card); border-bottom: 1px solid var(--border); flex-shrink: 0;
-}
 .toolbar-group { display: flex; align-items: center; gap: 5px; }
 .toolbar-group-right { margin-left: auto; }
 
@@ -675,12 +665,14 @@ svg { display: block; }
 
 /* ============================================================
    TRACÉ D'ÉTANG — recherche d'adresse + dessin du contour/de la zone de dépôt
+   Flotte au-dessus de la carte du tableau de bord (voir .dash-center).
    ============================================================ */
 .draw-pond-panel {
+  position: absolute; top: 10px; left: 10px; right: 10px; z-index: 20;
   display: flex; flex-direction: column; gap: 8px;
   padding: 10px 12px;
-  background: var(--bg-card-2); border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
 }
 .draw-pond-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .draw-pond-status { font-size: 12px; color: var(--text-2); }
@@ -977,11 +969,6 @@ svg { display: block; }
   .section-widget { width: 148px; }
   .mini-motor-lbl { font-size: 7px; }
   .mini-heading-compass { width: 22px; height: 22px; }
-
-  /* Onglet Carte plein écran : height:100% ne marche plus une fois le
-     document en scroll naturel (parents en hauteur auto) — hauteur fixe. */
-  #panel-map { height: auto; }
-  .map-layout { height: 75vh; height: 75svh; }
 
   /* Navigation en bas de l'écran — plus facile à atteindre au pouce */
   .nav-tabs {

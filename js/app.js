@@ -330,9 +330,6 @@ function subscribeSimState(pondId) {
         _rebuildPathLayerDash();
         if (_robotSquareDash) _updateDynamicLayersDashPosition(); else _rebuildDynamicLayersDash();
       }
-      // Onglet Carte (vue satellite) : jusqu'ici jamais mis à jour par ce listener passif —
-      // le robot y restait figé sur un appareil suiveur tant qu'on ne rechargeait pas l'étang.
-      if (_satMode && _leafletMap) updateRobotMarker();
     }, e => reportFirestoreError(e, 'simState listener'));
 }
 
@@ -605,7 +602,7 @@ const SIM_TICK_MS = 50;
 // (voir simulationTick). Valeur d'origine (200ms) pour retrouver la fluidité initiale entre
 // appareils, maintenant que le plan Blaze facture simplement l'usage au lieu de le bloquer.
 const SIM_SAVE_INTERVAL_MS = 200;
-const CANVAS_IDS  = ['dashPondCanvas', 'pondCanvas'];
+const CANVAS_IDS  = ['dashPondCanvas'];
 
 // 4 propulseurs en configuration X (avant-gauche, avant-droit, arrière-gauche, arrière-droit)
 const MOTOR_LABELS = ['AV-G', 'AV-D', 'AR-G', 'AR-D'];
@@ -1411,7 +1408,6 @@ function loadPond(pond) {
   subscribeSimState(pond.id);
   checkAndResumeSim(pond.id);
   if (state.robotMode === 'real') subscribeRobotTelemetry(pond.id);
-  if (_satMode     && _leafletMap)     updateLeafletOverlay();
   if (_satModeDash && _leafletMapDash) updateLeafletOverlayDash();
   resizeSectionCanvas();
   requestAnimationFrame(() => fitPond());
@@ -1426,10 +1422,7 @@ function loadPond(pond) {
   setText('dashPondBadge', pName);
 
   // Show pond-specific elements
-  document.getElementById('propulsionPanelMap').style.display = 'flex';
-  if (!_satMode) document.getElementById('modeToggle').style.display = 'flex';
   document.getElementById('dashCanvasEmptyState').style.display = 'none';
-  document.getElementById('canvasEmptyState').style.display    = 'none';
   ['btnSelectAll','btnSelectRemaining','btnDeselectAll','btnPlanRoute'].forEach(id => {
     const el = document.getElementById(id); if (el) el.disabled = false;
   });
@@ -1517,7 +1510,6 @@ function resetWork(pondId) {
   }
 
   if (_satModeDash && _leafletMapDash) { _rebuildPathLayerDash(); _rebuildDynamicLayersDash(); _rebuildCellLayersDash(); }
-  if (_satMode     && _leafletMap)     updateLeafletOverlay();
   updatePondsList();
   showToast('Progression remise à zéro', 'success');
 }
@@ -1810,21 +1802,16 @@ function screenToWorld(sx, sy) {
 
 function fitPond() {
   if (!state.pond) return;
-  // Use dash canvas if visible, otherwise map canvas
-  let canvas = document.getElementById('dashPondCanvas');
-  const isDash = !!(canvas && canvas.width);
-  if (!isDash) canvas = document.getElementById('pondCanvas');
+  const canvas = document.getElementById('dashPondCanvas');
   if (!canvas || !canvas.width) return;
   const W = canvas.width, H = canvas.height;
   const { minX, maxX, minY, maxY } = getPondBbox(state.pond);
   const pad = 40;
-  // Sur le tableau de bord, la coupe verticale flotte en haut à droite du canvas :
-  // on réserve sa largeur pour garder l'étang centré côté gauche, jamais masqué dessous.
+  // La coupe verticale flotte en haut à droite du canvas : on réserve sa largeur pour garder
+  // l'étang centré côté gauche, jamais masqué dessous.
   let usableW = W;
-  if (isDash) {
-    const widget = document.getElementById('sectionWidget');
-    if (widget) usableW = Math.max(120, W - widget.offsetWidth - 20);
-  }
+  const widget = document.getElementById('sectionWidget');
+  if (widget) usableW = Math.max(120, W - widget.offsetWidth - 20);
   state.view.scale   = Math.min((usableW-pad*2)/(maxX-minX), (H-pad*2)/(maxY-minY));
   state.view.offsetX = minX - pad/state.view.scale;
   state.view.offsetY = minY - pad/state.view.scale;
@@ -1833,15 +1820,13 @@ function fitPond() {
 }
 
 function updateScaleInfo() {
-  const txt = `1m = ${state.view.scale.toFixed(1)}px`;
-  setText('scaleInfo', txt);
-  setText('scaleInfoMap', txt);
+  setText('scaleInfo', `1m = ${state.view.scale.toFixed(1)}px`);
 }
 
 function zoomIn()  { zoomAt(1.3); }
 function zoomOut() { zoomAt(1/1.3); }
 function zoomAt(factor) {
-  const canvas = document.getElementById(state.activeTab === 'dashboard' ? 'dashPondCanvas' : 'pondCanvas');
+  const canvas = document.getElementById('dashPondCanvas');
   if (!canvas) return;
   const cx = canvas.width/2, cy = canvas.height/2;
   const wc = screenToWorld(cx, cy);
@@ -2565,7 +2550,6 @@ function simulationTick() {
   updateUI();
   renderAllPondCanvases();
   renderSectionCanvas();
-  if (_satMode)     updateRobotMarker();
   if (_satModeDash) updateRobotMarkerDash();
 }
 
@@ -2639,8 +2623,6 @@ function updateUI() {
   setText('currentPondName', state.pond ? state.pond.name : 'Aucun étang sélectionné');
   const dashEmpty = document.getElementById('dashCanvasEmptyState');
   if (dashEmpty) dashEmpty.style.display = state.pond ? 'none' : 'flex';
-  const mapEmpty = document.getElementById('canvasEmptyState');
-  if (mapEmpty) mapEmpty.style.display = state.pond ? 'none' : 'flex';
   updateEnergyTab();
 
   const robot = state.robot, path = state.plannedPath;
@@ -2866,7 +2848,6 @@ function planRoute() {
   const wm = WORK_MODES[params.workMode];
   setText('dashCellsTotal', path.length);
   renderAllPondCanvases();
-  if (_satMode)     updateLeafletOverlay();
   if (_satModeDash) _rebuildPathLayerDash();
   // Uniquement si cet appareil pilote réellement — sinon startSimulation() se chargera de
   // revendiquer le pilotage et de diffuser le parcours planifié au moment du démarrage. Un
@@ -2894,7 +2875,6 @@ function setMode(mode) {
 function initCanvasEvents() {
   const canvases = [
     { id: 'dashPondCanvas', wrapId: 'dashCanvasWrap' },
-    { id: 'pondCanvas',     wrapId: 'canvasWrap' },
   ];
 
   for (const { id, wrapId } of canvases) {
@@ -2921,8 +2901,7 @@ function initCanvasEvents() {
         canvas.height = wrap.clientHeight;
         if (prevW === 0 && state.pond) fitPond();
         else renderPondCanvas(canvas);
-        const lmap = wrapId === 'dashCanvasWrap' ? _leafletMapDash : _leafletMap;
-        if (lmap) lmap.invalidateSize();
+        if (_leafletMapDash) _leafletMapDash.invalidateSize();
       }, 120);
     }).observe(wrap);
 
@@ -3220,9 +3199,6 @@ function deletePond(id) {
   if (state.pond?.id === id) {
     state.pond = null; state.cells = []; state.plannedPath = [];
     document.getElementById('dashCanvasEmptyState').style.display = 'flex';
-    document.getElementById('canvasEmptyState').style.display     = 'flex';
-    document.getElementById('propulsionPanelMap').style.display = 'none';
-    document.getElementById('modeToggle').style.display    = 'none';
     setText('currentPondName', 'Aucun étang sélectionné');
     setText('dashPondBadge', 'Aucun étang');
     renderAllPondCanvases();
@@ -3284,26 +3260,7 @@ function setActiveTab(tab) {
   state.activeTab = tab;
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `panel-${tab}`));
-  if (tab === 'map') {
-    requestAnimationFrame(() => {
-      if (_satMode) {
-        if (!_leafletMap) initLeafletMap();
-        else {
-          // invalidateSize() D'ABORD : sinon fitBounds() (dans updateLeafletOverlay) se
-          // calcule sur l'ancienne taille de conteneur, encore fausse pendant que l'onglet
-          // était masqué, et la carte peut se retrouver sur une vue incohérente ("n'affiche
-          // rien"). Une fois la taille corrigée, le recadrage peut se faire correctement.
-          _leafletMap.invalidateSize();
-          updateLeafletOverlay();
-        }
-      } else {
-        const c = document.getElementById('pondCanvas'), w = document.getElementById('canvasWrap');
-        if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
-        renderPondCanvas(document.getElementById('pondCanvas'));
-        if (state.pond) { document.getElementById('modeToggle').style.display = 'flex'; }
-      }
-    });
-  } else if (tab === 'dashboard') {
+  if (tab === 'dashboard') {
     // Le tableau de bord est l'onglet par défaut : sa carte Leaflet n'était resynchronisée
     // qu'une fois au tout premier chargement de la page. En revenant d'un autre onglet, sa
     // taille de conteneur avait pu changer entre-temps sans jamais être revérifiée.
@@ -3442,8 +3399,6 @@ const MAP_STYLES = {
 };
 
 let _currentMapStyle   = 'ign_ortho'; // IGN Ortho — meilleure résolution qu'Esri sur le territoire français
-let _baseTileLayer     = null;   // onglet Carte
-let _labelsLayer       = null;
 let _baseTileLayerDash = null;   // tableau de bord
 let _labelsLayerDash   = null;
 
@@ -3474,33 +3429,11 @@ function setMapStyle(styleKey) {
     return { tile: tileRef, labels: labelsRef };
   }
 
-  if (_leafletMap) {
-    const r = applyStyle(_leafletMap, _baseTileLayer, _labelsLayer);
-    _baseTileLayer = r.tile; _labelsLayer = r.labels;
-  }
   if (_leafletMapDash) {
     const r = applyStyle(_leafletMapDash, _baseTileLayerDash, _labelsLayerDash);
     _baseTileLayerDash = r.tile; _labelsLayerDash = r.labels;
   }
 }
-
-let _leafletMap          = null;
-let _leafletLayers       = [];
-let _robotSquareLeaf     = null;
-let _robotPumpLeaf       = null;
-let _robotArrowLeaf      = null;
-let _hosePolylineLeaf    = null;
-let _hoseOutlineLeaf     = null; // liseré sombre sous le tuyau, pour le contraste
-let _hoseAnchorMarkerLeaf = null;
-let _depositZoneLeaf     = null; // zone de dépôt des sédiments
-let _depositSegmentLeaf  = null; // segment de tuyau posé au sol, ancre → zone de dépôt
-let _satMode             = true; // vue satellite par défaut
-// Pendant l'animation de zoom de Leaflet, la carte applique un transform CSS temporaire à
-// tout le calque pour simuler le zoom en douceur avant de recalculer les positions réelles.
-// Si on repositionne le robot/tuyau (setLatLngs) pendant ce court instant, Leaflet applique
-// le nouveau zoom deux fois (le transform CSS + la reprojection) → un saut visuel, corrigé
-// seulement au relâchement. On suspend donc ces mises à jour pendant l'animation.
-let _isZoomingMap        = false;
 
 let _leafletMapDash      = null;
 let _isZoomingMapDash    = false; // voir _isZoomingMap ci-dessus
@@ -3568,194 +3501,6 @@ function _robotArrowLatLngs(cx, cy, headingDeg) {
   const tipX = cx + Math.sin(rad) * len, tipY = cy + Math.cos(rad) * len;
   const a = metersToLatLng(cx, cy), b = metersToLatLng(tipX, tipY);
   return (a && b) ? [[a.lat, a.lng], [b.lat, b.lng]] : null;
-}
-
-function initLeafletMap() {
-  if (_leafletMap) { setTimeout(() => _leafletMap.invalidateSize(), 50); return; }
-  const container = document.getElementById('leaflet-container');
-  if (!container || typeof L === 'undefined') return;
-
-  _leafletMap = L.map('leaflet-container', { zoomControl: false });
-  // Leaflet a besoin d'une vue (centre/zoom) déjà établie avant qu'on puisse lui ajouter
-  // le moindre calque vectoriel (polygone/ligne) — sinon ses calculs de bornes internes
-  // (_pxBounds) sont undefined et ça plante ("Cannot read properties of undefined
-  // (reading 'min')") dès le premier polygone ajouté, avant même le fitBounds() qui
-  // suit plus loin. Vue provisoire ici, recadrée par fitBounds() dès que l'étang est connu.
-  _leafletMap.setView([0, 0], 2);
-
-  const style = MAP_STYLES[_currentMapStyle];
-  _baseTileLayer = L.tileLayer(style.url, { attribution: style.attribution, maxZoom: 23, maxNativeZoom: style.maxNativeZoom }).addTo(_leafletMap);
-  if (style.labels) {
-    _labelsLayer = L.tileLayer(style.labels, { attribution: '', maxZoom: 23, maxNativeZoom: style.maxNativeZoom, opacity: 0.65 }).addTo(_leafletMap);
-  }
-
-  L.control.zoom({ position: 'bottomright' }).addTo(_leafletMap);
-  _leafletMap.on('zoomstart', () => { _isZoomingMap = true; });
-  _leafletMap.on('zoomend',   () => { _isZoomingMap = false; updateRobotMarker(); });
-  updateLeafletOverlay();
-}
-
-function updateLeafletOverlay() {
-  if (!_leafletMap) return;
-  _buildLeafletOverlay(_leafletMap, _leafletLayers);
-}
-
-// Repositionne le robot à chaque tick — polygone/cercle/ligne géographiques : Leaflet les
-// remet à l'échelle tout seul en continu pendant le zoom, pas besoin de recalculer une taille.
-function updateRobotMarker() {
-  if (!_robotSquareLeaf || !_satMode || _isZoomingMap) return;
-  const r = state.robot;
-  const sq = _robotSquareLatLngs(r.x, r.y);
-  if (sq.length > 2) _robotSquareLeaf.setLatLngs(sq);
-  const centerLL = metersToLatLng(r.x, r.y);
-  if (centerLL && _robotPumpLeaf) {
-    _robotPumpLeaf.setLatLng([centerLL.lat, centerLL.lng]);
-    _robotPumpLeaf.setStyle({ fillColor: r.pumpState === 'pumping' ? '#10b981' : 'rgba(16,185,129,0.5)' });
-  }
-  const arrow = _robotArrowLatLngs(r.x, r.y, r.heading);
-  if (arrow && _robotArrowLeaf) _robotArrowLeaf.setLatLngs(arrow);
-
-  if (_hosePolylineLeaf && state.pond?.hoseAnchor) {
-    const pts = _hoseLatLngs(state.pond.hoseAnchor, state.robot);
-    _hosePolylineLeaf.setLatLngs(pts);
-    if (_hoseOutlineLeaf) _hoseOutlineLeaf.setLatLngs(pts);
-  }
-}
-
-// ── Shared overlay builder (évite duplication) ──────────────────────────────
-function _buildLeafletOverlay(lmap, layersArr) {
-  for (const l of layersArr) { try { lmap.removeLayer(l); } catch {} }
-  layersArr.length = 0;
-
-  if (!state.pond) return null;
-  const origin = state.pond.origin;
-  if (!isValidOrigin(origin)) return null;
-
-  // Un throw ici (ex. coordonnées invalides) plantait tout l'overlay en silence — plus de
-  // polygone, plus de cases, plus de robot, sans rien dans la console pour comprendre
-  // pourquoi. On isole et on journalise pour un diagnostic rapide si ça se reproduit.
-  try {
-    _buildLeafletOverlayInner(lmap, layersArr, origin);
-  } catch (err) {
-    console.error('[leaflet-map] échec de la construction de l\'overlay:', err);
-  }
-  return null;
-}
-
-function _buildLeafletOverlayInner(lmap, layersArr, origin) {
-  const renderer = L.canvas({ padding: 0.5 });
-
-  const polyLL = state.pond.polygon.map(p => { const ll = metersToLatLng(p.x, p.y); return [ll.lat, ll.lng]; });
-  const poly = L.polygon(polyLL, { color: '#0ea5e9', weight: 2, fillColor: '#0ea5e9', fillOpacity: 0.07 }).addTo(lmap);
-  layersArr.push(poly);
-
-  const cs = params.cellSize;
-  for (const cell of state.cells) {
-    const sw = metersToLatLng(cell.cx - cs/2, cell.cy - cs/2);
-    const ne = metersToLatLng(cell.cx + cs/2, cell.cy + cs/2);
-    if (!sw || !ne) continue;
-    const color   = cell.completed ? '#10b981' : cell.selected ? '#0ea5e9' : '#ffffff';
-    const opacity = cell.completed ? 0.55 : cell.selected ? 0.2 : 0.04;
-    layersArr.push(L.rectangle([[sw.lat, sw.lng],[ne.lat, ne.lng]], {
-      renderer, color, weight: 0.5, fillColor: color, fillOpacity: opacity, opacity: opacity * 0.5,
-    }).addTo(lmap));
-  }
-
-  // Parcours planifié
-  if (state.plannedPath.length > 1) {
-    const pathLL = [];
-    for (const idx of state.plannedPath) {
-      const cell = state.cells[idx]; if (!cell) continue;
-      const ll = metersToLatLng(cell.cx, cell.cy); if (!ll) continue;
-      pathLL.push([ll.lat, ll.lng]);
-    }
-    if (pathLL.length > 1) {
-      layersArr.push(L.polyline(pathLL, { color: 'rgba(251,191,36,0.6)', weight: 1.5, dashArray: '4,4' }).addTo(lmap));
-    }
-  }
-
-  const robotLL = metersToLatLng(state.robot.x, state.robot.y);
-
-  // Robot — carré/cercle/flèche en coordonnées géographiques (pas une icône en pixels) pour
-  // qu'il reste correctement à l'échelle réelle pendant tout le geste de zoom, pas seulement
-  // une fois relâché.
-  _robotSquareLeaf = null; _robotPumpLeaf = null; _robotArrowLeaf = null;
-  if (robotLL) {
-    const sq = _robotSquareLatLngs(state.robot.x, state.robot.y);
-    if (sq.length > 2) {
-      _robotSquareLeaf = L.polygon(sq, { color: '#fff', weight: 3, fillColor: '#f59e0b', fillOpacity: 0.55 }).addTo(lmap);
-      layersArr.push(_robotSquareLeaf);
-    }
-    _robotPumpLeaf = L.circle([robotLL.lat, robotLL.lng], {
-      radius: ROBOT_SIZE * 0.18, color: '#fff', weight: 1.5,
-      fillColor: state.robot.pumpState === 'pumping' ? '#10b981' : 'rgba(16,185,129,0.5)', fillOpacity: 0.9,
-    }).addTo(lmap);
-    layersArr.push(_robotPumpLeaf);
-    const arrow = _robotArrowLatLngs(state.robot.x, state.robot.y, state.robot.heading);
-    if (arrow) {
-      _robotArrowLeaf = L.polyline(arrow, { color: '#fff', weight: 3 }).addTo(lmap);
-      layersArr.push(_robotArrowLeaf);
-    }
-    _robotSquareLeaf?.bringToFront(); _robotPumpLeaf?.bringToFront(); _robotArrowLeaf?.bringToFront();
-    // GPS position
-    const gpsIcon = L.divIcon({
-      html: `<div class="gps-pos-leaf">${robotLL.lat.toFixed(6)}, ${robotLL.lng.toFixed(6)}</div>`,
-      className: '', iconSize: [160,18], iconAnchor: [80,-18],
-    });
-    layersArr.push(L.marker([robotLL.lat, robotLL.lng], { icon: gpsIcon, zIndexOffset: 900 }).addTo(lmap));
-  }
-
-  // Tuyau d'évacuation flottant — courbe de l'ancre (berge, déplaçable) au robot.
-  // Orange vif (comme les vrais tuyaux flottants) + liseré sombre pour rester visible
-  // quel que soit le fond (satellite clair, eau, terrain sombre...).
-  _hosePolylineLeaf = null; _hoseOutlineLeaf = null; _hoseAnchorMarkerLeaf = null;
-  if (state.pond.hoseAnchor) {
-    const hosePts = _hoseLatLngs(state.pond.hoseAnchor, state.robot);
-    if (hosePts.length > 1) {
-      _hoseOutlineLeaf = L.polyline(hosePts, { color: '#000', weight: 7, opacity: 0.4, lineCap: 'round' }).addTo(lmap);
-      layersArr.push(_hoseOutlineLeaf);
-      _hosePolylineLeaf = L.polyline(hosePts, { color: '#f97316', weight: 4, opacity: 0.95, lineCap: 'round' }).addTo(lmap);
-      layersArr.push(_hosePolylineLeaf);
-    }
-    const aLL = metersToLatLng(state.pond.hoseAnchor.x, state.pond.hoseAnchor.y);
-    if (aLL) {
-      const anchorIcon = L.divIcon({ html: '<div class="hose-anchor-leaf"></div>', className: '', iconSize: [18,18], iconAnchor: [9,9] });
-      _hoseAnchorMarkerLeaf = L.marker([aLL.lat, aLL.lng], { icon: anchorIcon, draggable: true, zIndexOffset: 950 }).addTo(lmap);
-      _hoseAnchorMarkerLeaf.on('drag', e => {
-        const local = latLngToMeters(e.target.getLatLng().lat, e.target.getLatLng().lng, origin.lat, origin.lng);
-        const snapped = nearestPointOnPolygon(state.pond.polygon, local.x, local.y);
-        state.pond.hoseAnchor = snapped;
-        const sLL = metersToLatLng(snapped.x, snapped.y);
-        if (sLL) e.target.setLatLng([sLL.lat, sLL.lng]);
-        const newPts = _hoseLatLngs(snapped, state.robot);
-        if (_hosePolylineLeaf) _hosePolylineLeaf.setLatLngs(newPts);
-        if (_hoseOutlineLeaf)  _hoseOutlineLeaf.setLatLngs(newPts);
-        if (_depositSegmentLeaf) _depositSegmentLeaf.setLatLngs([[sLL.lat, sLL.lng], _depositSegmentLeaf.getLatLngs()[1]]);
-      });
-      _hoseAnchorMarkerLeaf.on('dragend', () => { saveWork(); updateHoseLengthDisplay(); });
-      layersArr.push(_hoseAnchorMarkerLeaf);
-    }
-  }
-
-  // Zone de dépôt des sédiments + segment de tuyau posé au sol (droit, pas ondulé) qui
-  // relie l'ancre à son centroïde.
-  _depositZoneLeaf = null; _depositSegmentLeaf = null;
-  if (state.pond.depositZone) {
-    const { polyLL, centroidLL } = _depositZoneLatLngs(state.pond.depositZone);
-    if (polyLL.length > 2) {
-      _depositZoneLeaf = L.polygon(polyLL, { color: '#92400e', weight: 2, fillColor: '#92400e', fillOpacity: 0.3 }).addTo(lmap);
-      layersArr.push(_depositZoneLeaf);
-    }
-    const anchorLL = metersToLatLng(state.pond.hoseAnchor.x, state.pond.hoseAnchor.y);
-    if (anchorLL && centroidLL) {
-      _depositSegmentLeaf = L.polyline([[anchorLL.lat, anchorLL.lng], [centroidLL.lat, centroidLL.lng]], {
-        color: '#f97316', weight: 4, opacity: 0.9,
-      }).addTo(lmap);
-      layersArr.push(_depositSegmentLeaf);
-    }
-  }
-
-  lmap.fitBounds(poly.getBounds(), { padding: [40,40] });
 }
 
 // ── Dashboard satellite view ─────────────────────────────────────────────────
@@ -3959,6 +3704,12 @@ function _addSelectionHandlersDash() {
   let _startLL = null, _startPt = null, _selRectLayer = null;
 
   _leafletMapDash.on('mousedown', e => {
+    // Le tracé d'étang/zone de dépôt (Leaflet.draw) est actif sur cette même carte — sans
+    // cette garde, ce gestionnaire de sélection rectangle (mousedown/mousemove/mouseup, avec
+    // son propre disable()/enable() de map.dragging) entre en concurrence avec la gestion
+    // interne des sommets de Leaflet.draw et fait clore le polygone prématurément après
+    // seulement 2-3 clics au lieu d'attendre la validation explicite de l'utilisateur.
+    if (_drawTool && _drawTool._enabled) return;
     if (state.view.mode !== 'select' || e.originalEvent.button !== 0) return;
     _startLL = e.latlng;
     _startPt = e.containerPoint;
@@ -4020,9 +3771,9 @@ function initLeafletMapDash() {
   if (!container || typeof L === 'undefined') return;
 
   _leafletMapDash = L.map('leaflet-container-dash', { zoomControl: false });
-  // Voir le commentaire équivalent dans initLeafletMap() : sans vue initiale, le premier
-  // calque vectoriel (polygone de l'étang) ajouté à la carte fait planter Leaflet en
-  // interne, silencieusement — c'était la vraie cause de "la carte n'affiche rien".
+  // Leaflet a besoin d'une vue (centre/zoom) déjà établie avant qu'on puisse lui ajouter le
+  // moindre calque vectoriel (polygone de l'étang) — sinon il plante en interne,
+  // silencieusement — c'était la vraie cause de "la carte n'affiche rien".
   _leafletMapDash.setView([0, 0], 2);
 
   const styleDash = MAP_STYLES[_currentMapStyle];
@@ -4112,53 +3863,9 @@ function _applyModeToLeafletDash() {
   }
 }
 
-function toggleSatelliteView(on) {
-  _satMode = on;
-  document.getElementById('btnSatView')?.classList.toggle('active', on);
-  document.getElementById('btnSchemaView')?.classList.toggle('active', !on);
-  document.getElementById('btnFitMap').style.display = on ? 'none' : '';
-
-  const canvasWrap    = document.getElementById('canvasWrap');
-  const leafletDiv    = document.getElementById('leaflet-container');
-  const zoomControls  = document.querySelector('#panel-map .zoom-controls');
-  const modeToggleMap = document.getElementById('modeToggle');
-  const scaleInfo     = document.getElementById('scaleInfoMap');
-  const styleGroup    = document.getElementById('mapMapStyleGroup');
-
-  if (on) {
-    if (canvasWrap)    canvasWrap.style.display = 'none';
-    if (zoomControls)  zoomControls.style.display = 'none';
-    if (modeToggleMap) modeToggleMap.style.display = 'none';
-    if (scaleInfo)     scaleInfo.style.display = 'none';
-    if (leafletDiv)    leafletDiv.style.display = 'block';
-    if (styleGroup)    styleGroup.style.display = '';
-    if (!_leafletMap) {
-      // Un conteneur masqué (display:none, onglet Carte pas encore visité) a une taille
-      // nulle : Leaflet construit dessus reste cassé même après un invalidateSize() bien
-      // plus tard. On diffère la construction — setActiveTab('map') la fera au moment où
-      // l'onglet devient réellement visible pour la première fois.
-      if (document.getElementById('panel-map')?.classList.contains('active')) initLeafletMap();
-    }
-    else { updateLeafletOverlay(); setTimeout(() => _leafletMap.invalidateSize(), 100); }
-  } else {
-    if (leafletDiv)    leafletDiv.style.display = 'none';
-    if (canvasWrap)    canvasWrap.style.display = '';
-    if (zoomControls)  zoomControls.style.display = '';
-    if (modeToggleMap && state.pond) modeToggleMap.style.display = 'flex';
-    if (scaleInfo)     scaleInfo.style.display = '';
-    if (styleGroup)    styleGroup.style.display = 'none';
-    if (typeof cancelDraw === 'function') cancelDraw();
-    requestAnimationFrame(() => {
-      const c = document.getElementById('pondCanvas'), w = document.getElementById('canvasWrap');
-      if (c && w) { c.width = w.clientWidth; c.height = w.clientHeight; }
-      renderPondCanvas(document.getElementById('pondCanvas'));
-    });
-  }
-}
-
 // ============================================================
 // TRACÉ D'ÉTANG RÉEL — recherche d'adresse + dessin du contour / zone de dépôt
-// Onglet Carte, Satellite uniquement (besoin de voir le terrain pour tracer).
+// Onglet Tableau de bord, vue Satellite uniquement (besoin de voir le terrain pour tracer).
 // ============================================================
 
 // ── Recherche d'adresse (API Adresse — data.gouv.fr, gratuite, sans clé) ──
@@ -4166,9 +3873,9 @@ function toggleSatelliteView(on) {
 let _addrDebounce = null, _addrFocusIndex = -1, _addrResults = [];
 
 function centerCarteMapOn(lat, lng, zoom = 18) {
-  if (!_leafletMap) return;
-  _leafletMap.setView([lat, lng], zoom);
-  _leafletMap.invalidateSize();
+  if (!_leafletMapDash) return;
+  _leafletMapDash.setView([lat, lng], zoom);
+  _leafletMapDash.invalidateSize();
 }
 
 function _addrRenderDropdown(features) {
@@ -4253,10 +3960,10 @@ let _draftContourLatLngs = null;  // sommets du dernier contour tracé, en atten
 function setDrawStatus(msg) { const el = document.getElementById('drawStatusBar'); if (el) el.textContent = msg; }
 
 function _ensureDrawTool() {
-  if (!_leafletMap || typeof L === 'undefined' || !L.Draw) return null;
+  if (!_leafletMapDash || typeof L === 'undefined' || !L.Draw) return null;
   if (_drawTool) return _drawTool;
 
-  _drawTool = new L.Draw.Polygon(_leafletMap, {
+  _drawTool = new L.Draw.Polygon(_leafletMapDash, {
     allowIntersection: false,
     showArea: true,
     shapeOptions: { color: '#f97316', fillColor: '#f97316', fillOpacity: 0.15, weight: 2 },
@@ -4271,16 +3978,16 @@ function _ensureDrawTool() {
     if (pts.length < 3) return;
     this.disable();
     const layer = L.polygon([pts], { color: '#f97316', fillColor: '#f97316', fillOpacity: 0.15, weight: 2 });
-    _leafletMap.fire(L.Draw.Event.CREATED, { layer, layerType: 'polygon' });
+    _leafletMapDash.fire(L.Draw.Event.CREATED, { layer, layerType: 'polygon' });
   };
 
-  _leafletMap.on('draw:drawvertex', () => {
+  _leafletMapDash.on('draw:drawvertex', () => {
     if (!_drawTool._enabled || !_drawTool._markers || _drawTool._markers.length < 3) return;
     const firstMarker = _drawTool._markers[0];
     firstMarker.off('click').on('click', ev => { L.DomEvent.stop(ev); finishCurrentDrawing(); });
   });
 
-  _leafletMap.on(L.Draw.Event.CREATED, _handleDrawCreated);
+  _leafletMapDash.on(L.Draw.Event.CREATED, _handleDrawCreated);
   return _drawTool;
 }
 
@@ -4290,7 +3997,7 @@ function toggleDrawPondPanel(force) {
   const open = force !== undefined ? force : panel.style.display === 'none';
   if (!open) { cancelDraw(); return; }
 
-  if (!_satMode) toggleSatelliteView(true);
+  if (!_satModeDash) toggleSatelliteViewDash(true);
   initAddressSearch();
   _drawMode = null;
   document.getElementById('drawAddressRow').style.display = '';
@@ -4299,19 +4006,26 @@ function toggleDrawPondPanel(force) {
   document.getElementById('btnFinishDraw').style.display = 'none';
   setDrawStatus('Cliquez sur « Tracer le contour », puis délimitez l\'étang sur la carte.');
   panel.style.display = 'flex';
+  // Tant qu'aucun étang n'est chargé (cas normal : on est justement en train d'en dessiner
+  // un), l'état vide reste affiché par-dessus la carte (z-index) et intercepte tous les
+  // clics destinés à l'outil de tracé. On le masque explicitement pendant le tracé —
+  // updateUI() le réaffichera normalement si jamais le tracé est annulé sans étang créé.
+  const emptyState = document.getElementById('dashCanvasEmptyState');
+  if (emptyState) emptyState.style.display = 'none';
 }
 
 function openDrawPondFromEmptyState() {
-  toggleSatelliteView(true);
+  toggleSatelliteViewDash(true);
   toggleDrawPondPanel(true);
 }
 
-// Point d'entrée depuis l'onglet Étangs — le tracé lui-même a besoin d'une vraie carte
-// Leaflet, qui n'existe que sur l'onglet Carte ; on y bascule d'abord. Enveloppé dans un
-// try/catch : mieux vaut un message d'erreur visible qu'un clic silencieusement sans effet.
+// Point d'entrée depuis l'onglet Étangs — le tracé se fait directement sur la carte du
+// tableau de bord (en vue satellite) plutôt que sur un onglet Carte séparé, pour n'avoir
+// jamais qu'une seule carte Leaflet active à la fois. Enveloppé dans un try/catch : mieux
+// vaut un message d'erreur visible qu'un clic silencieusement sans effet.
 function goToDrawPond() {
   try {
-    setActiveTab('map');
+    setActiveTab('dashboard');
     openDrawPondFromEmptyState();
   } catch (err) {
     console.error('[goToDrawPond]', err);
@@ -4320,14 +4034,14 @@ function goToDrawPond() {
 }
 
 // Point d'entrée depuis une fiche de l'onglet Étangs — charge l'étang si besoin, bascule
-// sur la carte satellite et lance directement le tracé de sa zone de dépôt.
+// sur le tableau de bord en vue satellite et lance directement le tracé de sa zone de dépôt.
 function startDepositZoneForPond(id) {
   try {
     const pond = state.ponds.find(p => p.id === id);
     if (!pond) { showToast('Étang introuvable', 'error'); return; }
     if (state.pond?.id !== id) loadPond(pond);
-    setActiveTab('map');
-    toggleSatelliteView(true);
+    setActiveTab('dashboard');
+    toggleSatelliteViewDash(true);
     startDepositZoneDraw();
   } catch (err) {
     console.error('[startDepositZoneForPond]', err);
@@ -4340,7 +4054,7 @@ function startContourDraw() {
   if (!tool) { showToast('Passez en vue Satellite pour dessiner', 'error'); return; }
   _drawMode = 'contour';
   _draftContourLatLngs = null;
-  if (_draftLayer) { _leafletMap.removeLayer(_draftLayer); _draftLayer = null; }
+  if (_draftLayer) { _leafletMapDash.removeLayer(_draftLayer); _draftLayer = null; }
   document.getElementById('drawNameRow').style.display = 'none';
   document.getElementById('btnStartContour').style.display = 'none';
   document.getElementById('btnFinishDraw').style.display = '';
@@ -4354,7 +4068,7 @@ function startDepositZoneDraw() {
   if (!state.pond) { showToast('Chargez ou dessinez un étang d\'abord', 'error'); return; }
   const tool = _ensureDrawTool();
   if (!tool) { showToast('Passez en vue Satellite pour dessiner', 'error'); return; }
-  if (!_satMode) toggleSatelliteView(true);
+  if (!_satModeDash) toggleSatelliteViewDash(true);
   _drawMode = 'deposit';
   const panel = document.getElementById('drawPondPanel');
   if (panel) panel.style.display = 'flex';
@@ -4375,16 +4089,20 @@ function finishCurrentDrawing() {
 
 function cancelDraw() {
   if (_drawTool) _drawTool.disable();
-  if (_draftLayer && _leafletMap) { _leafletMap.removeLayer(_draftLayer); _draftLayer = null; }
+  if (_draftLayer && _leafletMapDash) { _leafletMapDash.removeLayer(_draftLayer); _draftLayer = null; }
   _drawMode = null;
   _draftContourLatLngs = null;
   const panel = document.getElementById('drawPondPanel');
   if (panel) panel.style.display = 'none';
+  // Restaure l'état vide (masqué pendant le tracé, voir toggleDrawPondPanel) si le tracé est
+  // annulé sans qu'un étang n'ait été créé entre-temps.
+  const emptyState = document.getElementById('dashCanvasEmptyState');
+  if (emptyState) emptyState.style.display = state.pond ? 'none' : 'flex';
 }
 
 function _handleDrawCreated(e) {
-  if (_draftLayer && _leafletMap) _leafletMap.removeLayer(_draftLayer);
-  _draftLayer = e.layer.addTo(_leafletMap);
+  if (_draftLayer && _leafletMapDash) _leafletMapDash.removeLayer(_draftLayer);
+  _draftLayer = e.layer.addTo(_leafletMapDash);
 
   const raw = e.layer.getLatLngs();
   const lls = Array.isArray(raw[0]) ? raw[0] : raw;
@@ -4396,7 +4114,7 @@ function _handleDrawCreated(e) {
     // plusieurs milliards de cases et fait planter l'onglet. 20 ha est déjà très généreux
     // pour un étang réel.
     if (areaM2 > 200000) {
-      _leafletMap.removeLayer(_draftLayer);
+      _leafletMapDash.removeLayer(_draftLayer);
       _draftLayer = null;
       document.getElementById('btnStartContour').style.display = '';
       document.getElementById('btnFinishDraw').style.display = 'none';
@@ -4416,8 +4134,7 @@ function _handleDrawCreated(e) {
     state.pond.hoseAnchor  = nearestPointOnPolygon(state.pond.polygon, cx, cy);
     saveWork();
     updateHoseLengthDisplay();
-    if (_satMode)     updateLeafletOverlay();
-    if (_satModeDash) updateLeafletOverlayDash();
+    updateLeafletOverlayDash();
     renderAllPondCanvases();
     updatePondsList();
     cancelDraw();
@@ -4439,7 +4156,7 @@ function confirmNewPond() {
   if (idx !== -1) state.ponds[idx] = pond; else state.ponds.push(pond);
   savePonds();
 
-  if (_draftLayer && _leafletMap) { _leafletMap.removeLayer(_draftLayer); _draftLayer = null; }
+  if (_draftLayer && _leafletMapDash) { _leafletMapDash.removeLayer(_draftLayer); _draftLayer = null; }
   loadPond(pond);
   updatePondsList();
   cancelDraw();
@@ -4452,7 +4169,6 @@ function confirmNewPond() {
 function init() {
   applyThemeIcon();
   toggleSatelliteViewDash(true);
-  toggleSatelliteView(true);
   loadPonds();
   try { const sp = localStorage.getItem('aquabot_params'); if (sp) Object.assign(params, JSON.parse(sp)); } catch {}
 
