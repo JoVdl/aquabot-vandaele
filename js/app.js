@@ -5,6 +5,39 @@
 // ============================================================
 const USE_CLOUD = typeof window !== 'undefined' && !!window.db;
 
+// Identifiant unique de cet appareil/onglet pour cette session — sert à savoir qui calcule
+// actuellement la simulation (voir claimSimOwnership ci-dessous). Un seul « cerveau » actif à
+// la fois, exactement comme pour le robot réel : les autres appareils ne sont que des vues qui
+// reflètent le même état et envoient des commandes, jamais une seconde simulation en parallèle.
+const _deviceSessionId = 'dev_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+
+// Au-delà de ce délai sans nouvelle écriture, on considère qu'un appareil qui prétendait
+// piloter est en réalité silencieux (onglet mis en arrière-plan sur mobile, navigateur qui a
+// throttle ses timers, perte de connexion...) et qu'un autre appareil peut légitimement
+// reprendre la main.
+const DRIVER_HEARTBEAT_TIMEOUT_MS = 4000;
+
+// Tente de devenir l'unique appareil qui calcule la simulation pour cet étang. Renvoie true si
+// la revendication réussit (soit personne d'autre n'est activement en train de piloter là
+// maintenant, soit c'est déjà nous) ; false si un autre appareil pilote réellement, là,
+// maintenant (heartbeat récent) — dans ce cas on ne démarre PAS de seconde boucle locale.
+async function claimSimOwnership(pondId) {
+  if (!USE_CLOUD) return true; // pas de cloud = un seul appareil de toute façon
+  try {
+    const docRef = window.db.collection('aquabot_sim').doc(pondId);
+    const snap = await docRef.get();
+    const sim = snap.exists ? snap.data() : null;
+    const heldByOther = sim?.simRunning && sim.driverId && sim.driverId !== _deviceSessionId
+      && (Date.now() - (sim.lastUpdate || 0)) < DRIVER_HEARTBEAT_TIMEOUT_MS;
+    if (heldByOther) return false;
+    await docRef.set({ driverId: _deviceSessionId, lastUpdate: Date.now() }, { merge: true });
+    return true;
+  } catch (e) {
+    console.warn('claimSimOwnership:', e.message);
+    return true; // ne bloque pas l'usage si le réseau/la revendication échoue
+  }
+}
+
 function updateCloudStatus(status) {
   const el = document.getElementById('cloudStatus');
   if (!el) return;
@@ -114,6 +147,7 @@ function saveSimState() {
     speed:          state.sim.speed,
     workMode:       params.workMode,
     miniCycles:     params.miniCycles,
+    driverId:       _deviceSessionId,
     lastUpdate:     Date.now(),
   }).catch(e => console.warn('simState save:', e.message));
 }
@@ -162,10 +196,36 @@ function subscribeSimState(pondId) {
       if (sim.workMode)   params.workMode   = sim.workMode;
       if (sim.miniCycles) params.miniCycles = sim.miniCycles;
 
+      if (state.sim.running) {
+        // Pause/arrêt demandé(e) depuis un autre appareil : c'est justement à l'appareil qui
+        // pilote de l'exécuter (lui seul a l'état exact) et de rediffuser le résultat correct —
+        // voir pauseSimulation()/stopSimulation() côté appareil non-pilote, qui n'envoient
+        // qu'un signal minimal plutôt que d'écraser tout le document avec des valeurs suivies.
+        if (sim.simRunning === false) {
+          if (sim.robotState === 'stopped') _stopLocally(); else _pauseLocally();
+          return;
+        }
+        // Un autre appareil a pris/repris la main (ex. cet appareil a été mis en arrière-plan
+        // assez longtemps pour que son battement de cœur expire, voir DRIVER_HEARTBEAT_TIMEOUT_MS)
+        // — on arrête notre propre boucle sans rediffuser, pour ne pas se battre avec le nouveau
+        // pilote légitime. Sans ça, revenir au premier plan sur mobile pouvait ressusciter une
+        // seconde simulation en parallèle de celle qui avait pris le relai entre-temps.
+        if (sim.driverId && sim.driverId !== _deviceSessionId) {
+          state.sim.running = false;
+          clearInterval(state.sim.intervalId);
+          state.sim.intervalId = null;
+          // Pas de retour anticipé ici : on laisse la suite du traitement (réservée aux
+          // appareils suiveurs) s'appliquer tout de suite avec les données de ce même
+          // snapshot, pour refléter sans délai l'état exact du nouveau pilote plutôt que
+          // d'attendre une prochaine mise à jour pour sortir de l'affichage figé.
+        } else {
+          return;
+        }
+      }
+
       // Le reste (position, état pompe, cases complétées...) reste réservé aux appareils
       // suiveurs : le pilote ne doit jamais se resynchroniser sur l'écho de ses propres
       // écritures de position/physique, seulement sur les commandes distantes ci-dessus.
-      if (state.sim.running) return;
 
       const offlineMs  = Date.now() - (sim.lastUpdate || Date.now());
       const offlineSec = (offlineMs / 1000) * (sim.speed || 1);
@@ -532,10 +592,21 @@ function computePeakPowerW() {
   return POWER_SPECS.thrusterMaxW * 4 + POWER_SPECS.pumpW + POWER_SPECS.winchW + POWER_SPECS.electronicsW;
 }
 
+// Sauvegarde les réglages localement ET les diffuse en direct à tous les appareils connectés
+// (onglet Paramètres, tarif, faisabilité solaire...) — exactement le même principe que l'état
+// de simulation : on doit voir la même chose partout, sans avoir à recharger la page.
+function persistParams() {
+  localStorage.setItem('aquabot_params', JSON.stringify(params));
+  if (USE_CLOUD) {
+    window.db.collection('aquabot_meta').doc('params').set(params)
+      .catch(e => console.warn('persistParams:', e.message));
+  }
+}
+
 function updateElecTariff(value) {
   const v = parseFloat(value);
   params.elecTariff = Number.isFinite(v) && v >= 0 ? v : 0;
-  localStorage.setItem('aquabot_params', JSON.stringify(params));
+  persistParams();
   updateEnergyTab();
 }
 
@@ -545,7 +616,7 @@ function updateSolarParam(key, value) {
   // Une fois modifié à la main, l'ensoleillement n'est plus ré-écrasé par l'estimation météo
   // automatique tant qu'un nouvel étang (nouvelle position) n'est pas chargé.
   if (key === 'solarPeakSunHours') params.solarPeakSunHoursAuto = false;
-  localStorage.setItem('aquabot_params', JSON.stringify(params));
+  persistParams();
   updateEnergyTab();
 }
 
@@ -605,7 +676,7 @@ function refreshSolarIrradianceForPond() {
   fetchSolarPeakSunHours(origin.lat, origin.lng).then(result => {
     if (result && params.solarPeakSunHoursAuto) {
       params.solarPeakSunHours = result.peakSunHours;
-      localStorage.setItem('aquabot_params', JSON.stringify(params));
+      persistParams();
     }
     // Réaffiche dans tous les cas (y compris échec) pour sortir du message "Récupération…"
     // même si l'appel météo n'a rien donné.
@@ -1597,7 +1668,7 @@ function saveParameters() {
   // Work mode from radio buttons
   const wmEl = document.querySelector('input[name="workMode"]:checked');
   if (wmEl) params.workMode = wmEl.value;
-  localStorage.setItem('aquabot_params', JSON.stringify(params));
+  persistParams();
   showToast('Paramètres enregistrés', 'success');
 }
 
@@ -1620,11 +1691,40 @@ function syncParamsToDOM() {
     pPumpDescentSpeed:'pumpDescentSpeed', pPumpAscentSpeed:'pumpAscentSpeed',
     pPumpFlow:'pumpFlow', pRobotSpeed:'robotSpeed',
   };
-  for (const [id, key] of Object.entries(m)) { const el = document.getElementById(id); if (el) el.value = params[key]; }
-  document.getElementById('pWifiType').value     = params.wifiType;
-  document.getElementById('pWifiSSID').value     = params.wifiSSID;
-  document.getElementById('pWifiPassword').value = params.wifiPassword;
-  document.getElementById('pWifiIP').value       = params.wifiIP;
+  // Ne jamais écraser un champ que l'utilisateur est en train de modifier sur CET appareil —
+  // important maintenant que cette fonction peut aussi être déclenchée par un changement
+  // distant (voir subscribeParams), pas seulement par une action locale explicite.
+  for (const [id, key] of Object.entries(m)) {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = params[key];
+  }
+  const wifiFields = { pWifiType: 'wifiType', pWifiSSID: 'wifiSSID', pWifiPassword: 'wifiPassword', pWifiIP: 'wifiIP' };
+  for (const [id, key] of Object.entries(wifiFields)) {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = params[key];
+  }
+  const wmEl = document.querySelector(`input[name="workMode"][value="${params.workMode}"]`);
+  if (wmEl) wmEl.checked = true;
+}
+
+// Diffusion en direct des réglages (Paramètres, tarif, solaire...) à tous les appareils
+// connectés — appelée une fois au démarrage. Contrairement à la simulation, pas besoin de
+// notion de « pilote » ici : n'importe quel appareil peut modifier les réglages, le dernier à
+// écrire l'emporte, exactement comme on s'attendrait à ce que ça marche pour un simple réglage.
+let _paramsUnsubscribe = null;
+function subscribeParams() {
+  if (!USE_CLOUD || _paramsUnsubscribe) return;
+  _paramsUnsubscribe = window.db.collection('aquabot_meta').doc('params').onSnapshot(doc => {
+    if (!doc.exists) return;
+    const remote = doc.data();
+    if (!remote) return;
+    Object.assign(params, remote);
+    localStorage.setItem('aquabot_params', JSON.stringify(params));
+    syncParamsToDOM();
+    updateEnergyTab();
+    updateHoseLengthDisplay();
+    renderAllPondCanvases();
+  }, e => console.warn('subscribeParams:', e.message));
 }
 
 // ============================================================
@@ -2117,7 +2217,7 @@ function updateGpsDisplay() {
 // ============================================================
 // SIMULATION
 // ============================================================
-function startSimulation() {
+async function startSimulation() {
   if (!state.pond) { showToast('Sélectionnez un étang d\'abord', 'error'); return; }
   if (state.robotMode === 'real') {
     if (!state.plannedPath.length) {
@@ -2134,6 +2234,20 @@ function startSimulation() {
     if (!path.length) { showToast('Sélectionnez des cases non terminées', 'error'); return; }
     state.plannedPath = path;
   }
+
+  // Un seul appareil calcule la simulation à la fois — comme pour le robot réel, il ne peut y
+  // avoir qu'un seul « cerveau » actif. Si un autre appareil pilote déjà là, maintenant, on ne
+  // démarre pas une seconde boucle locale en parallèle : c'était la cause des désynchronisations
+  // entre appareils (chacun calculait sa propre progression). Cet appareil reste simple vue,
+  // déjà correctement synchronisée par subscribeSimState().
+  if (USE_CLOUD) {
+    const owns = await claimSimOwnership(state.pond.id);
+    if (!owns) {
+      showToast('Simulation déjà en cours sur un autre appareil — cette vue va se synchroniser automatiquement.', 'error');
+      return;
+    }
+  }
+
   if (state.robot.state === 'stopped') {
     state.robot.currentCellIdx = 0;
     state.sim.sessionElapsedAtStart = state.robot.elapsedSec;
@@ -2157,15 +2271,9 @@ function startSimulation() {
   saveSimState();
 }
 
-function pauseSimulation() {
-  if (state.robotMode === 'real') {
-    const cmd = state.robot.state === 'paused' ? 'resume' : 'pause';
-    sendRobotCommand(cmd);
-    return;
-  }
-  if (state.robot.state === 'paused') {
-    startSimulation(); return;
-  }
+// Exécution locale de la pause — réservée à l'appareil qui pilote réellement (voir
+// pauseSimulation ci-dessous pour le cas où on ne l'est pas).
+function _pauseLocally() {
   state.sim.running = false;
   state.robot.state = 'paused';
   setLED('yellow', 'En pause');
@@ -2176,8 +2284,34 @@ function pauseSimulation() {
   saveSimState();
 }
 
-function stopSimulation() {
-  if (state.robotMode === 'real') { sendRobotCommand('stop'); return; }
+function pauseSimulation() {
+  if (state.robotMode === 'real') {
+    const cmd = state.robot.state === 'paused' ? 'resume' : 'pause';
+    sendRobotCommand(cmd);
+    return;
+  }
+  if (state.robot.state === 'paused') {
+    startSimulation(); return;
+  }
+  if (!state.sim.running) {
+    // Cet appareil ne pilote pas activement (simple vue) : on se contente d'envoyer la demande
+    // de pause — c'est l'appareil qui pilote qui l'appliquera (voir subscribeSimState) et
+    // rediffusera l'état exact. On n'écrit surtout pas ici l'intégralité de state.robot/state.sim
+    // depuis cet appareil : ce ne sont que des valeurs synchronisées, pas la vérité à l'instant T,
+    // et on écraserait sinon la position/l'état précis de l'appareil qui pilote réellement.
+    if (USE_CLOUD && state.pond) {
+      window.db.collection('aquabot_sim').doc(state.pond.id)
+        .update({ simRunning: false, lastUpdate: Date.now() })
+        .catch(e => console.warn('pause (commande distante):', e.message));
+    }
+    return;
+  }
+  _pauseLocally();
+}
+
+// Exécution locale de l'arrêt — réservée à l'appareil qui pilote réellement (voir
+// stopSimulation ci-dessous pour le cas où on ne l'est pas).
+function _stopLocally() {
   state.sim.running = false;
   state.robot.state = 'stopped';
   clearInterval(state.sim.intervalId);
@@ -2195,6 +2329,21 @@ function stopSimulation() {
   saveSimState();
   renderAllPondCanvases();
   renderSectionCanvas();
+}
+
+function stopSimulation() {
+  if (state.robotMode === 'real') { sendRobotCommand('stop'); return; }
+  if (!state.sim.running) {
+    // Même principe que pauseSimulation() : simple demande distante, appliquée par l'appareil
+    // qui pilote réellement, qui rediffusera ensuite l'arrêt complet et correct.
+    if (USE_CLOUD && state.pond) {
+      window.db.collection('aquabot_sim').doc(state.pond.id)
+        .update({ simRunning: false, robotState: 'stopped', lastUpdate: Date.now() })
+        .catch(e => console.warn('stop (commande distante):', e.message));
+    }
+    return;
+  }
+  _stopLocally();
 }
 
 let _tickLogCount = 0;
@@ -2539,7 +2688,18 @@ function handleStop()   { stopSimulation(); }
 function handleSpeedChange(v) {
   state.sim.speed = parseFloat(v);
   setText('speedValue', v + '×');
-  saveSimState();
+  if (state.sim.running) {
+    // Cet appareil pilote réellement : sa sauvegarde complète et périodique reflète l'état
+    // exact, vitesse incluse — pas besoin d'un envoi séparé.
+    saveSimState();
+  } else if (USE_CLOUD && state.pond) {
+    // Simple vue : n'envoyer QUE le changement de vitesse, jamais un document complet depuis
+    // des valeurs suivies (qui écraserait l'état précis de l'appareil qui pilote réellement,
+    // et pourrait même usurper sa revendication de pilotage via le champ driverId).
+    window.db.collection('aquabot_sim').doc(state.pond.id)
+      .update({ speed: state.sim.speed, lastUpdate: Date.now() })
+      .catch(e => console.warn('speed (commande distante):', e.message));
+  }
 }
 
 function triggerKMLImport() { document.getElementById('kmlInput').click(); }
@@ -2579,7 +2739,11 @@ function planRoute() {
   renderAllPondCanvases();
   if (_satMode)     updateLeafletOverlay();
   if (_satModeDash) _rebuildPathLayerDash();
-  saveSimState();
+  // Uniquement si cet appareil pilote réellement — sinon startSimulation() se chargera de
+  // revendiquer le pilotage et de diffuser le parcours planifié au moment du démarrage. Un
+  // envoi ici depuis une simple vue écraserait tout le document (state.robot suivi, pas la
+  // vérité) et pourrait usurper la revendication de pilotage d'un autre appareil.
+  if (state.sim.running) saveSimState();
   showToast(
     `Parcours planifié : ${base.length} cases × ${totalPasses} passe(s) × ${effectiveMiniCycles()} cycle(s) — Mode : ${wm?.label}`,
     'success'
@@ -4160,6 +4324,7 @@ function init() {
   try { const sp = localStorage.getItem('aquabot_params'); if (sp) Object.assign(params, JSON.parse(sp)); } catch {}
 
   syncParamsToDOM();
+  subscribeParams();
 
   document.querySelectorAll('.nav-tab').forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
 
