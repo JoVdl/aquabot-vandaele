@@ -2511,9 +2511,14 @@ function simulationTick() {
   // (secondes simulées, donc accélérée par state.sim.speed comme le reste de la simulation).
   robot.energyWh += computeInstantPowerBreakdown(robot).totalW * dt / 3600;
 
-  // Periodic Firestore save (every 200ms) for near-real-time mirror on other devices
+  // Sauvegarde périodique Firestore pour le miroir quasi temps réel sur les autres appareils.
+  // À 200ms, un fonctionnement réel de ~20h/jour représente ~360 000 écritures/jour — largement
+  // au-delà du quota gratuit Firestore (20 000/jour), qui bloque alors TOUTE écriture jusqu'au
+  // lendemain (erreur "resource-exhausted" observée en pratique). À 2s, on reste à ~36 000/jour
+  // (quasi gratuit sur le plan payant, et un décalage de 2s entre appareils reste imperceptible
+  // pour un robot qui se déplace aussi lentement).
   const nowMs = Date.now();
-  if (USE_CLOUD && nowMs - state.sim.lastSimSave > 200) {
+  if (USE_CLOUD && nowMs - state.sim.lastSimSave > 2000) {
     state.sim.lastSimSave = nowMs;
     saveSimState();
   }
