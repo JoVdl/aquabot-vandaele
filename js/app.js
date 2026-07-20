@@ -231,10 +231,19 @@ function subscribeSimState(pondId) {
       // périodique du pilote, qui continue de réécrire son ancienne valeur locale sans jamais
       // savoir qu'elle a changé ailleurs. C'était la cause du "la vitesse revient à l'ancienne
       // valeur après actualisation" : le pilote ignorait totalement ces snapshots.
-      if (sim.speed && sim.speed !== state.sim.speed) {
+      // Tant qu'une demande de vitesse envoyée par CET appareil n'est pas confirmée (voir
+      // _sendRemoteSpeedChange), un écho périmé du pilote (son ancienne écriture périodique,
+      // partie avant d'avoir reçu notre demande) ne doit pas s'afficher brièvement ici — nos
+      // réémissions vont de toute façon bientôt faire converger le pilote vers la bonne valeur.
+      if (_pendingSpeedRequest != null && sim.speed !== _pendingSpeedRequest) {
+        // ignoré : écho périmé
+      } else if (sim.speed && sim.speed !== state.sim.speed) {
         state.sim.speed = sim.speed;
+        _pendingSpeedRequest = null;
         const speedEl = document.getElementById('speedSlider');
         if (speedEl) { speedEl.value = sim.speed; setText('speedValue', sim.speed + '×'); }
+      } else if (sim.speed === _pendingSpeedRequest) {
+        _pendingSpeedRequest = null;
       }
       if (sim.workMode)   params.workMode   = sim.workMode;
       if (sim.miniCycles) params.miniCycles = sim.miniCycles;
@@ -1846,10 +1855,20 @@ function zoomAt(factor) {
 // ============================================================
 // CANVAS RENDERER
 // ============================================================
+// Redessiner un canvas caché (onglet non actif, ou masqué par le mode satellite via
+// visibility:hidden — voir toggleSatelliteViewDash) est un travail pur perdu : pour un grand
+// étang (des milliers de cases), ça revient à boucler sur toutes les cases 20×/s (voir
+// simulationTick) pour un résultat que personne ne voit jamais. En mode satellite (le mode par
+// défaut), c'était systématiquement le cas pour dashPondCanvas — la cause probable du
+// ralentissement général du navigateur pendant la simulation sur un gros étang.
+function _isCanvasActuallyVisible(c) {
+  return c.offsetParent !== null && c.style.visibility !== 'hidden';
+}
+
 function renderAllPondCanvases() {
   for (const id of CANVAS_IDS) {
     const c = document.getElementById(id);
-    if (c) renderPondCanvas(c);
+    if (c && _isCanvasActuallyVisible(c)) renderPondCanvas(c);
   }
 }
 
@@ -2775,10 +2794,41 @@ function handleSpeedChange(v) {
     // Simple vue : n'envoyer QUE le changement de vitesse, jamais un document complet depuis
     // des valeurs suivies (qui écraserait l'état précis de l'appareil qui pilote réellement,
     // et pourrait même usurper sa revendication de pilotage via le champ driverId).
-    window.db.collection('aquabot_sim').doc(state.pond.id)
-      .update({ speed: state.sim.speed, lastUpdate: Date.now() })
-      .catch(e => reportFirestoreError(e, 'speed (commande distante)'));
+    _sendRemoteSpeedChange(state.sim.speed);
   }
+}
+
+// Le pilote réécrit tout le document toutes les ~200ms (voir simulationTick) avec sa propre
+// valeur de vitesse en mémoire. Il existe donc une fenêtre de course où sa prochaine écriture
+// périodique — partie AVANT d'avoir reçu ce changement distant — écrase cette valeur avec son
+// ancienne vitesse locale, avant même que le pilote n'ait eu le temps de traiter le snapshot
+// entrant : c'était la cause du "je change la vitesse mais elle revient à l'ancienne valeur".
+// On réémet donc la demande à quelques reprises sur une courte fenêtre pour garantir qu'elle
+// finit par « tenir » une fois que le pilote l'a effectivement intégrée à son propre état.
+// _pendingSpeedRequest (utilisé aussi par subscribeSimState) permet d'ignorer les échos
+// périmés du pilote tant que notre demande n'est pas confirmée, plutôt que d'afficher
+// brièvement l'ancienne valeur en attendant — et sert de condition d'arrêt fiable pour les
+// réémissions (state.sim.speed lui-même est justement instable pendant la course).
+let _pendingSpeedRequest = null;
+let _speedRetryTimers = [];
+function _sendRemoteSpeedChange(speed) {
+  _speedRetryTimers.forEach(clearTimeout);
+  _speedRetryTimers = [];
+  _pendingSpeedRequest = speed;
+  const send = () => {
+    if (!state.pond) return;
+    window.db.collection('aquabot_sim').doc(state.pond.id)
+      .update({ speed, lastUpdate: Date.now() })
+      .catch(e => reportFirestoreError(e, 'speed (commande distante)'));
+  };
+  send();
+  [250, 600, 1200].forEach(delay => {
+    _speedRetryTimers.push(setTimeout(() => {
+      // Ne réaffirme que si le pilote n'a pas déjà confirmé cette valeur, et que l'utilisateur
+      // n'a pas entre-temps redemandé une autre vitesse.
+      if (_pendingSpeedRequest === speed) send();
+    }, delay));
+  });
 }
 
 function triggerKMLImport() { document.getElementById('kmlInput').click(); }
@@ -4044,6 +4094,10 @@ function toggleSatelliteViewDash(on) {
     if (canvas)         canvas.style.visibility = '';
     if (schemaZoom)     schemaZoom.style.display = '';
     if (styleGroupDash) styleGroupDash.style.display = 'none';
+    // Pendant que ce canvas était masqué (visibility:hidden), renderAllPondCanvases() l'a
+    // délibérément ignoré (voir _isCanvasActuallyVisible) — il peut donc afficher un contenu
+    // périmé au moment où il redevient visible ; on le redessine explicitement ici.
+    if (canvas) renderPondCanvas(canvas);
   }
 }
 
