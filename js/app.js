@@ -479,15 +479,16 @@ const MOTOR_LABELS = ['AV-G', 'AV-D', 'AR-G', 'AR-D'];
 // ============================================================
 // CONSOMMATION ÉLECTRIQUE (estimation — pas de télémétrie réelle)
 // ============================================================
-// Puissances nominales estimées par composant, à pleine charge (W). Valeurs plausibles pour
-// un robot de curage de cette taille (propulseurs ROV compacts, pompe submersible à 500 L/h) —
-// affichées comme telles dans l'UI, pas comme des mesures réelles tant qu'aucun capteur de
-// courant n'est câblé sur le robot physique.
+// Puissances nominales estimées par composant, à pleine charge (W). Pompe : moteur 1800W en
+// 220V (secteur/onduleur), valeur communiquée pour le robot réel — les autres restent des
+// estimations plausibles (propulseurs ROV compacts). Affichées comme telles dans l'UI, pas
+// comme des mesures réelles tant qu'aucun capteur de courant n'est câblé sur le robot physique.
 const POWER_SPECS = {
-  thrusterMaxW:  55,  // W par propulseur (×4), à 100% de poussée
-  pumpW:        450,  // W pompe d'aspiration submersible, active en phase "pumping"
-  winchW:        80,  // W moteur de profondeur (descente/remontée du bras de pompage)
-  electronicsW:   8,  // W électronique de contrôle (ESP32, capteurs, wifi, LED) — en veille
+  thrusterMaxW:  55,   // W par propulseur (×4), à 100% de poussée
+  pumpW:       1800,   // W pompe d'aspiration, moteur 220V — voir computeInstantPowerBreakdown
+  pumpVoltage:  220,   // V — alimentation secteur/onduleur, pas du DC batterie direct
+  winchW:        80,   // W moteur de profondeur (descente/remontée du bras de pompage)
+  electronicsW:   8,   // W électronique de contrôle (ESP32, capteurs, wifi, LED) — en veille
 };
 
 // Répartition de la puissance instantanée par composant (W). La poussée d'un propulseur ne
@@ -526,6 +527,43 @@ function updateElecTariff(value) {
   updateEnergyTab();
 }
 
+function updateSolarParam(key, value) {
+  const v = parseFloat(value);
+  if (Number.isFinite(v) && v >= 0) params[key] = v;
+  localStorage.setItem('aquabot_params', JSON.stringify(params));
+  updateEnergyTab();
+}
+
+// Estimation de faisabilité solaire — panneaux + onduleur + batterie nécessaires pour couvrir
+// le travail quotidien estimé. Volontairement indépendant de l'état de la simulation (marche
+// même sans étang chargé) : c'est un dimensionnement de l'installation, pas une mesure live.
+function computeSolarEstimate() {
+  // Puissance moyenne pendant le travail actif — la pompe (quasi continue, voir
+  // computeInstantPowerBreakdown) domine très largement le total ; treuil et propulseurs
+  // n'interviennent que par intermittence, on ne compte qu'une fraction de leur maximum.
+  const avgWorkingW = POWER_SPECS.pumpW + POWER_SPECS.electronicsW
+    + POWER_SPECS.winchW * 0.4 + POWER_SPECS.thrusterMaxW * 4 * 0.15;
+
+  const hoursPerDay  = params.solarHoursPerDay    || 0;
+  const peakSunHours = params.solarPeakSunHours   || 0;
+  const sysEff       = (params.solarSystemEffPct  || 0) / 100;
+
+  const dailyEnergyWh = avgWorkingW * hoursPerDay;
+  const peakWc = (peakSunHours > 0 && sysEff > 0) ? dailyEnergyWh / peakSunHours / sysEff : 0;
+  const panelCount = Math.ceil(peakWc / 400); // panneaux courants ≈ 400 Wc, ≈ 1.9 m² pièce
+  const areaM2 = panelCount * 1.9;
+
+  // Démarrage d'un moteur asynchrone : appel de courant transitoire ≈ 3× la puissance
+  // nominale — l'onduleur doit encaisser ce pic, pas seulement la puissance de régime.
+  const inverterMinW = POWER_SPECS.pumpW * 3;
+
+  // Batterie tampon pour ~1 jour d'autonomie sans soleil direct (nuit/couvert), avec une
+  // marge de décharge utile de 60% (raisonnable pour un compromis plomb/lithium générique).
+  const batteryKWh = sysEff > 0 ? (dailyEnergyWh / 1000) / 0.6 : 0;
+
+  return { avgWorkingW, dailyEnergyWh, peakWc, panelCount, areaM2, inverterMinW, batteryKWh };
+}
+
 const ENERGY_STATE_LABELS = {
   stopped: 'À l\'arrêt — électronique en veille',
   moving:  'En déplacement',
@@ -556,7 +594,7 @@ function updateEnergyTab() {
   // Répartition par composant
   const rows = [
     ...MOTOR_LABELS.map((lbl, i) => ({ label: `Propulseur ${lbl}`, w: breakdown.thrusterWs[i], max: POWER_SPECS.thrusterMaxW })),
-    { label: 'Pompe d\'aspiration',      w: breakdown.pumpW,        max: POWER_SPECS.pumpW },
+    { label: 'Pompe d\'aspiration (220V)', w: breakdown.pumpW,       max: POWER_SPECS.pumpW },
     { label: 'Moteur de profondeur',     w: breakdown.winchW,       max: POWER_SPECS.winchW },
     { label: 'Électronique de contrôle', w: breakdown.electronicsW, max: POWER_SPECS.electronicsW },
   ];
@@ -605,6 +643,29 @@ function updateEnergyTab() {
   setText('energyPumpVsThrust', breakdown.totalW > 0
     ? `Pompe ${(breakdown.pumpW / breakdown.totalW * 100).toFixed(0)}% · Propulsion ${(breakdown.thrustersTotalW / breakdown.totalW * 100).toFixed(0)}%`
     : '—');
+
+  // Panneaux solaires — dimensionnement indépendant de l'état de la simulation
+  ['pSolarHours', 'pSolarPeakSun', 'pSolarEff'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    const key = ['solarHoursPerDay', 'solarPeakSunHours', 'solarSystemEffPct'][i];
+    if (el && document.activeElement !== el) el.value = params[key];
+  });
+  const solar = computeSolarEstimate();
+  setText('solarAvgWorkingW', `${solar.avgWorkingW.toFixed(0)} W`);
+  setText('solarDailyKWh', `${(solar.dailyEnergyWh / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} kWh`);
+  setText('solarPeakWc', solar.peakWc > 0 ? `${solar.peakWc.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} Wc` : '—');
+  setText('solarPanelCount', solar.panelCount > 0
+    ? `${solar.panelCount} panneau${solar.panelCount > 1 ? 'x' : ''} ≈400 Wc (≈${solar.areaM2.toFixed(1)} m²)`
+    : '—');
+  setText('solarInverterW', `≥ ${(solar.inverterMinW / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} kW (pic démarrage moteur)`);
+  setText('solarBatteryKWh', solar.batteryKWh > 0 ? `≈ ${solar.batteryKWh.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} kWh utiles (1 jour d'autonomie)` : '—');
+
+  const verdictEl = document.getElementById('solarVerdict');
+  if (verdictEl) {
+    verdictEl.textContent = solar.panelCount > 0
+      ? `Techniquement faisable, mais le dimensionnement est dominé par la pompe 1800W/220V, pas par les panneaux seuls : compter un onduleur costaud (démarrage moteur) et une batterie substantielle pour couvrir les besoins hors ensoleillement direct — un investissement bien plus conséquent que "quelques panneaux".`
+      : `Renseignez les heures de travail et l'ensoleillement exploitable ci-dessus pour estimer le dimensionnement.`;
+  }
 }
 
 function formatEnergyWh(wh) {
@@ -678,6 +739,10 @@ let params = {
   wifiType: 'ap', wifiSSID: 'WETAP-ESP8266',
   wifiPassword: '507317123456789', wifiIP: '192.168.42.1',
   elecTariff: 0.20,   // €/kWh — tarif estimé, modifiable dans l'onglet Énergie
+  // Faisabilité solaire (onglet Énergie), modifiables
+  solarHoursPerDay:    3,    // h de travail effectif estimées par jour
+  solarPeakSunHours:   4,    // h crête exploitables par jour (moyenne France ~2h hiver/6h été)
+  solarSystemEffPct:  75,    // % — pertes onduleur/régulateur/câblage/batterie cumulées
 };
 
 // ============================================================

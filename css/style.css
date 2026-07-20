@@ -750,7 +750,7 @@ svg { display: block; }
 @media (max-width: 660px) { .energy-grid { grid-template-columns: 1fr; } }
 .energy-card-sub { text-transform: none; font-weight: 500; letter-spacing: 0; color: var(--text-3); }
 
-.energy-live-card { grid-column: 1 / -1; }
+.energy-live-card, .energy-solar-card { grid-column: 1 / -1; }
 .energy-live-total {
   display: flex; align-items: baseline; justify-content: center; gap: 6px;
   padding: 22px 14px 6px;

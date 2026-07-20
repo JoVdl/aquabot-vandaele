@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v15</span>
+        <span class="logo-version" id="appVersion">v16</span>
       </div>
     </div>
     <div class="header-status">
@@ -631,6 +631,24 @@
               <div class="param-row"><span class="param-lbl">Prix du kWh (€)</span><input type="number" step="0.01" min="0" class="param-input" id="pElecTariff" value="0.20" oninput="updateElecTariff(this.value)"></div>
             </div>
             <p class="energy-disclaimer">Consommation estimée par modèle (pas de mesure réelle de courant) — puissances nominales approximatives par composant.</p>
+          </div>
+
+          <div class="card param-card energy-solar-card">
+            <div class="card-header">Panneaux solaires — faisabilité</div>
+            <div class="param-list">
+              <div class="param-row"><span class="param-lbl">Heures de travail estimées / jour</span><input type="number" step="0.5" min="0" class="param-input" id="pSolarHours" value="3" oninput="updateSolarParam('solarHoursPerDay', this.value)"></div>
+              <div class="param-row"><span class="param-lbl">Ensoleillement exploitable (h crête/jour)</span><input type="number" step="0.5" min="0.5" class="param-input" id="pSolarPeakSun" value="4" oninput="updateSolarParam('solarPeakSunHours', this.value)"></div>
+              <div class="param-row"><span class="param-lbl">Rendement système (onduleur + pertes, %)</span><input type="number" step="5" min="10" max="100" class="param-input" id="pSolarEff" value="75" oninput="updateSolarParam('solarSystemEffPct', this.value)"></div>
+            </div>
+            <div class="vol-section">
+              <div class="vol-row"><span class="vol-lbl">Puissance moyenne pendant le travail</span><span class="vol-val" id="solarAvgWorkingW">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Énergie nécessaire / jour</span><span class="vol-val" id="solarDailyKWh">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Puissance crête de panneaux nécessaire</span><span class="vol-val" id="solarPeakWc">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Nombre / surface de panneaux</span><span class="vol-val" id="solarPanelCount">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Onduleur minimum recommandé</span><span class="vol-val" id="solarInverterW">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Batterie recommandée</span><span class="vol-val" id="solarBatteryKWh">—</span></div>
+            </div>
+            <p class="energy-disclaimer" id="solarVerdict">—</p>
           </div>
 
         </div>
