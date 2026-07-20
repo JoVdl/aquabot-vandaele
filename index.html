@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v32</span>
+        <span class="logo-version" id="appVersion">v33</span>
       </div>
     </div>
     <div class="header-status">
@@ -638,7 +638,7 @@
               <select class="param-select" id="bathyMetricSelect" onchange="setBathyMetric(this.value)">
                 <option value="mud">Vase — profondeur</option>
                 <option value="water">Eau — profondeur</option>
-                <option value="total">Profondeur totale</option>
+                <option value="total">Profondeur totale (eau + vase)</option>
                 <option value="diff">Différence — vase retirée</option>
               </select>
               <select class="param-select" id="bathySurveySelect" onchange="setBathySurvey(this.value)"></select>
@@ -648,8 +648,21 @@
               <span>→</span>
               <select class="param-select" id="bathyAfterSelect" onchange="setBathyCompare('after', this.value)"></select>
             </div>
-            <div class="bathy-canvas-wrap">
+            <div class="bathy-controls-row">
+              <select class="param-select" id="bathyPaletteSelect" onchange="setBathyPalette(this.value)">
+                <option value="classic">Palette classique (bleu / brun)</option>
+                <option value="rainbow">Palette bathymétrique (arc-en-ciel)</option>
+                <option value="viridis">Palette Viridis</option>
+              </select>
+            </div>
+            <div class="bathy-controls-row bathy-rotation-row" id="bathyRotationRow" style="display:none">
+              <span class="bathy-rotation-lbl">↻ Angle de vue</span>
+              <input type="range" min="0" max="359" value="45" id="bathyRotationSlider" oninput="setBathy3DRotation(this.value)">
+              <span class="bathy-rotation-val" id="bathyRotationVal">45°</span>
+            </div>
+            <div class="bathy-canvas-wrap" id="bathyCanvasWrap">
               <canvas id="bathyCanvas"></canvas>
+              <div id="leaflet-container-bathy"></div>
               <div class="bathy-empty" id="bathyEmptyState">Aucun relevé pour cet étang — lancez un relevé ci-dessus.</div>
             </div>
             <div class="bathy-legend" id="bathyLegend">
@@ -665,6 +678,9 @@
               <div class="vol-row"><span class="vol-lbl">Cases relevées</span><span class="vol-val" id="bathySurveyCells">—</span></div>
               <div class="vol-row"><span class="vol-lbl">Volume d'eau</span><span class="vol-val" id="bathySurveyWaterVol">—</span></div>
               <div class="vol-row"><span class="vol-lbl">Volume de vase</span><span class="vol-val" id="bathySurveyMudVol">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Profondeur moyenne d'eau</span><span class="vol-val" id="bathySurveyAvgWater">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Profondeur moyenne de vase</span><span class="vol-val" id="bathySurveyAvgMud">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Profondeur totale moyenne</span><span class="vol-val" id="bathySurveyAvgTotal">—</span></div>
               <div class="vol-row"><span class="vol-lbl">Énergie estimée du relevé</span><span class="vol-val" id="bathySurveyEnergy">—</span></div>
               <div class="vol-row"><span class="vol-lbl">Date du relevé</span><span class="vol-val" id="bathySurveyDate">—</span></div>
             </div>

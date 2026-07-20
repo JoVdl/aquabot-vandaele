@@ -1007,7 +1007,7 @@ const state = {
   bathy: {
     running: false, order: [], currentStep: 0, intervalId: null,
     pendingReadings: [], pendingType: null, markerIdx: null,
-    metric: 'mud', mode: '2d',
+    metric: 'mud', mode: '2d', palette: 'classic', rotation3D: 45,
     selectedSurveyId: null, compareBeforeId: null, compareAfterId: null,
     _lastMin: null, _lastMax: null,
   },
@@ -1728,6 +1728,7 @@ function bathyScanTick() {
 
   renderBathyCanvas();
   updateBathyLegend();
+  _updateBathyScanMarker();
 }
 
 function finishBathySurvey() {
@@ -1755,6 +1756,7 @@ function finishBathySurvey() {
   ['btnBathyBefore', 'btnBathyCheck', 'btnBathyAfter'].forEach(id => {
     const el = document.getElementById(id); if (el) el.disabled = false;
   });
+  _removeBathyScanMarker();
 
   showToast(`Relevé "${survey.label}" enregistré — ${b.order.length} cases`, 'success');
   renderBathyTab();
@@ -1770,6 +1772,7 @@ function cancelBathySurvey() {
   ['btnBathyBefore', 'btnBathyCheck', 'btnBathyAfter'].forEach(id => {
     const el = document.getElementById(id); if (el) el.disabled = false;
   });
+  _removeBathyScanMarker();
   showToast('Relevé annulé', '');
 }
 
@@ -1791,6 +1794,17 @@ function setBathyMode(mode) {
   state.bathy.mode = mode;
   document.getElementById('btnBathy2D')?.classList.toggle('active', mode === '2d');
   document.getElementById('btnBathy3D')?.classList.toggle('active', mode === '3d');
+  const rotRow = document.getElementById('bathyRotationRow');
+  if (rotRow) rotRow.style.display = mode === '3d' ? 'flex' : 'none';
+  renderBathyCanvas();
+}
+// Rotation de la vue 3D (isométrique) — mathématiquement correcte à n'importe quel angle, voir
+// bathyIsoPoint(). La vue 2D (carte Leaflet réelle) n'est volontairement pas pivotable : sans le
+// plugin dédié (leaflet-rotate, non disponible ici), une simple rotation CSS désynchroniserait
+// le glisser/zoom de la souris avec l'affichage — pire que pas de rotation du tout.
+function setBathy3DRotation(deg) {
+  state.bathy.rotation3D = parseFloat(deg) || 0;
+  setText('bathyRotationVal', Math.round(state.bathy.rotation3D) + '°');
   renderBathyCanvas();
 }
 function setBathyMetric(metric) {
@@ -1838,57 +1852,154 @@ function computeBathyDisplayValues() {
   if (!survey) return null;
   return state.cells.map((c, i) => getBathyMetricValue(survey.readings[i], b.metric));
 }
+// Lectures brutes {water,mud} du relevé actuellement affiché — utilisé par la vue 3D empilée
+// "profondeur totale" (voir renderBathy3DStacked), qui a besoin des deux composantes séparément.
+function computeBathyRawReadings() {
+  const pond = state.pond, b = state.bathy;
+  if (!pond) return null;
+  const survey = pond.bathySurveys?.find(s => s.id === b.selectedSurveyId)
+              || pond.bathySurveys?.[pond.bathySurveys.length - 1];
+  return survey ? survey.readings : null;
+}
 
-// ── Échelle de couleurs (dégradé HSL par métrique, cohérent avec la légende graduée) ───────
-const BATHY_SCALES = {
+// ── Échelle de couleurs — plusieurs jeux de couleurs sélectionnables ───────────────────────
+// "classic" garde une teinte HSL dédiée par métrique (bleu eau / brun vase / sarcelle total /
+// vert différence). "rainbow"/"viridis" sont des dégradés multi-teintes universels (mêmes
+// couleurs quelle que soit la métrique), calqués sur les logiciels de bathymétrie classiques
+// (rouge/orange peu profond → bleu foncé profond, voir légende).
+const BATHY_HSL_SCALES = {
   water: { h0: 205, h1: 215, s: 70, lMin: 84, lMax: 30 },
   mud:   { h0: 38,  h1: 22,  s: 62, lMin: 84, lMax: 24 },
   total: { h0: 172, h1: 190, s: 55, lMin: 84, lMax: 26 },
   diff:  { h0: 140, h1: 140, s: 55, lMin: 90, lMax: 30 },
 };
-function bathyColorForFrac(metric, frac) {
-  const s = BATHY_SCALES[metric] || BATHY_SCALES.mud;
-  const h = s.h0 + (s.h1 - s.h0) * frac;
-  const l = s.lMin + (s.lMax - s.lMin) * frac;
-  return `hsl(${h.toFixed(0)}, ${s.s}%, ${l.toFixed(0)}%)`;
+const BATHY_PALETTES = {
+  classic: { label: 'Classique (bleu / brun)', kind: 'per-metric' },
+  rainbow: {
+    label: 'Bathymétrique (arc-en-ciel)', kind: 'stops',
+    stops: [
+      [0.00, '#c62828'], [0.15, '#ef6c00'], [0.30, '#fdd835'],
+      [0.45, '#9ccc65'], [0.60, '#26a69a'], [0.75, '#29b6f6'],
+      [0.90, '#1565c0'], [1.00, '#0d1b6e'],
+    ],
+  },
+  viridis: {
+    label: 'Viridis', kind: 'stops',
+    stops: [
+      [0.00, '#440154'], [0.25, '#3b528b'], [0.50, '#21908c'],
+      [0.75, '#5dc963'], [1.00, '#fde725'],
+    ],
+  },
+};
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
-function bathyShade(hslStr, deltaL) {
-  const m = /hsl\(([\d.]+),\s*([\d.]+)%,\s*([\d.]+)%\)/.exec(hslStr);
-  if (!m) return hslStr;
-  const h = +m[1], s = +m[2], l = Math.max(0, Math.min(100, +m[3] + deltaL));
-  return `hsl(${h}, ${s}%, ${l}%)`;
+function hslToRgb(h, s, l) {
+  h = ((h % 360) + 360) % 360 / 360;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => {
+    const k = (n + h * 12) % 12;
+    return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  };
+  return { r: f(0) * 255, g: f(8) * 255, b: f(4) * 255 };
 }
+function lerpRgb(c0, c1, t) {
+  return { r: c0.r + (c1.r - c0.r) * t, g: c0.g + (c1.g - c0.g) * t, b: c0.b + (c1.b - c0.b) * t };
+}
+function rgbCss(c) { return `rgb(${Math.round(c.r)}, ${Math.round(c.g)}, ${Math.round(c.b)})`; }
+function rgbShade(c, factor) { return { r: c.r * factor, g: c.g * factor, b: c.b * factor }; }
+
+// Couleur (objet {r,g,b}) pour une métrique donnée et une fraction [0,1] de sa plage de valeurs,
+// selon la palette actuellement choisie (state.bathy.palette).
+function bathyColorRGB(metric, frac) {
+  frac = Math.max(0, Math.min(1, frac));
+  const palette = BATHY_PALETTES[state.bathy.palette] || BATHY_PALETTES.classic;
+  if (palette.kind === 'per-metric') {
+    const s = BATHY_HSL_SCALES[metric] || BATHY_HSL_SCALES.mud;
+    const h = s.h0 + (s.h1 - s.h0) * frac;
+    const l = (s.lMin + (s.lMax - s.lMin) * frac) / 100;
+    return hslToRgb(h, s.s / 100, l);
+  }
+  const stops = palette.stops;
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [f0, c0] = stops[i], [f1, c1] = stops[i + 1];
+    if (frac >= f0 && frac <= f1) return lerpRgb(hexToRgb(c0), hexToRgb(c1), (frac - f0) / ((f1 - f0) || 1));
+  }
+  return hexToRgb(stops[stops.length - 1][1]);
+}
+function bathyColorForFrac(metric, frac) { return rgbCss(bathyColorRGB(metric, frac)); }
+
+// Dégradé CSS multi-arrêts pour la légende, cohérent avec la palette/métrique choisie
+function bathyLegendGradientCSS(metric) {
+  const steps = 8;
+  const stops = [];
+  for (let i = 0; i <= steps; i++) {
+    const frac = i / steps;
+    stops.push(`${rgbCss(bathyColorRGB(metric, frac))} ${(frac * 100).toFixed(0)}%`);
+  }
+  return `linear-gradient(90deg, ${stops.join(', ')})`;
+}
+
 function bathyMetricUnit(metric)  { return metric === 'diff' ? 'm retirés' : 'm'; }
 function bathyMetricLabel(metric) {
   return { water: "Profondeur d'eau", mud: 'Profondeur de vase', total: 'Profondeur totale', diff: 'Vase retirée' }[metric] || '';
 }
+function setBathyPalette(palette) {
+  state.bathy.palette = palette;
+  renderBathyCanvas();
+  updateBathyLegend();
+  if (_leafletMapBathy) _updateBathyCellStyles();
+}
 
 // ── Rendu canevas (2D à plat ou 3D isométrique — pas de WebGL, juste un canevas 2D extrudé) ─
+// Vue 2D : vraie carte satellite/plan (Leaflet, mêmes fonds que le tableau de bord) quand
+// l'étang a une position GPS valide — zoom/pan natifs, à l'échelle. Sans position (repli), un
+// rendu canevas simple est utilisé à la place. La vue 3D reste toujours un rendu canevas isométrique.
 function renderBathyCanvas() {
+  const pond = state.pond;
+  const wrap = document.getElementById('bathyCanvasWrap');
   const canvas = document.getElementById('bathyCanvas');
-  if (!canvas || !_isCanvasActuallyVisible(canvas)) return;
-  const wrap = canvas.parentElement;
+  const leafletDiv = document.getElementById('leaflet-container-bathy');
+  if (!wrap || !canvas) return;
+  if (!wrap.clientWidth) return; // onglet caché — rien à dessiner pour l'instant
+
+  const values = pond ? computeBathyDisplayValues() : null;
+  const empty = document.getElementById('bathyEmptyState');
+  if (empty) empty.style.display = values ? 'none' : 'flex';
+
+  const defined = values ? values.filter(v => v != null) : [];
+  state.bathy._lastMin = defined.length ? Math.min(...defined) : null;
+  state.bathy._lastMax = defined.length ? Math.max(...defined) : null;
+
+  // Repli sur le rendu canevas si Leaflet n'a pas pu charger (CDN indisponible) — mieux qu'une
+  // zone vide silencieuse.
+  const useLeaflet = state.bathy.mode === '2d' && pond && isValidOrigin(pond.origin) && typeof L !== 'undefined';
+  if (leafletDiv) leafletDiv.style.display = useLeaflet ? 'block' : 'none';
+  canvas.style.display = useLeaflet ? 'none' : 'block';
+
+  if (useLeaflet) {
+    initLeafletMapBathy();
+    _updateBathyCellStyles();
+    return;
+  }
+
   canvas.width  = wrap.clientWidth;
   canvas.height = wrap.clientHeight || 320;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (!state.pond) return;
+  if (!pond || !defined.length) return;
 
-  const values = computeBathyDisplayValues();
-  const empty = document.getElementById('bathyEmptyState');
-  if (empty) empty.style.display = values ? 'none' : 'flex';
-  if (!values) { state.bathy._lastMin = null; state.bathy._lastMax = null; return; }
-
-  const defined = values.filter(v => v != null);
-  if (!defined.length) { state.bathy._lastMin = null; state.bathy._lastMax = null; return; }
-  const min = Math.min(...defined), max = Math.max(...defined);
-  const range = (max - min) || (Math.abs(max) || 1) * 0.05 || 1;
-  state.bathy._lastMin = min; state.bathy._lastMax = max;
+  const min = state.bathy._lastMin;
+  const range = (state.bathy._lastMax - min) || (Math.abs(state.bathy._lastMax) || 1) * 0.05 || 1;
 
   if (state.bathy.mode === '3d') renderBathy3D(ctx, canvas.width, canvas.height, values, min, range);
   else                            renderBathy2D(ctx, canvas.width, canvas.height, values, min, range);
 }
 
+// Repli sans position GPS : rendu canevas 2D simple (mêmes couleurs, pas de fond satellite,
+// pas de zoom/pan — juste le contour de l'étang à plat).
 function renderBathy2D(ctx, W, H, values, min, range) {
   const bbox = getPondBbox(state.pond);
   const bw = (bbox.maxX - bbox.minX) || 1, bh = (bbox.maxY - bbox.minY) || 1;
@@ -1926,59 +2037,245 @@ function renderBathy2D(ctx, W, H, values, min, range) {
   }
 }
 
+// Projection isométrique paramétrée par un angle de vue (rotation autour de l'axe vertical) —
+// rotation continue mathématiquement correcte : on tourne les coordonnées de grille (col,row)
+// AVANT d'appliquer l'aplatissement iso fixe (tileW/tileH), plutôt que de tourner les points déjà
+// projetés (ce qui déformerait la vue à tout angle qui n'est pas un multiple de 90°).
+function bathyIsoPoint(col, row, thetaDeg, tileW, tileH) {
+  const rad = thetaDeg * Math.PI / 180;
+  const rx = col * Math.cos(rad) - row * Math.sin(rad);
+  const ry = col * Math.sin(rad) + row * Math.cos(rad);
+  return { ix: rx * tileW, iy: ry * tileH };
+}
+
+// La rotation change la forme de l'empreinte projetée à l'écran (une grille rectangulaire
+// tournée peut devenir bien plus large ou plus haute) : on calcule donc une échelle de tuile
+// adaptée à l'angle courant pour que l'étang tienne toujours dans le canevas, quel que soit
+// l'angle de vue — sans ça, certains angles débordaient hors cadre.
+function computeBathyIsoLayout(W, H, thetaDeg, maxH) {
+  const unitW = 2, unitH = 1;
+  const rawPts = state.cells.map(c => bathyIsoPoint(c.col, c.row, thetaDeg, unitW, unitH));
+  const rxs = rawPts.map(p => p.ix), rys = rawPts.map(p => p.iy);
+  const spanX = (Math.max(...rxs) - Math.min(...rxs)) || 1;
+  const spanY = (Math.max(...rys) - Math.min(...rys)) || 1;
+  const availW = W * 0.90;
+  const availH = Math.max(40, H * 0.85 - maxH);
+  const fitScale = Math.max(1.5, Math.min(availW / spanX, availH / spanY));
+  const tileW = unitW * fitScale, tileH = unitH * fitScale;
+
+  const pts = state.cells.map((c, i) => {
+    const { ix, iy } = bathyIsoPoint(c.col, c.row, thetaDeg, tileW, tileH);
+    return { ix, iy, c, i };
+  });
+  const pxs = pts.map(p => p.ix), pys = pts.map(p => p.iy);
+  return {
+    tileW, tileH, pts,
+    minIx: Math.min(...pxs), maxIx: Math.max(...pxs),
+    minIy: Math.min(...pys), maxIy: Math.max(...pys),
+  };
+}
+
+// Dessine un segment de colonne isométrique (faces gauche/droite assombries + éventuel plafond
+// coloré) entre deux hauteurs d'écran — brique de base réutilisée pour les colonnes simples
+// (une seule teinte) et les colonnes empilées eau+vase à plafond plat (voir renderBathy3DStacked).
+function drawIsoColumnSegment(ctx, x, yTopScreen, yBottomScreen, tileW, tileH, colorRGB, capTop) {
+  ctx.fillStyle = rgbCss(rgbShade(colorRGB, 0.72));
+  ctx.beginPath();
+  ctx.moveTo(x - tileW, yBottomScreen); ctx.lineTo(x, yBottomScreen + tileH);
+  ctx.lineTo(x, yTopScreen + tileH);    ctx.lineTo(x - tileW, yTopScreen);
+  ctx.closePath(); ctx.fill();
+
+  ctx.fillStyle = rgbCss(rgbShade(colorRGB, 0.55));
+  ctx.beginPath();
+  ctx.moveTo(x, yBottomScreen + tileH); ctx.lineTo(x + tileW, yBottomScreen);
+  ctx.lineTo(x + tileW, yTopScreen);    ctx.lineTo(x, yTopScreen + tileH);
+  ctx.closePath(); ctx.fill();
+
+  if (capTop) {
+    ctx.fillStyle = rgbCss(colorRGB);
+    ctx.beginPath();
+    ctx.moveTo(x, yTopScreen - tileH); ctx.lineTo(x + tileW, yTopScreen);
+    ctx.lineTo(x, yTopScreen + tileH); ctx.lineTo(x - tileW, yTopScreen);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 0.5; ctx.stroke();
+  }
+}
+
 // Isométrique : chaque case devient une petite colonne extrudée (hauteur = profondeur), triée
 // arrière→avant pour un empilement visuel correct. Pas une vraie 3D (aucun WebGL/three.js
 // disponible ici), mais un rendu canevas 2D classique qui donne un vrai effet de relief lisible.
+// "Profondeur totale" est un cas particulier : voir renderBathy3DStacked (surface d'eau plate).
 function renderBathy3D(ctx, W, H, values, min, range) {
   const metric = state.bathy.metric;
-  const tileW = 12, tileH = 6, maxH = 70;
-  const pts = state.cells.map((c, i) => ({ ix: (c.col - c.row) * tileW, iy: (c.col + c.row) * tileH, v: values[i], c }));
-  const xs = pts.map(p => p.ix), ys = pts.map(p => p.iy);
-  const minIx = Math.min(...xs), maxIx = Math.max(...xs);
-  const minIy = Math.min(...ys), maxIy = Math.max(...ys);
-  const offX = W / 2 - (minIx + maxIx) / 2;
-  const offY = H * 0.78 - (minIy + maxIy) / 2 - maxH / 2;
+  const theta  = state.bathy.rotation3D;
+  const maxH = 70;
 
-  pts.sort((a, b) => (a.c.col + a.c.row) - (b.c.col + b.c.row));
+  if (metric === 'total') {
+    const raw = computeBathyRawReadings();
+    if (raw) { renderBathy3DStacked(ctx, W, H, raw, theta, maxH); return; }
+  }
+
+  const layout = computeBathyIsoLayout(W, H, theta, maxH);
+  const { tileW, tileH } = layout;
+  const offX = W / 2 - (layout.minIx + layout.maxIx) / 2;
+  const offY = H * 0.78 - (layout.minIy + layout.maxIy) / 2 - maxH / 2;
+
+  const pts = layout.pts.map(p => ({ ...p, v: values[p.i] }));
+  // Tri par profondeur écran (valable à n'importe quel angle de rotation, contrairement à un
+  // tri fixe sur col+row qui ne fonctionnait que pour la vue à 45°).
+  pts.sort((a, b) => a.iy - b.iy);
 
   for (const p of pts) {
     if (p.v == null) continue;
     const frac = Math.max(0, Math.min(1, (p.v - min) / range));
     const h = 4 + frac * maxH;
     const x = p.ix + offX, yBase = p.iy + offY, yTop = yBase - h;
-    const color = bathyColorForFrac(metric, frac);
-
-    ctx.fillStyle = bathyShade(color, -22);
-    ctx.beginPath();
-    ctx.moveTo(x - tileW, yBase); ctx.lineTo(x, yBase + tileH);
-    ctx.lineTo(x, yTop + tileH);  ctx.lineTo(x - tileW, yTop);
-    ctx.closePath(); ctx.fill();
-
-    ctx.fillStyle = bathyShade(color, -38);
-    ctx.beginPath();
-    ctx.moveTo(x, yBase + tileH); ctx.lineTo(x + tileW, yBase);
-    ctx.lineTo(x + tileW, yTop);  ctx.lineTo(x, yTop + tileH);
-    ctx.closePath(); ctx.fill();
-
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(x, yTop - tileH); ctx.lineTo(x + tileW, yTop);
-    ctx.lineTo(x, yTop + tileH); ctx.lineTo(x - tileW, yTop);
-    ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 0.5; ctx.stroke();
+    drawIsoColumnSegment(ctx, x, yTop, yBase, tileW, tileH, bathyColorRGB(metric, frac), true);
   }
+}
+
+// "Profondeur totale" empile les deux couches (vase sous l'eau) avec un plafond commun plat —
+// la surface de l'eau étant globalement de niveau, seul le fond varie d'une case à l'autre.
+function renderBathy3DStacked(ctx, W, H, raw, theta, maxH) {
+  const waterVals = [], mudVals = [], totalVals = [];
+  raw.forEach(r => { if (r) { waterVals.push(r.water); mudVals.push(r.mud); totalVals.push(r.water + r.mud); } });
+  if (!totalVals.length) return;
+  const wMin = Math.min(...waterVals), wRange = (Math.max(...waterVals) - wMin) || 1;
+  const mMin = Math.min(...mudVals),   mRange = (Math.max(...mudVals)   - mMin) || 1;
+  const maxTotal = Math.max(...totalVals) || 1;
+
+  const layout = computeBathyIsoLayout(W, H, theta, maxH);
+  const { tileW, tileH } = layout;
+  const offX = W / 2 - (layout.minIx + layout.maxIx) / 2;
+  // Les colonnes pendent SOUS le plafond plat (surface) au lieu de monter depuis une base —
+  // on décale donc la référence vers le haut du canevas pour laisser la place en dessous.
+  const offY = H * 0.32 - (layout.minIy + layout.maxIy) / 2;
+
+  const pts = layout.pts.map(p => ({ ...p, r: raw[p.i] }));
+  pts.sort((a, b) => a.iy - b.iy);
+
+  for (const p of pts) {
+    if (!p.r) continue;
+    const total = p.r.water + p.r.mud;
+    const colH   = 4 + (total / maxTotal) * maxH;
+    const waterH = total > 0 ? colH * (p.r.water / total) : 0;
+    const mudH   = colH - waterH;
+
+    const x = p.ix + offX, yTop = p.iy + offY; // plafond plat commun — surface de l'eau
+    const yWaterBottom = yTop + waterH;
+    const yMudBottom   = yWaterBottom + mudH;
+
+    const waterFrac = (p.r.water - wMin) / wRange;
+    const mudFrac   = (p.r.mud   - mMin) / mRange;
+
+    drawIsoColumnSegment(ctx, x, yTop,          yWaterBottom, tileW, tileH, bathyColorRGB('water', waterFrac), true);
+    drawIsoColumnSegment(ctx, x, yWaterBottom,  yMudBottom,   tileW, tileH, bathyColorRGB('mud',   mudFrac),   false);
+  }
+
+  ctx.font = '10px ui-monospace, monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillText('surface de l\'eau (plafond plat)', 8, layout.minIy + offY - 6);
 }
 
 function updateBathyLegend() {
   const bar = document.getElementById('bathyLegendBar');
   if (!bar) return;
   const metric = state.bathy.metric;
-  const s = BATHY_SCALES[metric] || BATHY_SCALES.mud;
-  bar.style.background = `linear-gradient(90deg, hsl(${s.h0},${s.s}%,${s.lMin}%), hsl(${s.h1},${s.s}%,${s.lMax}%))`;
+  bar.style.background = bathyLegendGradientCSS(metric);
   const { _lastMin: min, _lastMax: max } = state.bathy;
   const unit = bathyMetricUnit(metric);
   setText('bathyLegendMin', min != null ? `${min.toFixed(2)} ${unit}` : '—');
   setText('bathyLegendMax', max != null ? `${max.toFixed(2)} ${unit}` : '—');
+}
+
+// ── Vue satellite/plan réelle (Leaflet) — même style de fond que le tableau de bord,
+// zoom/pan natifs, cases colorées à l'échelle exacte. ──────────────────────────────────────
+let _leafletMapBathy   = null;
+let _bathyCellRects    = [];
+let _bathyCellRenderer = null;
+let _bathyBaseLayer    = null;
+let _bathyMarkerLayer  = null;
+
+function initLeafletMapBathy() {
+  if (_leafletMapBathy) { setTimeout(() => _leafletMapBathy.invalidateSize(), 50); return; }
+  const container = document.getElementById('leaflet-container-bathy');
+  if (!container || typeof L === 'undefined') return;
+
+  _leafletMapBathy = L.map('leaflet-container-bathy', { zoomControl: false });
+  _leafletMapBathy.setView([0, 0], 2);
+
+  const style = MAP_STYLES[_currentMapStyle];
+  L.tileLayer(style.url, { attribution: style.attribution, maxZoom: 23, maxNativeZoom: style.maxNativeZoom }).addTo(_leafletMapBathy);
+  if (style.labels) {
+    L.tileLayer(style.labels, { attribution: '', maxZoom: 23, maxNativeZoom: style.maxNativeZoom, opacity: 0.65 }).addTo(_leafletMapBathy);
+  }
+  L.control.zoom({ position: 'bottomright' }).addTo(_leafletMapBathy);
+
+  _rebuildBathyBaseLayer();
+  _rebuildBathyCellLayers();
+}
+
+function _rebuildBathyBaseLayer() {
+  if (_bathyBaseLayer) { try { _leafletMapBathy.removeLayer(_bathyBaseLayer); } catch {} _bathyBaseLayer = null; }
+  if (!state.pond || !isValidOrigin(state.pond.origin)) return;
+  const polyLL = state.pond.polygon.map(p => { const ll = metersToLatLng(p.x, p.y); return [ll.lat, ll.lng]; });
+  _bathyBaseLayer = L.polygon(polyLL, { color: '#e6edf3', weight: 1.5, fillOpacity: 0, dashArray: '4,4' }).addTo(_leafletMapBathy);
+  _leafletMapBathy.fitBounds(_bathyBaseLayer.getBounds(), { padding: [24, 24] });
+}
+
+// Rebuild complet (chargement d'étang) : géométrie des cases seulement, la couleur est mise à
+// jour séparément et bien plus souvent par _updateBathyCellStyles() (changement de métrique/
+// relevé/palette — pas besoin de recréer les rectangles à chaque fois, juste leur style).
+function _rebuildBathyCellLayers() {
+  for (const l of _bathyCellRects) { if (l) try { _leafletMapBathy.removeLayer(l); } catch {} }
+  _bathyCellRects.length = 0;
+  if (!state.pond) return;
+  if (!_bathyCellRenderer) _bathyCellRenderer = L.canvas({ padding: 0.5 });
+  const cs = params.cellSize;
+  for (const cell of state.cells) {
+    const sw = metersToLatLng(cell.cx - cs / 2, cell.cy - cs / 2);
+    const ne = metersToLatLng(cell.cx + cs / 2, cell.cy + cs / 2);
+    if (!sw || !ne) { _bathyCellRects.push(null); continue; }
+    const rect = L.rectangle([[sw.lat, sw.lng], [ne.lat, ne.lng]], {
+      renderer: _bathyCellRenderer, stroke: false, fillOpacity: 0,
+    }).addTo(_leafletMapBathy);
+    _bathyCellRects.push(rect);
+  }
+}
+
+function _updateBathyCellStyles() {
+  if (!_leafletMapBathy || !_bathyCellRects.length) return;
+  const values = computeBathyDisplayValues();
+  const min = state.bathy._lastMin, max = state.bathy._lastMax;
+  const range = (max - min) || (Math.abs(max) || 1) * 0.05 || 1;
+  const metric = state.bathy.metric;
+  for (let i = 0; i < _bathyCellRects.length; i++) {
+    const rect = _bathyCellRects[i];
+    if (!rect) continue;
+    const v = values ? values[i] : null;
+    if (v == null || min == null) { rect.setStyle({ fillOpacity: 0 }); continue; }
+    const frac = Math.max(0, Math.min(1, (v - min) / range));
+    rect.setStyle({ fillOpacity: 0.72, fillColor: bathyColorForFrac(metric, frac) });
+  }
+}
+
+function _updateBathyScanMarker() {
+  if (!_leafletMapBathy) return;
+  const cell = state.cells[state.bathy.markerIdx];
+  if (!cell) return;
+  const ll = metersToLatLng(cell.cx, cell.cy);
+  if (!ll) return;
+  if (!_bathyMarkerLayer) {
+    _bathyMarkerLayer = L.circleMarker([ll.lat, ll.lng], {
+      radius: 7, color: '#fff', weight: 1.5, fillColor: '#f59e0b', fillOpacity: 1,
+    }).addTo(_leafletMapBathy);
+  } else {
+    _bathyMarkerLayer.setLatLng([ll.lat, ll.lng]);
+  }
+}
+function _removeBathyScanMarker() {
+  if (_bathyMarkerLayer && _leafletMapBathy) { try { _leafletMapBathy.removeLayer(_bathyMarkerLayer); } catch {} }
+  _bathyMarkerLayer = null;
 }
 
 // ── Stats + historique + peuplement des menus déroulants ───────────────────────────────────
@@ -1987,7 +2284,8 @@ function updateBathySurveyStats() {
   const survey = pond?.bathySurveys?.find(s => s.id === state.bathy.selectedSurveyId)
               || pond?.bathySurveys?.[pond?.bathySurveys?.length - 1];
   if (!survey) {
-    ['bathySurveyCells', 'bathySurveyWaterVol', 'bathySurveyMudVol', 'bathySurveyEnergy', 'bathySurveyDate']
+    ['bathySurveyCells', 'bathySurveyWaterVol', 'bathySurveyMudVol', 'bathySurveyAvgWater',
+     'bathySurveyAvgMud', 'bathySurveyAvgTotal', 'bathySurveyEnergy', 'bathySurveyDate']
       .forEach(id => setText(id, '—'));
     return;
   }
@@ -1995,10 +2293,15 @@ function updateBathySurveyStats() {
   const defined  = survey.readings.filter(Boolean);
   const waterVol = defined.reduce((s, r) => s + r.water * cellArea, 0);
   const mudVol   = defined.reduce((s, r) => s + r.mud   * cellArea, 0);
+  const avgWater = defined.length ? defined.reduce((s, r) => s + r.water, 0) / defined.length : 0;
+  const avgMud   = defined.length ? defined.reduce((s, r) => s + r.mud,   0) / defined.length : 0;
   const wh       = computeBathySurveyEnergyWh(defined.length);
   setText('bathySurveyCells',    defined.length.toLocaleString('fr-FR'));
   setText('bathySurveyWaterVol', formatVolM3(waterVol));
   setText('bathySurveyMudVol',   formatVolM3(mudVol));
+  setText('bathySurveyAvgWater', defined.length ? avgWater.toFixed(2) + ' m' : '—');
+  setText('bathySurveyAvgMud',   defined.length ? avgMud.toFixed(2)   + ' m' : '—');
+  setText('bathySurveyAvgTotal', defined.length ? (avgWater + avgMud).toFixed(2) + ' m' : '—');
   setText('bathySurveyEnergy',   `${formatEnergyWh(wh)} (≈ ${formatEnergyCost(wh, params.elecTariff)})`);
   setText('bathySurveyDate',     new Date(survey.date).toLocaleString('fr-FR'));
 }
@@ -2071,6 +2374,11 @@ function renderBathyHistory() {
 
 function renderBathyTab() {
   populateBathySurveySelects();
+  // La carte Leaflet bathymétrie ne se reconstruit pas toute seule quand on change d'étang —
+  // seul renderBathyCanvas() est appelé automatiquement (métrique/relevé/palette). Si la carte
+  // existe déjà (onglet déjà ouvert une fois), on doit explicitement la rebrancher sur le
+  // nouvel étang ici.
+  if (_leafletMapBathy) { _rebuildBathyBaseLayer(); _rebuildBathyCellLayers(); }
   renderBathyCanvas();
   updateBathyLegend();
   updateBathySurveyStats();
@@ -4773,7 +5081,11 @@ function init() {
 
   // Save on unload
   window.addEventListener('beforeunload', saveWork);
-  window.addEventListener('resize', () => { resizeSectionCanvas(); renderSectionCanvas(); renderBathyCanvas(); });
+  window.addEventListener('resize', () => {
+    resizeSectionCanvas(); renderSectionCanvas();
+    if (_leafletMapBathy) _leafletMapBathy.invalidateSize();
+    renderBathyCanvas();
+  });
 
   // Réaffiche périodiquement l'état des boutons (léger, aucun accès réseau) pour que
   // "Démarrer" se réactive tout seul dès que le battement de cœur d'un pilote disparu devient
