@@ -35,6 +35,11 @@ const _deviceSessionId = (() => {
 // reprendre la main.
 const DRIVER_HEARTBEAT_TIMEOUT_MS = 4000;
 
+// Horodatage de la dernière écriture connue sur aquabot_sim (mis à jour par
+// subscribeSimState) — permet à l'affichage de savoir si "robotState: moving" reflète une
+// simulation réellement active ou un pilote disparu sans s'arrêter proprement.
+let _lastKnownSimHeartbeat = 0;
+
 // Tente de devenir l'unique appareil qui calcule la simulation pour cet étang. Renvoie true si
 // la revendication réussit (soit personne d'autre n'est activement en train de piloter là
 // maintenant, soit c'est déjà nous) ; false si un autre appareil pilote réellement, là,
@@ -195,6 +200,11 @@ function subscribeSimState(pondId) {
       if (!doc.exists) return;
       const sim = doc.data();
       if (!sim) return;
+
+      // Dernier battement de cœur connu, pour que updateButtonStates() puisse distinguer
+      // « ça tourne vraiment, là, maintenant » de « l'affichage montre encore moving/pumping
+      // mais plus personne n'écrit depuis un moment » (pilote disparu sans s'arrêter proprement).
+      if (sim.lastUpdate) _lastKnownSimHeartbeat = sim.lastUpdate;
 
       // Ignorer les données antérieures au dernier RAZ
       const pondResetAt = state.pond?.lastResetAt || 0;
@@ -2308,7 +2318,7 @@ function _pauseLocally() {
   saveSimState();
 }
 
-function pauseSimulation() {
+async function pauseSimulation() {
   if (state.robotMode === 'real') {
     const cmd = state.robot.state === 'paused' ? 'resume' : 'pause';
     sendRobotCommand(cmd);
@@ -2318,17 +2328,24 @@ function pauseSimulation() {
     startSimulation(); return;
   }
   if (!state.sim.running) {
-    // Cet appareil ne pilote pas activement (simple vue) : on se contente d'envoyer la demande
-    // de pause — c'est l'appareil qui pilote qui l'appliquera (voir subscribeSimState) et
-    // rediffusera l'état exact. On n'écrit surtout pas ici l'intégralité de state.robot/state.sim
-    // depuis cet appareil : ce ne sont que des valeurs synchronisées, pas la vérité à l'instant T,
-    // et on écraserait sinon la position/l'état précis de l'appareil qui pilote réellement.
     if (USE_CLOUD && state.pond) {
-      window.db.collection('aquabot_sim').doc(state.pond.id)
-        .update({ simRunning: false, lastUpdate: Date.now() })
-        .catch(e => console.warn('pause (commande distante):', e.message));
+      // Vérifie s'il y a réellement un pilote actif là, maintenant (même mécanisme que pour
+      // démarrer). S'il y en a un, on se contente d'envoyer la demande de pause — c'est lui
+      // qui l'appliquera (voir subscribeSimState) et rediffusera l'état exact.
+      const owns = await claimSimOwnership(state.pond.id);
+      if (!owns) {
+        window.db.collection('aquabot_sim').doc(state.pond.id)
+          .update({ simRunning: false, lastUpdate: Date.now() })
+          .catch(e => console.warn('pause (commande distante):', e.message));
+        return;
+      }
+      // Personne ne pilote plus réellement (le vrai pilote a disparu sans s'arrêter proprement
+      // — onglet fermé, crash, perte de connexion) alors que l'affichage montrait encore
+      // « en marche » partout : on vient de revendiquer le pilotage ci-dessus, on applique donc
+      // nous-mêmes la pause complète plutôt que d'envoyer un signal dans le vide que personne
+      // n'aurait traité — c'est ce qui laissait le robot bloqué à l'écran sans qu'aucun bouton
+      // ne fonctionne pour s'en sortir.
     }
-    return;
   }
   _pauseLocally();
 }
@@ -2355,17 +2372,20 @@ function _stopLocally() {
   renderSectionCanvas();
 }
 
-function stopSimulation() {
+async function stopSimulation() {
   if (state.robotMode === 'real') { sendRobotCommand('stop'); return; }
   if (!state.sim.running) {
-    // Même principe que pauseSimulation() : simple demande distante, appliquée par l'appareil
-    // qui pilote réellement, qui rediffusera ensuite l'arrêt complet et correct.
+    // Même principe que pauseSimulation() : si un pilote est réellement actif, simple demande
+    // distante ; sinon (orpheline) on revendique et on applique l'arrêt nous-mêmes.
     if (USE_CLOUD && state.pond) {
-      window.db.collection('aquabot_sim').doc(state.pond.id)
-        .update({ simRunning: false, robotState: 'stopped', lastUpdate: Date.now() })
-        .catch(e => console.warn('stop (commande distante):', e.message));
+      const owns = await claimSimOwnership(state.pond.id);
+      if (!owns) {
+        window.db.collection('aquabot_sim').doc(state.pond.id)
+          .update({ simRunning: false, robotState: 'stopped', lastUpdate: Date.now() })
+          .catch(e => console.warn('stop (commande distante):', e.message));
+        return;
+      }
     }
-    return;
   }
   _stopLocally();
 }
@@ -2694,8 +2714,14 @@ function updateStatus(main, sub) {
 }
 
 function updateButtonStates() {
-  // running = local sim loop OR robot is active on another device
-  const running = state.sim.running || ['moving', 'pumping'].includes(state.robot.state);
+  // running = boucle locale active OU le robot est actif sur un autre appareil dont on a
+  // reçu un battement de cœur récent. Sans la condition de fraîcheur, un pilote disparu sans
+  // s'arrêter proprement (onglet fermé, crash) laissait "Démarrer" durablement désactivé —
+  // seul moyen de s'en sortir : deviner qu'il fallait cliquer sur "Pause" pour forcer une
+  // reprise. Passé ce délai sans nouvelle écriture, on considère l'affichage "moving/pumping"
+  // comme périmé et on redonne la main à l'utilisateur.
+  const heartbeatFresh = (Date.now() - _lastKnownSimHeartbeat) < DRIVER_HEARTBEAT_TIMEOUT_MS;
+  const running = state.sim.running || (['moving', 'pumping'].includes(state.robot.state) && heartbeatFresh);
   const hasPond = !!state.pond;
   const stopped = state.robot.state === 'stopped';
   document.getElementById('btnStart').disabled  = running || !hasPond;
@@ -4370,6 +4396,12 @@ function init() {
   // Save on unload
   window.addEventListener('beforeunload', saveWork);
   window.addEventListener('resize', () => { resizeSectionCanvas(); renderSectionCanvas(); });
+
+  // Réaffiche périodiquement l'état des boutons (léger, aucun accès réseau) pour que
+  // "Démarrer" se réactive tout seul dès que le battement de cœur d'un pilote disparu devient
+  // périmé (voir updateButtonStates) — sans ça, ça ne se rafraîchissait qu'au prochain
+  // événement (snapshot ou clic), ce qui pouvait laisser le bouton bloqué en apparence.
+  setInterval(() => { if (!state.sim.running) updateButtonStates(); }, 1000);
 }
 
 window.addEventListener('DOMContentLoaded', init);
