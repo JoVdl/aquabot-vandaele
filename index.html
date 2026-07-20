@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v16</span>
+        <span class="logo-version" id="appVersion">v17</span>
       </div>
     </div>
     <div class="header-status">
@@ -636,8 +636,11 @@
           <div class="card param-card energy-solar-card">
             <div class="card-header">Panneaux solaires — faisabilité</div>
             <div class="param-list">
-              <div class="param-row"><span class="param-lbl">Heures de travail estimées / jour</span><input type="number" step="0.5" min="0" class="param-input" id="pSolarHours" value="3" oninput="updateSolarParam('solarHoursPerDay', this.value)"></div>
-              <div class="param-row"><span class="param-lbl">Ensoleillement exploitable (h crête/jour)</span><input type="number" step="0.5" min="0.5" class="param-input" id="pSolarPeakSun" value="4" oninput="updateSolarParam('solarPeakSunHours', this.value)"></div>
+              <div class="param-row"><span class="param-lbl">Heures de travail estimées / jour</span><input type="number" step="0.5" min="0" max="24" class="param-input" id="pSolarHours" value="20" oninput="updateSolarParam('solarHoursPerDay', this.value)"></div>
+              <div class="param-row">
+                <span class="param-lbl">Ensoleillement exploitable (h crête/jour)<br><span class="energy-card-sub" id="solarSunSource">—</span></span>
+                <input type="number" step="0.1" min="0.5" class="param-input" id="pSolarPeakSun" value="4" oninput="updateSolarParam('solarPeakSunHours', this.value)">
+              </div>
               <div class="param-row"><span class="param-lbl">Rendement système (onduleur + pertes, %)</span><input type="number" step="5" min="10" max="100" class="param-input" id="pSolarEff" value="75" oninput="updateSolarParam('solarSystemEffPct', this.value)"></div>
             </div>
             <div class="vol-section">

@@ -530,8 +530,75 @@ function updateElecTariff(value) {
 function updateSolarParam(key, value) {
   const v = parseFloat(value);
   if (Number.isFinite(v) && v >= 0) params[key] = v;
+  // Une fois modifié à la main, l'ensoleillement n'est plus ré-écrasé par l'estimation météo
+  // automatique tant qu'un nouvel étang (nouvelle position) n'est pas chargé.
+  if (key === 'solarPeakSunHours') params.solarPeakSunHoursAuto = false;
   localStorage.setItem('aquabot_params', JSON.stringify(params));
   updateEnergyTab();
+}
+
+// Cache mémoire (pas persisté) de la dernière estimation météo récupérée, par position —
+// évite de refaire l'appel réseau à chaque frame ou à chaque passage sur l'onglet.
+let _solarIrradianceCache = null;      // { key, peakSunHours, sampleCount, fetchedAt }
+let _solarIrradianceFetching = null;   // clé en cours de récupération, pour ne pas dupliquer l'appel
+
+// Estimation de l'ensoleillement exploitable (heures crête/jour) à partir de vraies données
+// météo pour la position exacte de l'étang, autour de la date du jour. Utilise l'API Open-Meteo
+// (gratuite, sans clé, sans backend nécessaire) : moyenne du rayonnement solaire journalier
+// (shortwave_radiation_sum, MJ/m²) sur une fenêtre de ±15 jours autour d'aujourd'hui, sur les
+// 3 dernières années — un « aujourd'hui » sur plusieurs années passées pour lisser la météo du
+// jour tout en restant représentatif de la saison et du lieu. 1 kWh/m²/jour = 1 heure crête
+// (par définition du "peak sun hour" : irradiance de référence 1000 W/m²).
+async function fetchSolarPeakSunHours(lat, lng) {
+  const cacheKey = `${lat.toFixed(2)},${lng.toFixed(2)}`;
+  if (_solarIrradianceCache?.key === cacheKey) return _solarIrradianceCache;
+  if (_solarIrradianceFetching === cacheKey) return null;
+  _solarIrradianceFetching = cacheKey;
+
+  try {
+    const today = new Date();
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    const windowDays = 15;
+    const requests = [1, 2, 3].map(yearsAgo => {
+      const center = new Date(today.getFullYear() - yearsAgo, today.getMonth(), today.getDate());
+      const start = new Date(center); start.setDate(start.getDate() - windowDays);
+      const end   = new Date(center); end.setDate(end.getDate() + windowDays);
+      const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}`
+        + `&start_date=${fmt(start)}&end_date=${fmt(end)}&daily=shortwave_radiation_sum&timezone=auto`;
+      return fetch(url).then(r => (r.ok ? r.json() : null)).catch(() => null);
+    });
+    const results = await Promise.all(requests);
+    const values = [];
+    for (const res of results) {
+      const arr = res?.daily?.shortwave_radiation_sum;
+      if (Array.isArray(arr)) for (const v of arr) if (typeof v === 'number' && Number.isFinite(v)) values.push(v);
+    }
+    _solarIrradianceFetching = null;
+    if (!values.length) return null;
+    const avgMJ = values.reduce((a, b) => a + b, 0) / values.length;
+    _solarIrradianceCache = { key: cacheKey, peakSunHours: avgMJ / 3.6, sampleCount: values.length, fetchedAt: Date.now() };
+    return _solarIrradianceCache;
+  } catch (e) {
+    console.warn('fetchSolarPeakSunHours:', e.message);
+    _solarIrradianceFetching = null;
+    return null;
+  }
+}
+
+// Déclenche la récupération météo pour l'étang actif (si position GPS connue) et applique le
+// résultat à l'ensoleillement exploitable, sauf si l'utilisateur l'a déjà modifié à la main.
+function refreshSolarIrradianceForPond() {
+  const origin = state.pond?.origin;
+  if (!isValidOrigin(origin) || !params.solarPeakSunHoursAuto) return;
+  fetchSolarPeakSunHours(origin.lat, origin.lng).then(result => {
+    if (result && params.solarPeakSunHoursAuto) {
+      params.solarPeakSunHours = result.peakSunHours;
+      localStorage.setItem('aquabot_params', JSON.stringify(params));
+    }
+    // Réaffiche dans tous les cas (y compris échec) pour sortir du message "Récupération…"
+    // même si l'appel météo n'a rien donné.
+    updateEnergyTab();
+  });
 }
 
 // Estimation de faisabilité solaire — panneaux + onduleur + batterie nécessaires pour couvrir
@@ -648,9 +715,29 @@ function updateEnergyTab() {
   ['pSolarHours', 'pSolarPeakSun', 'pSolarEff'].forEach((id, i) => {
     const el = document.getElementById(id);
     const key = ['solarHoursPerDay', 'solarPeakSunHours', 'solarSystemEffPct'][i];
-    if (el && document.activeElement !== el) el.value = params[key];
+    if (el && document.activeElement !== el) el.value = Math.round((params[key] || 0) * 10) / 10;
   });
   const solar = computeSolarEstimate();
+
+  // D'où vient la valeur d'ensoleillement affichée — transparence sur l'origine de la donnée.
+  const origin = state.pond?.origin;
+  let sunSource;
+  if (!params.solarPeakSunHoursAuto) {
+    sunSource = 'Valeur personnalisée';
+  } else if (!isValidOrigin(origin)) {
+    sunSource = 'Étang sans position GPS — valeur générique';
+  } else {
+    const cacheKey = `${origin.lat.toFixed(2)},${origin.lng.toFixed(2)}`;
+    if (_solarIrradianceCache?.key === cacheKey) {
+      sunSource = `Météo réelle pour cette position (Open-Meteo, ${_solarIrradianceCache.sampleCount} j sur 3 ans autour d'aujourd'hui)`;
+    } else if (_solarIrradianceFetching === cacheKey) {
+      sunSource = 'Récupération des données météo…';
+    } else {
+      sunSource = 'Données météo indisponibles — valeur générique';
+    }
+  }
+  setText('solarSunSource', sunSource);
+
   setText('solarAvgWorkingW', `${solar.avgWorkingW.toFixed(0)} W`);
   setText('solarDailyKWh', `${(solar.dailyEnergyWh / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} kWh`);
   setText('solarPeakWc', solar.peakWc > 0 ? `${solar.peakWc.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} Wc` : '—');
@@ -740,8 +827,12 @@ let params = {
   wifiPassword: '507317123456789', wifiIP: '192.168.42.1',
   elecTariff: 0.20,   // €/kWh — tarif estimé, modifiable dans l'onglet Énergie
   // Faisabilité solaire (onglet Énergie), modifiables
-  solarHoursPerDay:    3,    // h de travail effectif estimées par jour
-  solarPeakSunHours:   4,    // h crête exploitables par jour (moyenne France ~2h hiver/6h été)
+  solarHoursPerDay:    20,   // h de travail effectif estimées par jour — fonctionnement idéal visé
+  solarPeakSunHours:    4,   // h crête exploitables par jour — remplacé par une estimation météo
+                             // réelle (position + date de l'étang) dès que possible, voir
+                             // fetchSolarPeakSunHours() ; valeur générique tant qu'aucune donnée
+                             // n'a encore été récupérée ou si l'étang n'a pas de position GPS.
+  solarPeakSunHoursAuto: true, // false dès que l'utilisateur modifie le champ à la main
   solarSystemEffPct:  75,    // % — pertes onduleur/régulateur/câblage/batterie cumulées
 };
 
@@ -1166,6 +1257,11 @@ function loadPond(pond) {
   // cumul persistant ci-dessus qui, lui, ne se remet à zéro qu'au RAZ.
   state.sim.sessionEnergyBaselineWh   = state.robot.energyWh;
   state.sim.sessionElapsedBaselineSec = state.robot.elapsedSec;
+
+  // Un nouvel étang mérite une nouvelle estimation météo (position différente) même si
+  // l'ensoleillement avait été modifié à la main pour l'étang précédent.
+  params.solarPeakSunHoursAuto = true;
+  refreshSolarIrradianceForPond();
 
   subscribeSimState(pond.id);
   checkAndResumeSim(pond.id);
@@ -2920,6 +3016,7 @@ function setActiveTab(tab) {
       }
     });
   } else if (tab === 'energy') {
+    refreshSolarIrradianceForPond();
     updateEnergyTab();
   }
 }
