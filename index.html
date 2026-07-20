@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v31</span>
+        <span class="logo-version" id="appVersion">v32</span>
       </div>
     </div>
     <div class="header-status">
@@ -65,6 +65,10 @@
     <button class="nav-tab" data-tab="energy">
       <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/></svg>
       <span>Énergie</span>
+    </button>
+    <button class="nav-tab" data-tab="bathymetry">
+      <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2L2 6l8 4 8-4-8-4z"/><path d="M2 10l8 4 8-4M2 14l8 4 8-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/></svg>
+      <span>Bathymétrie</span>
     </button>
     <button class="nav-tab" data-tab="ponds">
       <svg viewBox="0 0 20 20" fill="currentColor"><path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
@@ -593,6 +597,96 @@
               <div class="vol-row"><span class="vol-lbl">Batterie recommandée</span><span class="vol-val" id="solarBatteryKWh">—</span></div>
             </div>
             <p class="energy-disclaimer" id="solarVerdict">—</p>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================
+         TAB: BATHYMÉTRIE
+    ============================= -->
+    <section class="tab-panel" id="panel-bathymetry">
+      <div class="energy-layout">
+        <div class="energy-grid bathy-grid">
+
+          <div class="card">
+            <div class="card-header">Lancer un relevé</div>
+            <p class="energy-disclaimer" style="padding-top:10px">Parcourt la zone sélectionnée comme pour un curage et relève la profondeur d'eau et de vase de chaque case, avec la sonde bathymétrique (plaque 10×10cm sur crémaillère verticale). Données simulées pour l'instant — pas de sonde réelle câblée — mais cohérentes et reproductibles par étang.</p>
+            <div class="bathy-scan-actions">
+              <button class="btn btn-secondary btn-sm" id="btnBathyBefore" onclick="startBathySurvey('before')">📍 Avant travaux</button>
+              <button class="btn btn-secondary btn-sm" id="btnBathyCheck" onclick="startBathySurvey('check')">🔍 Contrôle</button>
+              <button class="btn btn-secondary btn-sm" id="btnBathyAfter" onclick="startBathySurvey('after')">✅ Après travaux</button>
+            </div>
+            <div class="bathy-scan-progress" id="bathyScanProgress" style="display:none">
+              <div class="progress-bar"><div id="bathyScanBar" class="progress-fill" style="width:0%"></div></div>
+              <span class="progress-pct" id="bathyScanPct">0%</span>
+              <span class="bathy-scan-cell" id="bathyScanCellLabel">—</span>
+              <button class="btn btn-ghost btn-sm" onclick="cancelBathySurvey()">✕</button>
+            </div>
+          </div>
+
+          <div class="card bathy-map-card">
+            <div class="card-header">
+              <span>Carte bathymétrique</span>
+              <div class="view-toggle-group bathy-view-toggle">
+                <button class="view-toggle-btn active" id="btnBathy2D" onclick="setBathyMode('2d')">▦ 2D</button>
+                <button class="view-toggle-btn" id="btnBathy3D" onclick="setBathyMode('3d')">◆ 3D</button>
+              </div>
+            </div>
+            <div class="bathy-controls-row">
+              <select class="param-select" id="bathyMetricSelect" onchange="setBathyMetric(this.value)">
+                <option value="mud">Vase — profondeur</option>
+                <option value="water">Eau — profondeur</option>
+                <option value="total">Profondeur totale</option>
+                <option value="diff">Différence — vase retirée</option>
+              </select>
+              <select class="param-select" id="bathySurveySelect" onchange="setBathySurvey(this.value)"></select>
+            </div>
+            <div class="bathy-controls-row bathy-diff-row" id="bathyDiffRow" style="display:none">
+              <select class="param-select" id="bathyBeforeSelect" onchange="setBathyCompare('before', this.value)"></select>
+              <span>→</span>
+              <select class="param-select" id="bathyAfterSelect" onchange="setBathyCompare('after', this.value)"></select>
+            </div>
+            <div class="bathy-canvas-wrap">
+              <canvas id="bathyCanvas"></canvas>
+              <div class="bathy-empty" id="bathyEmptyState">Aucun relevé pour cet étang — lancez un relevé ci-dessus.</div>
+            </div>
+            <div class="bathy-legend" id="bathyLegend">
+              <span class="bathy-legend-min" id="bathyLegendMin">—</span>
+              <div class="bathy-legend-bar" id="bathyLegendBar"></div>
+              <span class="bathy-legend-max" id="bathyLegendMax">—</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Volumes — relevé sélectionné</div>
+            <div class="vol-section">
+              <div class="vol-row"><span class="vol-lbl">Cases relevées</span><span class="vol-val" id="bathySurveyCells">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Volume d'eau</span><span class="vol-val" id="bathySurveyWaterVol">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Volume de vase</span><span class="vol-val" id="bathySurveyMudVol">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Énergie estimée du relevé</span><span class="vol-val" id="bathySurveyEnergy">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Date du relevé</span><span class="vol-val" id="bathySurveyDate">—</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Comparatif avant / après</div>
+            <div class="vol-section">
+              <div class="vol-row"><span class="vol-lbl">Volume de vase avant</span><span class="vol-val" id="bathyCompareBefore">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Volume de vase après</span><span class="vol-val" id="bathyCompareAfter">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Volume réellement retiré (bathymétrie)</span><span class="vol-val" id="bathyCompareRemoved">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Volume pompé théorique (modèle)</span><span class="vol-val" id="bathyCompareTheoretical">—</span></div>
+              <div class="vol-row"><span class="vol-lbl">Cases comparées</span><span class="vol-val" id="bathyCompareCells">—</span></div>
+            </div>
+            <p class="energy-disclaimer">Le volume « bathymétrie » vient des relevés de profondeur (avant/après) ; le volume « théorique » vient du modèle de pompage (débit × temps). Un écart important entre les deux peut signaler un colmatage, une vase plus dense, ou une case mal traitée — utile pour le retour client.</p>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Historique des relevés</div>
+            <div id="bathyHistoryList" class="bathy-history-list sel-history-list">
+              <div class="sel-empty">Aucun relevé enregistré</div>
+            </div>
           </div>
 
         </div>

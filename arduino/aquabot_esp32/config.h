@@ -52,6 +52,33 @@ const uint8_t MOTOR_EN[4]   = { 27, 15,  5, 23 };
 #define PUMP_PWM_ASCENT  255    // max remontée   (pleine puissance)
 #define PUMP_PWM_STEP      2    // incrément par tick (≈ 10/1023*255, mode normal)
 
+// ── 6ème moteur : sonde bathymétrique (BTS7960) ───────────────────────
+// Même principe que le moteur de descente pompe : portail 12V + crémaillère verticale,
+// mais actionneur dédié séparé (plaque 10×10cm en bout de tige, pour relever la profondeur
+// d'eau et de vase case par case, indépendamment du cycle de pompage — voir bathyTick()).
+// EN relié en direct au 12V (pont/jumper sur le module BTS7960, pas de broche ESP32 dédiée) —
+// libère une broche sur un ESP32 déjà chargé en GPIO ; la plupart des modules BTS7960 le
+// permettent. RPWM/LPWM sur des broches de boot (0) : sans composant externe qui tire cette
+// broche au niveau bas au démarrage, ça ne pose pas de problème en pratique.
+#define BATHY_MOTOR_RPWM  2
+#define BATHY_MOTOR_LPWM  0
+
+// Capteur de courant dédié (broche ADC entrée seule, 35 — libre, contrairement à 32/33/34
+// déjà utilisées par les propulseurs et la pompe)
+#define BATHY_CURRENT_PIN  35
+
+// Deux seuils pendant la descente (contrairement à la pompe qui n'en a qu'un, "fond") :
+// la plaque rencontre d'abord une résistance modérée en entrant dans la vase (interface
+// eau/vase), puis un courant maximal en touchant le fond dur.
+#define BATHY_I_THRESHOLD_MUD     600   // ADC raw → interface eau/vase détectée
+#define BATHY_I_THRESHOLD_BOTTOM  950   // ADC raw → fond dur détecté
+
+// PWM rampe sonde bathymétrique (mêmes valeurs que la rampe pompe, mécanisme identique)
+#define BATHY_PWM_START    75
+#define BATHY_PWM_DESCENT 150
+#define BATHY_PWM_ASCENT  255
+#define BATHY_PWM_STEP      2
+
 // ── GPS ZED-F9P (I2C) ─────────────────────────────────────────────────
 #define GPS_SDA  21
 #define GPS_SCL  22

@@ -8,7 +8,9 @@
  *   - Magnétomètre I2C QMC5883L (boussole électronique, cap du robot)
  *   - 4× BTS7960 (drivers propulseurs, montage en X aux 4 coins)
  *   - 1× BTS7960 (moteur descente/remontée pompe)
- *   - Capteur courant (GPIO 34) pour détection fond/haut
+ *   - 1× BTS7960 (moteur sonde bathymétrique — même mécanisme, actionneur séparé)
+ *   - Capteur courant (GPIO 34) pour détection fond/haut pompe
+ *   - Capteur courant (GPIO 35) pour détection interface vase / fond dur sonde bathymétrique
  *   - Relais SSR 230V (pompe)
  *   - Hotspot 4G (WiFi vers Firebase + Centipède NTRIP)
  *
@@ -63,6 +65,27 @@ enum RobotState {
 RobotState robotState    = STATE_IDLE;
 RobotState stateBeforePause = STATE_IDLE;
 
+// ── État sonde bathymétrique — exclusif du curage (voir bathyTick) ────
+// Ne tourne que si robotState == STATE_IDLE, et un START de curage est refusé tant que
+// bathyState != BATHY_IDLE : les deux partagent targetPos/currentPos/controlThrusters()
+// sans jamais s'exécuter en même temps.
+enum BathyState {
+  BATHY_IDLE,
+  BATHY_MOVING,
+  BATHY_DESCENDING,
+  BATHY_ASCENDING,
+  BATHY_DONE
+};
+BathyState bathyState = BATHY_IDLE;
+std::vector<Vec2> bathyPath;
+int   bathyCurrentIdx   = 0;
+float bathyDepth        = 0;
+bool  bathyMudFound      = false;
+float bathyWaterDepth    = 0;   // relevé en cours — profondeur d'eau (jusqu'à l'interface vase)
+float bathyMudDepth      = 0;   // relevé en cours — épaisseur de vase (interface → fond dur)
+float p_bathyDescentSpeed = 0.05f;
+float p_bathyAscentSpeed  = 0.08f;
+
 // ── Position & navigation ─────────────────────────────────────────────
 double originLat = 0, originLng = 0;
 bool   originLoaded = false;
@@ -100,6 +123,7 @@ bool  pumpFullAscent = false;
 #define POWER_THRUSTER_MAX_W  55.0f
 #define POWER_PUMP_W        1800.0f
 #define POWER_WINCH_W         80.0f
+#define POWER_BATHY_W         80.0f
 #define POWER_ELECTRONICS_W    8.0f
 float energyWh      = 0;   // cumul depuis le démarrage du robot (persistant tant qu'il reste allumé)
 float volumePumped   = 0;   // litres cumulés depuis le démarrage
@@ -110,6 +134,11 @@ float p_pumpFlow     = 500.0f; // L/min, reçu depuis l'app (voir pollCommands)
 #define PUMP_MOTOR_CH_R  8
 #define PUMP_MOTOR_CH_L  9
 int   pumpMotorPwm   = 0;   // PWM courant (rampe progressive)
+
+// ── Moteur sonde bathymétrique (6ème moteur, BTS7960) — canaux LEDC 10-11
+#define BATHY_MOTOR_CH_R  10
+#define BATHY_MOTOR_CH_L  11
+int   bathyMotorPwm  = 0;   // PWM courant (rampe progressive)
 
 // ── Paramètres reçus depuis l'app ─────────────────────────────────────
 float p_pumpTime         = 30.0f;
@@ -158,8 +187,18 @@ void motorSetup() {
   ledcWrite(PUMP_MOTOR_CH_R, 0);
   ledcWrite(PUMP_MOTOR_CH_L, 0);
 
-  // Capteur courant (ADC)
+  // 6ème moteur : sonde bathymétrique — EN relié en direct au 12V (pas de broche ESP32),
+  // voir config.h
+  ledcSetup(BATHY_MOTOR_CH_R, 5000, 8);
+  ledcSetup(BATHY_MOTOR_CH_L, 5000, 8);
+  ledcAttachPin(BATHY_MOTOR_RPWM, BATHY_MOTOR_CH_R);
+  ledcAttachPin(BATHY_MOTOR_LPWM, BATHY_MOTOR_CH_L);
+  ledcWrite(BATHY_MOTOR_CH_R, 0);
+  ledcWrite(BATHY_MOTOR_CH_L, 0);
+
+  // Capteurs courant (ADC)
   pinMode(PUMP_CURRENT_PIN, INPUT);
+  pinMode(BATHY_CURRENT_PIN, INPUT);
 
   pinMode(PUMP_PIN, OUTPUT);
   digitalWrite(PUMP_PIN, LOW);
@@ -185,6 +224,7 @@ void motorStop(int i) {
 void stopAllMotors() {
   for (int i = 0; i < 4; i++) motorStop(i);
   pumpMotorStop();
+  bathyMotorStop();
 }
 
 void pumpOn()  { digitalWrite(PUMP_PIN, PUMP_ACTIVE_HIGH ? HIGH : LOW); }
@@ -218,6 +258,30 @@ void pumpMotorStop() {
 int readPumpCurrent() {
   int sum = 0;
   for (int i = 0; i < 4; i++) sum += analogRead(PUMP_CURRENT_PIN);
+  return sum / 4;
+}
+
+// ── Moteur sonde bathymétrique — même principe de rampe que le moteur de pompe ────────────
+void bathyMotorDescend(int targetPwm) {
+  if (bathyMotorPwm < BATHY_PWM_START) bathyMotorPwm = BATHY_PWM_START;
+  else bathyMotorPwm = min(bathyMotorPwm + BATHY_PWM_STEP, targetPwm);
+  ledcWrite(BATHY_MOTOR_CH_R, bathyMotorPwm);
+  ledcWrite(BATHY_MOTOR_CH_L, 0);
+}
+void bathyMotorAscend(int targetPwm) {
+  if (bathyMotorPwm < BATHY_PWM_START) bathyMotorPwm = BATHY_PWM_START;
+  else bathyMotorPwm = min(bathyMotorPwm + BATHY_PWM_STEP, targetPwm);
+  ledcWrite(BATHY_MOTOR_CH_R, 0);
+  ledcWrite(BATHY_MOTOR_CH_L, bathyMotorPwm);
+}
+void bathyMotorStop() {
+  bathyMotorPwm = 0;
+  ledcWrite(BATHY_MOTOR_CH_R, 0);
+  ledcWrite(BATHY_MOTOR_CH_L, 0);
+}
+int readBathyCurrent() {
+  int sum = 0;
+  for (int i = 0; i < 4; i++) sum += analogRead(BATHY_CURRENT_PIN);
   return sum / 4;
 }
 
@@ -407,7 +471,9 @@ void pollCommands() {
   Serial.println("[CMD] " + cmd);
 
   // ── START ─────────────────────────────────────────────────────────
-  if (cmd == "start" && (robotState == STATE_IDLE || robotState == STATE_DONE)) {
+  // Refusé pendant un relevé bathymétrique (bathyState != BATHY_IDLE) : les deux partagent
+  // targetPos/currentPos/controlThrusters(), jamais en même temps.
+  if (cmd == "start" && (robotState == STATE_IDLE || robotState == STATE_DONE) && bathyState == BATHY_IDLE) {
 
     // Origine KML
     originLat    = fields["originLat"]["doubleValue"] | 0.0;
@@ -461,6 +527,47 @@ void pollCommands() {
     miniCyclesDone = 0;
     currentCellIdx = 0;
     robotState     = STATE_IDLE;
+    bathyState      = BATHY_IDLE;
+    bathyCurrentIdx = 0;
+    bathyDepth      = 0;
+    bathyMudFound   = false;
+  }
+
+  // ── BATHY_START ───────────────────────────────────────────────────
+  // Relevé bathymétrique — parcourt bathyPath (même format que plannedPath) et mesure la
+  // profondeur d'eau/vase à chaque case. Refusé pendant un curage (robotState != STATE_IDLE).
+  else if (cmd == "bathy_start" && bathyState == BATHY_IDLE && robotState == STATE_IDLE) {
+    originLat    = fields["originLat"]["doubleValue"] | 0.0;
+    originLng    = fields["originLng"]["doubleValue"] | 0.0;
+    originLoaded = (originLat != 0 || originLng != 0);
+
+    bathyPath.clear();
+    JsonArray path = fields["bathyPath"]["arrayValue"]["values"];
+    for (JsonVariant v : path) {
+      Vec2 p;
+      p.x = v["mapValue"]["fields"]["x"]["doubleValue"] | 0.0f;
+      p.y = v["mapValue"]["fields"]["y"]["doubleValue"] | 0.0f;
+      bathyPath.push_back(p);
+    }
+    p_bathyDescentSpeed = fields["bathyDescentSpeed"]["doubleValue"] | 0.05f;
+    p_bathyAscentSpeed  = fields["bathyAscentSpeed"]["doubleValue"]  | 0.08f;
+
+    if (!bathyPath.empty()) {
+      bathyCurrentIdx = 0;
+      targetPos       = bathyPath[0];
+      bathyState      = BATHY_MOVING;
+      Serial.println("[BATHY_START] " + String(bathyPath.size()) + " cases");
+    }
+  }
+
+  // ── BATHY_STOP ────────────────────────────────────────────────────
+  else if (cmd == "bathy_stop") {
+    bathyMotorStop();
+    if (bathyState != BATHY_IDLE) stopAllMotors();
+    bathyState      = BATHY_IDLE;
+    bathyCurrentIdx = 0;
+    bathyDepth      = 0;
+    bathyMudFound   = false;
   }
 }
 
@@ -488,6 +595,15 @@ void sendTelemetry() {
       pumpStateStr = pumpFullAscent ? "ascending" : "partial_ascending";
       break;
     default: pumpStateStr = "idle"; break;
+  }
+
+  const char* bathyStateStr;
+  switch (bathyState) {
+    case BATHY_MOVING:     bathyStateStr = "moving";     break;
+    case BATHY_DESCENDING: bathyStateStr = "descending"; break;
+    case BATHY_ASCENDING:  bathyStateStr = "ascending";  break;
+    case BATHY_DONE:       bathyStateStr = "done";       break;
+    default:               bathyStateStr = "idle";       break;
   }
 
   // Fix type lisible
@@ -521,6 +637,10 @@ void sendTelemetry() {
     "\"motor2\":"        + fsD(motorThrust[2] / 255.0f * 100.0f) + ","
     "\"motor3\":"        + fsD(motorThrust[3] / 255.0f * 100.0f) + ","
     "\"simRunning\":"    + fsB(robotState == STATE_MOVING || robotState == STATE_DESCENDING || robotState == STATE_PUMPING || robotState == STATE_ASCENDING) + ","
+    "\"bathyState\":"       + fsS(bathyStateStr)         + ","
+    "\"bathyCellIdx\":"     + fsI(bathyCurrentIdx)       + ","
+    "\"bathyWaterDepth\":"  + fsD(bathyWaterDepth)       + ","
+    "\"bathyMudDepth\":"    + fsD(bathyMudDepth)         + ","
     "\"timestamp\":"     + fsI((int)(millis() / 1000)) +
     "}}";
 
@@ -539,7 +659,9 @@ float computeInstantPowerW() {
   }
   bool pumpActive  = (robotState == STATE_DESCENDING || robotState == STATE_PUMPING || robotState == STATE_ASCENDING);
   bool winchActive = (robotState == STATE_DESCENDING || robotState == STATE_ASCENDING);
-  return thrustersW + (pumpActive ? POWER_PUMP_W : 0) + (winchActive ? POWER_WINCH_W : 0) + POWER_ELECTRONICS_W;
+  bool bathyActive = (bathyState == BATHY_DESCENDING || bathyState == BATHY_ASCENDING);
+  return thrustersW + (pumpActive ? POWER_PUMP_W : 0) + (winchActive ? POWER_WINCH_W : 0)
+       + (bathyActive ? POWER_BATHY_W : 0) + POWER_ELECTRONICS_W;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -652,6 +774,80 @@ void robotTick(float dt) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// BOUCLE SONDE BATHYMÉTRIQUE — exclusif du curage (voir bathyState plus haut)
+// ─────────────────────────────────────────────────────────────────────
+// Descente en deux temps : d'abord jusqu'à l'interface eau/vase (courant modéré, on note
+// bathyWaterDepth), puis jusqu'au fond dur (courant max, on note bathyMudDepth = distance
+// parcourue depuis l'interface). Sécurité de profondeur max en dur si les seuils de courant
+// ne se déclenchent jamais (capteur en panne, plaque coincée...).
+#define BATHY_MAX_DEPTH_SAFETY 6.0f
+
+void bathyTick(float dt) {
+  energyWh += computeInstantPowerW() * dt / 3600.0f;
+
+  switch (bathyState) {
+
+    case BATHY_MOVING: {
+      controlThrusters();
+      if (gpsValid && dist2D(currentPos, targetPos) < ARRIVAL_THRESHOLD) {
+        stopAllMotors();
+        bathyDepth      = 0;
+        bathyMudFound   = false;
+        bathyWaterDepth = 0;
+        bathyMudDepth   = 0;
+        bathyState      = BATHY_DESCENDING;
+        Serial.println("[BATHY] Arrivé case " + String(bathyCurrentIdx));
+      }
+      break;
+    }
+
+    case BATHY_DESCENDING: {
+      bathyMotorDescend(BATHY_PWM_DESCENT);
+      bathyDepth += p_bathyDescentSpeed * dt;
+      int current = readBathyCurrent();
+
+      if (!bathyMudFound && current > BATHY_I_THRESHOLD_MUD) {
+        bathyMudFound   = true;
+        bathyWaterDepth = bathyDepth;
+        Serial.println("[BATHY] Interface eau/vase à " + String(bathyDepth, 2) + "m");
+      }
+
+      bool bottomDetected = bathyMudFound && (current > BATHY_I_THRESHOLD_BOTTOM);
+      if (bottomDetected || bathyDepth >= BATHY_MAX_DEPTH_SAFETY) {
+        bathyMotorStop();
+        if (!bathyMudFound) bathyWaterDepth = bathyDepth; // pas de vase détectée — fond dur direct
+        bathyMudDepth = max(0.0f, bathyDepth - bathyWaterDepth);
+        Serial.println("[BATHY] Fond dur — eau=" + String(bathyWaterDepth, 2) + "m vase=" + String(bathyMudDepth, 2) + "m");
+        bathyState = BATHY_ASCENDING;
+      }
+      break;
+    }
+
+    case BATHY_ASCENDING: {
+      bathyMotorAscend(BATHY_PWM_ASCENT);
+      bathyDepth = max(0.0f, bathyDepth - p_bathyAscentSpeed * dt);
+      if (bathyDepth <= 0.005f) {
+        bathyMotorStop();
+        bathyDepth = 0;
+        bathyCurrentIdx++;
+        if (bathyCurrentIdx >= (int)bathyPath.size()) {
+          bathyState = BATHY_DONE;
+          stopAllMotors();
+          Serial.println("[BATHY] Relevé terminé !");
+        } else {
+          targetPos  = bathyPath[bathyCurrentIdx];
+          bathyState = BATHY_MOVING;
+        }
+      }
+      break;
+    }
+
+    default:
+      break;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // SETUP
 // ─────────────────────────────────────────────────────────────────────
 void setup() {
@@ -713,6 +909,11 @@ void loop() {
   // Boucle robot
   if (robotState != STATE_IDLE && robotState != STATE_PAUSED && robotState != STATE_DONE) {
     robotTick(dt);
+  }
+
+  // Boucle sonde bathymétrique — exclusive du curage (voir bathyState)
+  if (bathyState != BATHY_IDLE && bathyState != BATHY_DONE) {
+    bathyTick(dt);
   }
 
   // Polling commandes Firebase

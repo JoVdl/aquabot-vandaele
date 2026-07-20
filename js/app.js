@@ -135,6 +135,7 @@ function pondToFirestore(pond) {
     bbox:     pond.bbox,
     hoseAnchor: pond.hoseAnchor || null,
     depositZone: pond.depositZone || null,
+    bathySurveys: pond.bathySurveys || [],
     lastUsed:   pond.lastUsed   || Date.now(),
     lastResetAt: pond.lastResetAt || 0,
     work: {
@@ -590,6 +591,7 @@ function pondFromFirestore(data) {
     ...data,
     cells,
     lastResetAt: data.lastResetAt || 0,
+    bathySurveys: data.bathySurveys || [],
     work: data.work || { completedCells: [], volumePumped: 0, elapsedSec: 0, energyWh: 0 },
     selections: (data.selections || []).map(s => {
       const set = decodeSelection(s.selectedIndices, cells.length) || new Set();
@@ -625,6 +627,8 @@ const POWER_SPECS = {
   pumpW:       1800,   // W pompe d'aspiration, moteur 220V — voir computeInstantPowerBreakdown
   pumpVoltage:  220,   // V — alimentation secteur/onduleur, pas du DC batterie direct
   winchW:        80,   // W moteur de profondeur (descente/remontée du bras de pompage)
+  bathyProbeW:   80,   // W moteur de sonde bathymétrique (même type que le moteur de pompe :
+                       // portail 12V + crémaillère verticale, actionneur dédié séparé)
   electronicsW:   8,   // W électronique de contrôle (ESP32, capteurs, wifi, LED) — en veille
 };
 
@@ -683,7 +687,8 @@ function computeCellCycleEnergyWh() {
 // — c'est la capacité minimale que doit fournir l'alimentation/batterie pour ne jamais être
 // sous-dimensionnée, pas la consommation "normale" de fonctionnement.
 function computePeakPowerW() {
-  return POWER_SPECS.thrusterMaxW * 4 + POWER_SPECS.pumpW + POWER_SPECS.winchW + POWER_SPECS.electronicsW;
+  return POWER_SPECS.thrusterMaxW * 4 + POWER_SPECS.pumpW + POWER_SPECS.winchW
+       + POWER_SPECS.bathyProbeW + POWER_SPECS.electronicsW;
 }
 
 // Sauvegarde les réglages localement ET les diffuse en direct à tous les appareils connectés
@@ -997,6 +1002,15 @@ const state = {
   view: { offsetX: 0, offsetY: 0, scale: 10, canvasH: 600 },
   drag: { active: false, mode: 'add' }, // for drag-select
   hose: { dragging: false }, // déplacement à la main de l'ancrage du tuyau d'évacuation
+  // Relevé bathymétrique — balayage animé de la sélection (comme le curage) qui génère des
+  // profondeurs d'eau/vase simulées mais cohérentes par case, voir section BATHYMÉTRIE.
+  bathy: {
+    running: false, order: [], currentStep: 0, intervalId: null,
+    pendingReadings: [], pendingType: null, markerIdx: null,
+    metric: 'mud', mode: '2d',
+    selectedSurveyId: null, compareBeforeId: null, compareAfterId: null,
+    _lastMin: null, _lastMax: null,
+  },
 };
 
 // ============================================================
@@ -1476,6 +1490,14 @@ function loadPond(pond) {
 
   setMode('select');
   updateHoseLengthDisplay();
+
+  // Les relevés bathymétriques sont propres à chaque étang — repartir de la dernière sélection
+  // de cet étang plutôt que de garder celle de l'étang précédemment ouvert.
+  state.bathy.selectedSurveyId = null;
+  state.bathy.compareBeforeId  = null;
+  state.bathy.compareAfterId   = null;
+  if (state.activeTab === 'bathymetry') renderBathyTab();
+
   showToast(`Étang "${pName}" chargé — ${state.cells.length} cases`, 'success');
 }
 
@@ -1559,6 +1581,501 @@ function resetWork(pondId) {
   if (_satModeDash && _leafletMapDash) { _rebuildPathLayerDash(); _rebuildDynamicLayersDash(); _rebuildCellLayersDash(); }
   updatePondsList();
   showToast('Progression remise à zéro', 'success');
+}
+
+// ============================================================
+// BATHYMÉTRIE — relevé de profondeur simulé (eau + vase), case par case
+// ============================================================
+// Pas de sonde réelle branchée pour l'instant (voir arduino/aquabot_esp32/aquabot_esp32.ino,
+// mécanisme bathyTick() côté firmware) : les profondeurs sont générées ici par un modèle de
+// bruit spatialement cohérent (même principe qu'un terrain procédural), pas mesurées. Chaque
+// étang a un "terrain" reproductible (dérivé de pond.id) pour que deux relevés "avant travaux"
+// du même étang donnent des valeurs cohérentes entre elles.
+
+const BATHY_SCAN_TICK_MS = 130;
+
+function hashStr(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+  return h;
+}
+// Hash déterministe → pseudo-aléatoire [0,1), pas de dépendance d'état (contrairement à un PRNG
+// classique) : reproductible à l'identique pour une même case/seed, quel que soit l'ordre d'appel.
+function pseudoRandom01(a, b, seed) {
+  const x = Math.sin(a * 127.1 + b * 311.7 + seed * 0.0001 + 1) * 43758.5453;
+  return x - Math.floor(x);
+}
+// Bruit lissé (somme de sinusoïdes déphasées par seed) → relief "naturel" par case plutôt que du
+// bruit blanc case à case, qui ne ressemblerait à aucune bathymétrie réelle.
+function bathyTerrainNoise(x, y, seed) {
+  const p = (seed % 997) * 0.01;
+  return Math.sin(x * 0.18 + p * 3.1) * Math.cos(y * 0.14 + p * 1.7) * 0.6
+       + Math.sin(x * 0.35 - y * 0.28 + p * 5.3) * 0.25
+       + Math.sin(x * 0.8  + y * 0.55 + p * 2.2) * 0.15;
+}
+function pondBathySeed(pond) { return hashStr(pond?.id || '0'); }
+
+function round3(v) { return Math.round(v * 1000) / 1000; }
+
+function generateBathyBaseReading(cell, seed) {
+  const nWater  = bathyTerrainNoise(cell.cx, cell.cy, seed + 11);
+  const nMud    = bathyTerrainNoise(cell.cx + 50, cell.cy - 30, seed + 37); // champ décalé → indépendant de l'eau
+  const jitterW = (pseudoRandom01(cell.col, cell.row, seed + 5)  - 0.5) * 0.05;
+  const jitterM = (pseudoRandom01(cell.col, cell.row, seed + 91) - 0.5) * 0.05;
+  const water = Math.max(0.2,  params.waterDepth + nWater * params.waterDepth * 0.3 + jitterW);
+  const mud   = Math.max(0.02, params.mudDepth   + nMud   * params.mudDepth   * 0.7 + jitterM);
+  return { water: round3(water), mud: round3(mud) };
+}
+// Relevé "après travaux" : cases traitées → résidu de vase faible (3-9%), profondeur d'eau
+// augmentée d'autant (la vase retirée devient de l'eau) ; cases non traitées → inchangées.
+function generateBathyAfterReading(beforeReading, cell, treated, seed) {
+  if (!treated) return { ...beforeReading };
+  const residualFrac = 0.03 + pseudoRandom01(cell.col, cell.row, seed + 201) * 0.06;
+  const residualMud  = round3(beforeReading.mud * residualFrac);
+  const water        = round3(beforeReading.water + (beforeReading.mud - residualMud));
+  return { water, mud: residualMud };
+}
+
+function latestBathySurvey(pond, type) {
+  const list = (pond?.bathySurveys || []).filter(s => s.type === type);
+  return list.length ? list[list.length - 1] : null;
+}
+function bathyTypeLabel(type) {
+  const d = new Date();
+  const dateStr = d.toLocaleDateString('fr-FR');
+  if (type === 'before') return `Avant travaux — ${dateStr}`;
+  if (type === 'after')  return `Après travaux — ${dateStr}`;
+  return `Contrôle — ${dateStr} ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+}
+function formatVolM3(m3) { return m3 >= 1 ? m3.toFixed(2) + ' m³' : (m3 * 1000).toFixed(0) + ' L'; }
+
+function persistPondSurveys() {
+  const idx = state.ponds.findIndex(p => p.id === state.pond.id);
+  if (idx !== -1) state.ponds[idx] = state.pond;
+  savePonds();
+}
+
+// Énergie estimée pour un relevé de N cases — même modèle physique que computeCellCycleEnergyWh
+// (descente/mesure/remontée), mais avec la puissance du moteur de sonde bathymétrique.
+function computeBathySurveyEnergyWh(cellCount) {
+  const fullDepth   = params.waterDepth + params.mudDepth;
+  const descentTime = params.pumpDescentSpeed > 0 ? fullDepth / params.pumpDescentSpeed : 0;
+  const ascentTime  = params.pumpAscentSpeed  > 0 ? fullDepth / params.pumpAscentSpeed  : 0;
+  const measureTime = 2; // s — pause de mesure au contact du fond dur
+  const probeW      = POWER_SPECS.bathyProbeW + POWER_SPECS.electronicsW;
+  const perCellWs   = probeW * (descentTime + ascentTime + measureTime);
+  return (perCellWs * cellCount) / 3600;
+}
+
+// ── Balayage animé (comme le curage : ordre en boustrophedon partant de l'ancre) ───────────
+function startBathySurvey(type) {
+  if (!state.pond) { showToast('Aucun étang chargé', 'error'); return; }
+  // Le firmware embarque déjà l'équivalent (bathyTick(), voir aquarium_esp32.ino) mais aucune
+  // sonde réelle n'est câblée pour l'instant — on garde donc ce relevé simulé uniquement, pour
+  // ne pas laisser croire à une mesure réelle en mode "Robot réel".
+  if (state.robotMode === 'real') {
+    showToast('Relevé réel : sonde bathymétrique non encore câblée — disponible en mode Simulation', 'error');
+    return;
+  }
+  if (state.bathy.running) { showToast('Un relevé est déjà en cours', 'error'); return; }
+  const scanCells = state.cells.map(c => ({ ...c, completed: false }));
+  const order = planPath(scanCells).filter(i => state.cells[i].selected);
+  if (!order.length) { showToast('Aucune case sélectionnée', 'error'); return; }
+
+  const b = state.bathy;
+  b.running         = true;
+  b.order           = order;
+  b.currentStep     = 0;
+  b.pendingType     = type;
+  b.pendingReadings = new Array(state.cells.length).fill(null);
+  b.markerIdx       = order[0];
+
+  const progEl = document.getElementById('bathyScanProgress');
+  if (progEl) progEl.style.display = 'flex';
+  ['btnBathyBefore', 'btnBathyCheck', 'btnBathyAfter'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.disabled = true;
+  });
+
+  b.intervalId = setInterval(bathyScanTick, BATHY_SCAN_TICK_MS);
+  showToast(`Relevé "${bathyTypeLabel(type)}" démarré — ${order.length} cases`, 'success');
+}
+
+function bathyScanTick() {
+  const b = state.bathy;
+  if (!state.pond) { clearInterval(b.intervalId); b.running = false; return; }
+  if (b.currentStep >= b.order.length) { finishBathySurvey(); return; }
+
+  const idx  = b.order[b.currentStep];
+  const cell = state.cells[idx];
+  const seed = pondBathySeed(state.pond);
+
+  let reading;
+  if (b.pendingType === 'after') {
+    const before = latestBathySurvey(state.pond, 'before');
+    const beforeReading = (before && before.readings[idx]) || generateBathyBaseReading(cell, seed);
+    reading = generateBathyAfterReading(beforeReading, cell, !!cell.completed, seed);
+  } else {
+    reading = generateBathyBaseReading(cell, seed);
+  }
+  b.pendingReadings[idx] = reading;
+  b.markerIdx = idx;
+  b.currentStep++;
+
+  const pct = Math.round((b.currentStep / b.order.length) * 100);
+  setText('bathyScanPct', pct + '%');
+  setText('bathyScanCellLabel', `Case ${b.currentStep}/${b.order.length}`);
+  const bar = document.getElementById('bathyScanBar'); if (bar) bar.style.width = pct + '%';
+
+  renderBathyCanvas();
+  updateBathyLegend();
+}
+
+function finishBathySurvey() {
+  const b = state.bathy;
+  clearInterval(b.intervalId);
+  b.running = false; b.intervalId = null;
+
+  const survey = {
+    id: Date.now().toString(),
+    type: b.pendingType,
+    label: bathyTypeLabel(b.pendingType),
+    date: Date.now(),
+    readings: b.pendingReadings,
+  };
+  if (!state.pond.bathySurveys) state.pond.bathySurveys = [];
+  state.pond.bathySurveys.push(survey);
+  persistPondSurveys();
+
+  b.selectedSurveyId = survey.id;
+  if (survey.type === 'before') b.compareBeforeId = survey.id;
+  if (survey.type === 'after')  b.compareAfterId  = survey.id;
+
+  const progEl = document.getElementById('bathyScanProgress');
+  if (progEl) progEl.style.display = 'none';
+  ['btnBathyBefore', 'btnBathyCheck', 'btnBathyAfter'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.disabled = false;
+  });
+
+  showToast(`Relevé "${survey.label}" enregistré — ${b.order.length} cases`, 'success');
+  renderBathyTab();
+}
+
+function cancelBathySurvey() {
+  const b = state.bathy;
+  if (!b.running) return;
+  clearInterval(b.intervalId);
+  b.running = false; b.intervalId = null;
+  const progEl = document.getElementById('bathyScanProgress');
+  if (progEl) progEl.style.display = 'none';
+  ['btnBathyBefore', 'btnBathyCheck', 'btnBathyAfter'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.disabled = false;
+  });
+  showToast('Relevé annulé', '');
+}
+
+function deleteBathySurvey(id) {
+  if (!state.pond?.bathySurveys) return;
+  if (!confirm('Supprimer ce relevé ?')) return;
+  state.pond.bathySurveys = state.pond.bathySurveys.filter(s => s.id !== id);
+  const b = state.bathy;
+  if (b.selectedSurveyId === id) b.selectedSurveyId = null;
+  if (b.compareBeforeId  === id) b.compareBeforeId  = null;
+  if (b.compareAfterId   === id) b.compareAfterId   = null;
+  persistPondSurveys();
+  renderBathyTab();
+  showToast('Relevé supprimé', '');
+}
+
+// ── Vue (2D / 3D), métrique affichée, sélection des relevés comparés ───────────────────────
+function setBathyMode(mode) {
+  state.bathy.mode = mode;
+  document.getElementById('btnBathy2D')?.classList.toggle('active', mode === '2d');
+  document.getElementById('btnBathy3D')?.classList.toggle('active', mode === '3d');
+  renderBathyCanvas();
+}
+function setBathyMetric(metric) {
+  state.bathy.metric = metric;
+  const diffRow = document.getElementById('bathyDiffRow');
+  if (diffRow) diffRow.style.display = metric === 'diff' ? 'flex' : 'none';
+  renderBathyCanvas();
+  updateBathyLegend();
+}
+function setBathySurvey(id) {
+  state.bathy.selectedSurveyId = id;
+  renderBathyCanvas();
+  updateBathyLegend();
+  updateBathySurveyStats();
+}
+function setBathyCompare(which, id) {
+  if (which === 'before') state.bathy.compareBeforeId = id;
+  else state.bathy.compareAfterId = id;
+  renderBathyCanvas();
+  updateBathyLegend();
+  updateBathyCompareStats();
+}
+
+function getBathyMetricValue(reading, metric) {
+  if (!reading) return null;
+  if (metric === 'water') return reading.water;
+  if (metric === 'mud')   return reading.mud;
+  if (metric === 'total') return reading.water + reading.mud;
+  return null;
+}
+function computeBathyDisplayValues() {
+  const pond = state.pond, b = state.bathy;
+  if (!pond) return null;
+  if (b.metric === 'diff') {
+    const before = pond.bathySurveys?.find(s => s.id === b.compareBeforeId);
+    const after  = pond.bathySurveys?.find(s => s.id === b.compareAfterId);
+    if (!before || !after) return null;
+    return state.cells.map((c, i) => {
+      const rb = before.readings[i], ra = after.readings[i];
+      return (rb && ra) ? Math.max(0, rb.mud - ra.mud) : null;
+    });
+  }
+  const survey = pond.bathySurveys?.find(s => s.id === b.selectedSurveyId)
+              || pond.bathySurveys?.[pond.bathySurveys.length - 1];
+  if (!survey) return null;
+  return state.cells.map((c, i) => getBathyMetricValue(survey.readings[i], b.metric));
+}
+
+// ── Échelle de couleurs (dégradé HSL par métrique, cohérent avec la légende graduée) ───────
+const BATHY_SCALES = {
+  water: { h0: 205, h1: 215, s: 70, lMin: 84, lMax: 30 },
+  mud:   { h0: 38,  h1: 22,  s: 62, lMin: 84, lMax: 24 },
+  total: { h0: 172, h1: 190, s: 55, lMin: 84, lMax: 26 },
+  diff:  { h0: 140, h1: 140, s: 55, lMin: 90, lMax: 30 },
+};
+function bathyColorForFrac(metric, frac) {
+  const s = BATHY_SCALES[metric] || BATHY_SCALES.mud;
+  const h = s.h0 + (s.h1 - s.h0) * frac;
+  const l = s.lMin + (s.lMax - s.lMin) * frac;
+  return `hsl(${h.toFixed(0)}, ${s.s}%, ${l.toFixed(0)}%)`;
+}
+function bathyShade(hslStr, deltaL) {
+  const m = /hsl\(([\d.]+),\s*([\d.]+)%,\s*([\d.]+)%\)/.exec(hslStr);
+  if (!m) return hslStr;
+  const h = +m[1], s = +m[2], l = Math.max(0, Math.min(100, +m[3] + deltaL));
+  return `hsl(${h}, ${s}%, ${l}%)`;
+}
+function bathyMetricUnit(metric)  { return metric === 'diff' ? 'm retirés' : 'm'; }
+function bathyMetricLabel(metric) {
+  return { water: "Profondeur d'eau", mud: 'Profondeur de vase', total: 'Profondeur totale', diff: 'Vase retirée' }[metric] || '';
+}
+
+// ── Rendu canevas (2D à plat ou 3D isométrique — pas de WebGL, juste un canevas 2D extrudé) ─
+function renderBathyCanvas() {
+  const canvas = document.getElementById('bathyCanvas');
+  if (!canvas || !_isCanvasActuallyVisible(canvas)) return;
+  const wrap = canvas.parentElement;
+  canvas.width  = wrap.clientWidth;
+  canvas.height = wrap.clientHeight || 320;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!state.pond) return;
+
+  const values = computeBathyDisplayValues();
+  const empty = document.getElementById('bathyEmptyState');
+  if (empty) empty.style.display = values ? 'none' : 'flex';
+  if (!values) { state.bathy._lastMin = null; state.bathy._lastMax = null; return; }
+
+  const defined = values.filter(v => v != null);
+  if (!defined.length) { state.bathy._lastMin = null; state.bathy._lastMax = null; return; }
+  const min = Math.min(...defined), max = Math.max(...defined);
+  const range = (max - min) || (Math.abs(max) || 1) * 0.05 || 1;
+  state.bathy._lastMin = min; state.bathy._lastMax = max;
+
+  if (state.bathy.mode === '3d') renderBathy3D(ctx, canvas.width, canvas.height, values, min, range);
+  else                            renderBathy2D(ctx, canvas.width, canvas.height, values, min, range);
+}
+
+function renderBathy2D(ctx, W, H, values, min, range) {
+  const bbox = getPondBbox(state.pond);
+  const bw = (bbox.maxX - bbox.minX) || 1, bh = (bbox.maxY - bbox.minY) || 1;
+  const scale = Math.min(W / bw, H / bh) * 0.9;
+  const offX = W / 2 - ((bbox.minX + bbox.maxX) / 2) * scale;
+  const offY = H / 2 + ((bbox.minY + bbox.maxY) / 2) * scale;
+  const toScreen = (x, y) => ({ x: x * scale + offX, y: offY - y * scale });
+
+  const cs = params.cellSize, cpx = cs * scale, metric = state.bathy.metric;
+
+  state.cells.forEach((cell, i) => {
+    const v = values[i];
+    const s = toScreen(cell.cx - cs / 2, cell.cy + cs / 2);
+    if (v == null) ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    else ctx.fillStyle = bathyColorForFrac(metric, Math.max(0, Math.min(1, (v - min) / range)));
+    ctx.fillRect(s.x, s.y, cpx, cpx);
+  });
+
+  ctx.beginPath();
+  state.pond.polygon.forEach((p, i) => {
+    const s = toScreen(p.x, p.y);
+    i === 0 ? ctx.moveTo(s.x, s.y) : ctx.lineTo(s.x, s.y);
+  });
+  ctx.closePath();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5; ctx.stroke();
+
+  if (state.bathy.running && state.bathy.markerIdx != null) {
+    const cell = state.cells[state.bathy.markerIdx];
+    if (cell) {
+      const s = toScreen(cell.cx, cell.cy);
+      ctx.beginPath(); ctx.arc(s.x, s.y, Math.max(4, cpx * 0.35), 0, Math.PI * 2);
+      ctx.fillStyle = '#f59e0b'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+  }
+}
+
+// Isométrique : chaque case devient une petite colonne extrudée (hauteur = profondeur), triée
+// arrière→avant pour un empilement visuel correct. Pas une vraie 3D (aucun WebGL/three.js
+// disponible ici), mais un rendu canevas 2D classique qui donne un vrai effet de relief lisible.
+function renderBathy3D(ctx, W, H, values, min, range) {
+  const metric = state.bathy.metric;
+  const tileW = 12, tileH = 6, maxH = 70;
+  const pts = state.cells.map((c, i) => ({ ix: (c.col - c.row) * tileW, iy: (c.col + c.row) * tileH, v: values[i], c }));
+  const xs = pts.map(p => p.ix), ys = pts.map(p => p.iy);
+  const minIx = Math.min(...xs), maxIx = Math.max(...xs);
+  const minIy = Math.min(...ys), maxIy = Math.max(...ys);
+  const offX = W / 2 - (minIx + maxIx) / 2;
+  const offY = H * 0.78 - (minIy + maxIy) / 2 - maxH / 2;
+
+  pts.sort((a, b) => (a.c.col + a.c.row) - (b.c.col + b.c.row));
+
+  for (const p of pts) {
+    if (p.v == null) continue;
+    const frac = Math.max(0, Math.min(1, (p.v - min) / range));
+    const h = 4 + frac * maxH;
+    const x = p.ix + offX, yBase = p.iy + offY, yTop = yBase - h;
+    const color = bathyColorForFrac(metric, frac);
+
+    ctx.fillStyle = bathyShade(color, -22);
+    ctx.beginPath();
+    ctx.moveTo(x - tileW, yBase); ctx.lineTo(x, yBase + tileH);
+    ctx.lineTo(x, yTop + tileH);  ctx.lineTo(x - tileW, yTop);
+    ctx.closePath(); ctx.fill();
+
+    ctx.fillStyle = bathyShade(color, -38);
+    ctx.beginPath();
+    ctx.moveTo(x, yBase + tileH); ctx.lineTo(x + tileW, yBase);
+    ctx.lineTo(x + tileW, yTop);  ctx.lineTo(x, yTop + tileH);
+    ctx.closePath(); ctx.fill();
+
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x, yTop - tileH); ctx.lineTo(x + tileW, yTop);
+    ctx.lineTo(x, yTop + tileH); ctx.lineTo(x - tileW, yTop);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 0.5; ctx.stroke();
+  }
+}
+
+function updateBathyLegend() {
+  const bar = document.getElementById('bathyLegendBar');
+  if (!bar) return;
+  const metric = state.bathy.metric;
+  const s = BATHY_SCALES[metric] || BATHY_SCALES.mud;
+  bar.style.background = `linear-gradient(90deg, hsl(${s.h0},${s.s}%,${s.lMin}%), hsl(${s.h1},${s.s}%,${s.lMax}%))`;
+  const { _lastMin: min, _lastMax: max } = state.bathy;
+  const unit = bathyMetricUnit(metric);
+  setText('bathyLegendMin', min != null ? `${min.toFixed(2)} ${unit}` : '—');
+  setText('bathyLegendMax', max != null ? `${max.toFixed(2)} ${unit}` : '—');
+}
+
+// ── Stats + historique + peuplement des menus déroulants ───────────────────────────────────
+function updateBathySurveyStats() {
+  const pond = state.pond;
+  const survey = pond?.bathySurveys?.find(s => s.id === state.bathy.selectedSurveyId)
+              || pond?.bathySurveys?.[pond?.bathySurveys?.length - 1];
+  if (!survey) {
+    ['bathySurveyCells', 'bathySurveyWaterVol', 'bathySurveyMudVol', 'bathySurveyEnergy', 'bathySurveyDate']
+      .forEach(id => setText(id, '—'));
+    return;
+  }
+  const cellArea = params.cellSize * params.cellSize;
+  const defined  = survey.readings.filter(Boolean);
+  const waterVol = defined.reduce((s, r) => s + r.water * cellArea, 0);
+  const mudVol   = defined.reduce((s, r) => s + r.mud   * cellArea, 0);
+  const wh       = computeBathySurveyEnergyWh(defined.length);
+  setText('bathySurveyCells',    defined.length.toLocaleString('fr-FR'));
+  setText('bathySurveyWaterVol', formatVolM3(waterVol));
+  setText('bathySurveyMudVol',   formatVolM3(mudVol));
+  setText('bathySurveyEnergy',   `${formatEnergyWh(wh)} (≈ ${formatEnergyCost(wh, params.elecTariff)})`);
+  setText('bathySurveyDate',     new Date(survey.date).toLocaleString('fr-FR'));
+}
+
+function updateBathyCompareStats() {
+  const pond = state.pond;
+  const before = pond?.bathySurveys?.find(s => s.id === state.bathy.compareBeforeId);
+  const after  = pond?.bathySurveys?.find(s => s.id === state.bathy.compareAfterId);
+  if (!before || !after) {
+    ['bathyCompareBefore', 'bathyCompareAfter', 'bathyCompareRemoved', 'bathyCompareTheoretical', 'bathyCompareCells']
+      .forEach(id => setText(id, '—'));
+    return;
+  }
+  const cellArea = params.cellSize * params.cellSize;
+  let volBefore = 0, volAfter = 0, removed = 0, n = 0;
+  before.readings.forEach((rb, i) => {
+    const ra = after.readings[i];
+    if (rb) volBefore += rb.mud * cellArea;
+    if (ra) volAfter  += ra.mud * cellArea;
+    if (rb && ra) { removed += Math.max(0, rb.mud - ra.mud) * cellArea; n++; }
+  });
+  setText('bathyCompareBefore',      formatVolM3(volBefore));
+  setText('bathyCompareAfter',       formatVolM3(volAfter));
+  setText('bathyCompareRemoved',     formatVolM3(removed));
+  setText('bathyCompareTheoretical', formatVolM3(mudVolumeForCells(n)));
+  setText('bathyCompareCells',       n.toLocaleString('fr-FR'));
+}
+
+function populateBathySurveySelects() {
+  const pond = state.pond, b = state.bathy;
+  const surveys = pond?.bathySurveys || [];
+  const opts = surveys.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
+
+  const surveySel = document.getElementById('bathySurveySelect');
+  if (surveySel) {
+    surveySel.innerHTML = opts || '<option value="">—</option>';
+    if (!b.selectedSurveyId && surveys.length) b.selectedSurveyId = surveys[surveys.length - 1].id;
+    surveySel.value = b.selectedSurveyId || '';
+  }
+  const beforeSel = document.getElementById('bathyBeforeSelect');
+  const afterSel  = document.getElementById('bathyAfterSelect');
+  if (beforeSel) {
+    beforeSel.innerHTML = opts || '<option value="">—</option>';
+    if (!b.compareBeforeId) { const s = latestBathySurvey(pond, 'before'); if (s) b.compareBeforeId = s.id; }
+    beforeSel.value = b.compareBeforeId || '';
+  }
+  if (afterSel) {
+    afterSel.innerHTML = opts || '<option value="">—</option>';
+    if (!b.compareAfterId) { const s = latestBathySurvey(pond, 'after'); if (s) b.compareAfterId = s.id; }
+    afterSel.value = b.compareAfterId || '';
+  }
+}
+
+function renderBathyHistory() {
+  const container = document.getElementById('bathyHistoryList');
+  if (!container) return;
+  const surveys = state.pond?.bathySurveys || [];
+  if (!surveys.length) { container.innerHTML = '<div class="sel-empty">Aucun relevé enregistré</div>'; return; }
+  container.innerHTML = surveys.slice().reverse().map(s => {
+    const n = s.readings.filter(Boolean).length;
+    return `
+    <div class="sel-item">
+      <span class="sel-item-name" title="${s.label}">${s.label}</span>
+      <span class="sel-item-count">${n} cases</span>
+      <button class="sel-item-btn" onclick="setBathySurvey('${s.id}'); const sel=document.getElementById('bathySurveySelect'); if(sel) sel.value='${s.id}';" title="Afficher">👁</button>
+      <button class="sel-item-btn del" onclick="deleteBathySurvey('${s.id}')" title="Supprimer">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function renderBathyTab() {
+  populateBathySurveySelects();
+  renderBathyCanvas();
+  updateBathyLegend();
+  updateBathySurveyStats();
+  updateBathyCompareStats();
+  renderBathyHistory();
 }
 
 // ============================================================
@@ -3340,6 +3857,8 @@ function setActiveTab(tab) {
   } else if (tab === 'energy') {
     refreshSolarIrradianceForPond();
     updateEnergyTab();
+  } else if (tab === 'bathymetry') {
+    renderBathyTab();
   }
 }
 
@@ -4254,7 +4773,7 @@ function init() {
 
   // Save on unload
   window.addEventListener('beforeunload', saveWork);
-  window.addEventListener('resize', () => { resizeSectionCanvas(); renderSectionCanvas(); });
+  window.addEventListener('resize', () => { resizeSectionCanvas(); renderSectionCanvas(); renderBathyCanvas(); });
 
   // Réaffiche périodiquement l'état des boutons (léger, aucun accès réseau) pour que
   // "Démarrer" se réactive tout seul dès que le battement de cœur d'un pilote disparu devient
