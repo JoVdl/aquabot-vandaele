@@ -522,6 +522,7 @@ function sendRobotCommand(cmd) {
     doc.pumpDescentSpeed = params.pumpDescentSpeed;
     doc.pumpAscentSpeed  = params.pumpAscentSpeed;
     doc.miniCycles       = params.miniCycles;
+    doc.pumpFlow         = params.pumpFlow;
   }
   window.db.collection('aquabot_commands').doc(state.pond.id)
     .set(doc)
@@ -544,6 +545,9 @@ function subscribeRobotTelemetry(pondId) {
       state.robot.state     = t.robotState ?? 'stopped';
       state.robot.pumpState = t.pumpState  ?? 'idle';
       state.robot.pumpDepth = t.pumpDepth  ?? 0;
+      state.robot.pumpTimer = t.pumpTimer  ?? 0;
+      state.robot.energyWh       = t.energyWh      ?? state.robot.energyWh;
+      state.robot.volumePumped  = t.volumePumped  ?? state.robot.volumePumped;
       state.robot.miniCyclesDone = t.miniCyclesDone ?? 0;
       state.robot.currentCellIdx = t.currentCellIdx ?? 0;
       state.robot.heading   = t.heading ?? state.robot.heading;

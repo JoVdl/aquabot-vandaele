@@ -92,6 +92,19 @@ float pumpTimer      = 0;
 int   miniCyclesDone = 0;
 bool  pumpFullAscent = false;
 
+// ── Énergie / volume — même modèle de puissance que la simulation JS
+// (js/app.js: POWER_SPECS/computeInstantPowerBreakdown), pour que l'onglet Énergie affiche
+// des valeurs cohérentes que le robot tourne en simulation ou en réel. Ce ne sont pas des
+// mesures de courant réelles (sauf le capteur ADC sur le moteur de pompe, utilisé uniquement
+// pour la détection fond/haut) — juste une estimation par modèle, comme côté app.
+#define POWER_THRUSTER_MAX_W  55.0f
+#define POWER_PUMP_W        1800.0f
+#define POWER_WINCH_W         80.0f
+#define POWER_ELECTRONICS_W    8.0f
+float energyWh      = 0;   // cumul depuis le démarrage du robot (persistant tant qu'il reste allumé)
+float volumePumped   = 0;   // litres cumulés depuis le démarrage
+float p_pumpFlow     = 500.0f; // L/min, reçu depuis l'app (voir pollCommands)
+
 // ── Moteur descente pompe (5ème moteur, BTS7960) ──────────────────────
 // Canaux LEDC 8-9 (0-7 occupés par les 4 propulseurs)
 #define PUMP_MOTOR_CH_R  8
@@ -418,6 +431,7 @@ void pollCommands() {
     p_pumpDescentSpeed = fields["pumpDescentSpeed"]["doubleValue"] | 0.05f;
     p_pumpAscentSpeed  = fields["pumpAscentSpeed"]["doubleValue"]  | 0.08f;
     p_miniCycles       = fields["miniCycles"]["integerValue"]      | 3;
+    p_pumpFlow         = fields["pumpFlow"]["doubleValue"]         | 500.0f;
 
     if (!plannedPath.empty()) {
       currentCellIdx = 0;
@@ -494,18 +508,38 @@ void sendTelemetry() {
     "\"robotState\":"    + fsS(robotStateStr) + ","
     "\"pumpState\":"     + fsS(pumpStateStr)  + ","
     "\"pumpDepth\":"     + fsD(pumpDepth)     + ","
+    "\"pumpTimer\":"     + fsD(pumpTimer)     + ","
+    "\"energyWh\":"      + fsD(energyWh)      + ","
+    "\"volumePumped\":"  + fsD(volumePumped)  + ","
     "\"miniCyclesDone\":" + fsI(miniCyclesDone) + ","
     "\"currentCellIdx\":" + fsI(currentCellIdx) + ","
     "\"heading\":"       + fsD(currentHeading) + ","
-    "\"motor0\":"        + fsD(motorThrust[0]) + ","
-    "\"motor1\":"        + fsD(motorThrust[1]) + ","
-    "\"motor2\":"        + fsD(motorThrust[2]) + ","
-    "\"motor3\":"        + fsD(motorThrust[3]) + ","
+    // motorThrust est en PWM brut (-255..255) — l'app (côté simulation comme réel) attend un
+    // pourcentage (-100..100), voir computeInstantPowerBreakdown() dans js/app.js.
+    "\"motor0\":"        + fsD(motorThrust[0] / 255.0f * 100.0f) + ","
+    "\"motor1\":"        + fsD(motorThrust[1] / 255.0f * 100.0f) + ","
+    "\"motor2\":"        + fsD(motorThrust[2] / 255.0f * 100.0f) + ","
+    "\"motor3\":"        + fsD(motorThrust[3] / 255.0f * 100.0f) + ","
     "\"simRunning\":"    + fsB(robotState == STATE_MOVING || robotState == STATE_DESCENDING || robotState == STATE_PUMPING || robotState == STATE_ASCENDING) + ","
     "\"timestamp\":"     + fsI((int)(millis() / 1000)) +
     "}}";
 
   firestorePatch("aquabot_telemetry", POND_ID, body);
+}
+
+// Puissance instantanée estimée (W), même modèle que computeInstantPowerBreakdown() côté JS —
+// la pompe (relais 230V) reste comptée comme active tout au long des mini-cycles d'une case
+// (descente → pompage → remontée partielle...), pas seulement pendant STATE_PUMPING, pour les
+// mêmes raisons que côté simulation (éviter les coupures courtes et répétées de la pompe).
+float computeInstantPowerW() {
+  float thrustersW = 0;
+  for (int i = 0; i < 4; i++) {
+    float frac = min(1.0f, fabsf(motorThrust[i]) / 255.0f);
+    thrustersW += POWER_THRUSTER_MAX_W * powf(frac, 1.5f);
+  }
+  bool pumpActive  = (robotState == STATE_DESCENDING || robotState == STATE_PUMPING || robotState == STATE_ASCENDING);
+  bool winchActive = (robotState == STATE_DESCENDING || robotState == STATE_ASCENDING);
+  return thrustersW + (pumpActive ? POWER_PUMP_W : 0) + (winchActive ? POWER_WINCH_W : 0) + POWER_ELECTRONICS_W;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -514,6 +548,9 @@ void sendTelemetry() {
 void robotTick(float dt) {
   const float fullDepth    = p_waterDepth + p_mudDepth;
   const float partialDepth = p_waterDepth;
+
+  energyWh += computeInstantPowerW() * dt / 3600.0f;
+  if (robotState == STATE_PUMPING) volumePumped += (p_pumpFlow / 60.0f) * dt;
 
   switch (robotState) {
 
