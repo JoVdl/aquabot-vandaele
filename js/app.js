@@ -2830,8 +2830,15 @@ let _hoseAnchorMarkerLeaf = null;
 let _depositZoneLeaf     = null; // zone de dépôt des sédiments
 let _depositSegmentLeaf  = null; // segment de tuyau posé au sol, ancre → zone de dépôt
 let _satMode             = true; // vue satellite par défaut
+// Pendant l'animation de zoom de Leaflet, la carte applique un transform CSS temporaire à
+// tout le calque pour simuler le zoom en douceur avant de recalculer les positions réelles.
+// Si on repositionne le robot/tuyau (setLatLngs) pendant ce court instant, Leaflet applique
+// le nouveau zoom deux fois (le transform CSS + la reprojection) → un saut visuel, corrigé
+// seulement au relâchement. On suspend donc ces mises à jour pendant l'animation.
+let _isZoomingMap        = false;
 
 let _leafletMapDash      = null;
+let _isZoomingMapDash    = false; // voir _isZoomingMap ci-dessus
 let _baseLayersDash      = [];   // polygone de l'étang + ancre du tuyau
 let _dynamicLayersDash   = [];   // robot + tuyau (mis à jour à chaque tick)
 let _pathLayerDash       = [];   // parcours planifié
@@ -2918,6 +2925,8 @@ function initLeafletMap() {
   }
 
   L.control.zoom({ position: 'bottomright' }).addTo(_leafletMap);
+  _leafletMap.on('zoomstart', () => { _isZoomingMap = true; });
+  _leafletMap.on('zoomend',   () => { _isZoomingMap = false; updateRobotMarker(); });
   updateLeafletOverlay();
 }
 
@@ -2929,7 +2938,7 @@ function updateLeafletOverlay() {
 // Repositionne le robot à chaque tick — polygone/cercle/ligne géographiques : Leaflet les
 // remet à l'échelle tout seul en continu pendant le zoom, pas besoin de recalculer une taille.
 function updateRobotMarker() {
-  if (!_robotSquareLeaf || !_satMode) return;
+  if (!_robotSquareLeaf || !_satMode || _isZoomingMap) return;
   const r = state.robot;
   const sq = _robotSquareLatLngs(r.x, r.y);
   if (sq.length > 2) _robotSquareLeaf.setLatLngs(sq);
@@ -3357,7 +3366,9 @@ function initLeafletMapDash() {
     _labelsLayerDash = L.tileLayer(styleDash.labels, { attribution: '', maxZoom: 23, maxNativeZoom: styleDash.maxNativeZoom, opacity: 0.65 }).addTo(_leafletMapDash);
   }
   L.control.zoom({ position: 'bottomright' }).addTo(_leafletMapDash);
+  _leafletMapDash.on('zoomstart', () => { _isZoomingMapDash = true; });
   _leafletMapDash.on('zoomend', () => {
+    _isZoomingMapDash = false;
     if (!_satModeDash) return;
     if (_robotSquareDash) _updateDynamicLayersDashPosition();
     else _rebuildDynamicLayersDash();
@@ -3388,7 +3399,7 @@ function updateLeafletOverlayDash() {
 }
 
 function updateRobotMarkerDash() {
-  if (!_satModeDash || !_leafletMapDash) return;
+  if (!_satModeDash || !_leafletMapDash || _isZoomingMapDash) return;
   if (_robotSquareDash) _updateDynamicLayersDashPosition();
   else _rebuildDynamicLayersDash();
   _updateCellStylesDash();
