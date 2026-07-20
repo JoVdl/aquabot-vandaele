@@ -194,10 +194,18 @@ function subscribeSimState(pondId) {
       renderSectionCanvas();
       updateUI();
       if (_satModeDash && _leafletMapDash) {
-        _rebuildCellLayersDash();
+        // Mise à jour légère (style des cases + repositionnement robot/tuyau existants) au
+        // lieu d'une reconstruction complète des calques à CHAQUE snapshot (jusqu'à 5/s) : un
+        // rebuild complet détruit et recrée des milliers de rectangles Leaflet à chaque fois,
+        // ce qui rendait l'affichage très saccadé sur les appareils "suiveurs" (non pilotes) —
+        // le pilote, lui, ne fait jamais que repositionner (voir updateRobotMarkerDash).
+        if (_cellRectsDash.length) _updateCellStylesDash(); else _rebuildCellLayersDash();
         _rebuildPathLayerDash();
-        _rebuildDynamicLayersDash();
+        if (_robotSquareDash) _updateDynamicLayersDashPosition(); else _rebuildDynamicLayersDash();
       }
+      // Onglet Carte (vue satellite) : jusqu'ici jamais mis à jour par ce listener passif —
+      // le robot y restait figé sur un appareil suiveur tant qu'on ne rechargeait pas l'étang.
+      if (_satMode && _leafletMap) updateRobotMarker();
     }, e => console.warn('simState listener:', e.message));
 }
 
