@@ -1650,6 +1650,12 @@ function bathyTypeLabel(type) {
 function formatVolM3(m3) { return m3 >= 1 ? m3.toFixed(2) + ' m³' : (m3 * 1000).toFixed(0) + ' L'; }
 
 function persistPondSurveys() {
+  // state.pond.cells n'est normalement resynchronisé depuis state.cells que par saveWork() —
+  // sans cette ligne, un relevé bathymétrique écrivait un instantané de sélection périmé dans
+  // Firestore (currentSelectedIndices), et l'écho du listener onSnapshot revenait alors écraser
+  // la sélection en cours localement (voir loadPonds()) : la sélection semblait "annulée" après
+  // un relevé alors qu'elle n'avait en fait jamais changé.
+  state.pond.cells = state.cells.map(c => ({ ...c }));
   const idx = state.ponds.findIndex(p => p.id === state.pond.id);
   if (idx !== -1) state.ponds[idx] = state.pond;
   savePonds();
@@ -2000,14 +2006,23 @@ function renderBathyCanvas() {
 
 // Repli sans position GPS : rendu canevas 2D simple (mêmes couleurs, pas de fond satellite,
 // pas de zoom/pan — juste le contour de l'étang à plat).
-function renderBathy2D(ctx, W, H, values, min, range) {
+// Transform monde→écran du repli canevas (2D sans position GPS) — factorisé pour rester
+// identique entre le dessin (renderBathy2D) et la détection de clic (_initBathyCanvasSelectionEvents).
+function _bathyCanvasFallbackTransform(W, H) {
   const bbox = getPondBbox(state.pond);
   const bw = (bbox.maxX - bbox.minX) || 1, bh = (bbox.maxY - bbox.minY) || 1;
   const scale = Math.min(W / bw, H / bh) * 0.9;
   const offX = W / 2 - ((bbox.minX + bbox.maxX) / 2) * scale;
   const offY = H / 2 + ((bbox.minY + bbox.maxY) / 2) * scale;
-  const toScreen = (x, y) => ({ x: x * scale + offX, y: offY - y * scale });
+  return {
+    scale,
+    toScreen: (x, y) => ({ x: x * scale + offX, y: offY - y * scale }),
+    toWorld:  (sx, sy) => ({ x: (sx - offX) / scale, y: (offY - sy) / scale }),
+  };
+}
 
+function renderBathy2D(ctx, W, H, values, min, range) {
+  const { scale, toScreen } = _bathyCanvasFallbackTransform(W, H);
   const cs = params.cellSize, cpx = cs * scale, metric = state.bathy.metric;
 
   state.cells.forEach((cell, i) => {
@@ -2016,6 +2031,10 @@ function renderBathy2D(ctx, W, H, values, min, range) {
     if (v == null) ctx.fillStyle = 'rgba(255,255,255,0.04)';
     else ctx.fillStyle = bathyColorForFrac(metric, Math.max(0, Math.min(1, (v - min) / range)));
     ctx.fillRect(s.x, s.y, cpx, cpx);
+    if (cell.selected) {
+      ctx.strokeStyle = '#0ea5e9'; ctx.lineWidth = Math.max(1, cpx * 0.08);
+      ctx.strokeRect(s.x, s.y, cpx, cpx);
+    }
   });
 
   ctx.beginPath();
@@ -2035,6 +2054,29 @@ function renderBathy2D(ctx, W, H, values, min, range) {
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
     }
   }
+}
+
+// Sélection au clic sur le repli canevas (étang sans position GPS, ou Leaflet indisponible) —
+// quand la vraie carte est utilisée, c'est _addSelectionHandlersBathy() qui gère la sélection.
+function _initBathyCanvasSelectionEvents() {
+  const canvas = document.getElementById('bathyCanvas');
+  if (!canvas) return;
+  canvas.addEventListener('click', e => {
+    if (state.bathy.mode !== '2d' || !state.pond || state.view.mode !== 'select') return;
+    if (isValidOrigin(state.pond.origin) && typeof L !== 'undefined') return; // géré par la carte Leaflet
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const { toWorld } = _bathyCanvasFallbackTransform(canvas.width, canvas.height);
+    const w = toWorld(sx, sy);
+    const hcs = params.cellSize / 2;
+    const cell = state.cells.find(c => Math.abs(c.cx - w.x) <= hcs && Math.abs(c.cy - w.y) <= hcs);
+    if (!cell) return;
+    cell.selected = !cell.selected;
+    renderBathyCanvas();
+    renderAllPondCanvases();
+    if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash();
+    debouncedSaveSelection();
+  });
 }
 
 // Projection isométrique paramétrée par un angle de vue (rotation autour de l'axe vertical) —
@@ -2177,15 +2219,34 @@ function renderBathy3DStacked(ctx, W, H, raw, theta, maxH) {
   ctx.fillText('surface de l\'eau (plafond plat)', 8, layout.minIy + offY - 6);
 }
 
+// Légende graduée — repères de profondeur alignés sur le dégradé (pas juste min/max aux deux
+// bouts) pour qu'on puisse lire directement quelle teinte correspond à quelle profondeur,
+// comme sur les cartes bathymétriques classiques.
 function updateBathyLegend() {
   const bar = document.getElementById('bathyLegendBar');
+  const ticksEl = document.getElementById('bathyLegendTicks');
+  const titleEl = document.getElementById('bathyLegendTitle');
   if (!bar) return;
   const metric = state.bathy.metric;
   bar.style.background = bathyLegendGradientCSS(metric);
+  if (titleEl) titleEl.textContent = bathyMetricLabel(metric);
+
   const { _lastMin: min, _lastMax: max } = state.bathy;
   const unit = bathyMetricUnit(metric);
-  setText('bathyLegendMin', min != null ? `${min.toFixed(2)} ${unit}` : '—');
-  setText('bathyLegendMax', max != null ? `${max.toFixed(2)} ${unit}` : '—');
+  if (!ticksEl) return;
+  if (min == null || max == null) { ticksEl.innerHTML = ''; return; }
+
+  const steps = 5;
+  const range = max - min;
+  let html = '';
+  for (let i = 0; i <= steps; i++) {
+    const frac  = i / steps;
+    const val   = min + range * frac;
+    const align = i === 0 ? '0%' : i === steps ? '-100%' : '-50%';
+    const label = i === steps ? `${val.toFixed(2)} ${unit}` : val.toFixed(2);
+    html += `<span class="bathy-legend-tick" style="left:${(frac * 100).toFixed(2)}%;transform:translateX(${align})">${label}</span>`;
+  }
+  ticksEl.innerHTML = html;
 }
 
 // ── Vue satellite/plan réelle (Leaflet) — même style de fond que le tableau de bord,
@@ -2213,6 +2274,83 @@ function initLeafletMapBathy() {
 
   _rebuildBathyBaseLayer();
   _rebuildBathyCellLayers();
+  _addSelectionHandlersBathy();
+  _applyModeToLeafletBathy();
+}
+
+// Même bascule outil Sélection/Vue que le tableau de bord (state.view.mode, partagé) — en mode
+// Vue, le glisser Leaflet natif (pan) reste actif ; en mode Sélection, il est désactivé pour
+// laisser place au tracé du rectangle de sélection (voir _addSelectionHandlersBathy).
+function _applyModeToLeafletBathy() {
+  if (!_leafletMapBathy) return;
+  if (state.view.mode === 'select') {
+    _leafletMapBathy.dragging.disable();
+    _leafletMapBathy.getContainer().style.cursor = 'crosshair';
+  } else {
+    _leafletMapBathy.dragging.enable();
+    _leafletMapBathy.getContainer().style.cursor = 'grab';
+  }
+}
+
+// Sélection directe sur la carte (glisser = rectangle, clic simple = bascule une case) — mêmes
+// gestes que _addSelectionHandlersDash sur le tableau de bord, même état de sélection partagé
+// (state.cells[i].selected), donc la sélection faite ici est exactement celle utilisée par
+// startBathySurvey() et reste visible/modifiable depuis le tableau de bord aussi.
+function _addSelectionHandlersBathy() {
+  let _startLL = null, _startPt = null, _selRectLayer = null;
+
+  _leafletMapBathy.on('mousedown', e => {
+    if (state.view.mode !== 'select' || e.originalEvent.button !== 0) return;
+    _startLL = e.latlng;
+    _startPt = e.containerPoint;
+    _leafletMapBathy.dragging.disable();
+    e.originalEvent.preventDefault();
+  });
+
+  _leafletMapBathy.on('mousemove', e => {
+    if (!_startLL) return;
+    if (_selRectLayer) _leafletMapBathy.removeLayer(_selRectLayer);
+    _selRectLayer = L.rectangle([_startLL, e.latlng], {
+      color: '#0ea5e9', weight: 1.5, fillColor: '#0ea5e9', fillOpacity: 0.08,
+      dashArray: '5,4', interactive: false,
+    }).addTo(_leafletMapBathy);
+  });
+
+  _leafletMapBathy.on('mouseup', e => {
+    if (!_startLL) return;
+    if (_selRectLayer) { _leafletMapBathy.removeLayer(_selRectLayer); _selRectLayer = null; }
+    if (state.view.mode === 'select') _leafletMapBathy.dragging.disable();
+    else _leafletMapBathy.dragging.enable();
+
+    const origin = state.pond?.origin; if (!origin) { _startLL = null; return; }
+    const dx = Math.abs(e.containerPoint.x - _startPt.x);
+    const dy = Math.abs(e.containerPoint.y - _startPt.y);
+    const hcs = params.cellSize / 2;
+
+    if (dx > 8 || dy > 8) {
+      const swLL = { lat: Math.min(_startLL.lat, e.latlng.lat), lng: Math.min(_startLL.lng, e.latlng.lng) };
+      const neLL = { lat: Math.max(_startLL.lat, e.latlng.lat), lng: Math.max(_startLL.lng, e.latlng.lng) };
+      const sw = latLngToMeters(swLL.lat, swLL.lng, origin.lat, origin.lng);
+      const ne = latLngToMeters(neLL.lat, neLL.lng, origin.lat, origin.lng);
+      let changed = false;
+      for (const cell of state.cells) {
+        if (cell.cx + hcs > sw.x && cell.cx - hcs < ne.x && cell.cy + hcs > sw.y && cell.cy - hcs < ne.y) {
+          cell.selected = true; changed = true;
+        }
+      }
+      if (changed) { _updateBathyCellStyles(); renderAllPondCanvases(); if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash(); debouncedSaveSelection(); }
+    } else {
+      const local = latLngToMeters(e.latlng.lat, e.latlng.lng, origin.lat, origin.lng);
+      const cell = state.cells.find(c => Math.abs(c.cx - local.x) <= hcs && Math.abs(c.cy - local.y) <= hcs);
+      if (cell) { cell.selected = !cell.selected; _updateBathyCellStyles(); renderAllPondCanvases(); if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash(); debouncedSaveSelection(); }
+    }
+    _startLL = null; _startPt = null;
+  });
+
+  _leafletMapBathy.getContainer().addEventListener('mouseleave', () => {
+    if (_selRectLayer) { _leafletMapBathy.removeLayer(_selRectLayer); _selRectLayer = null; }
+    if (_startLL) { if (state.view.mode === 'select') _leafletMapBathy.dragging.disable(); else _leafletMapBathy.dragging.enable(); _startLL = null; }
+  });
 }
 
 function _rebuildBathyBaseLayer() {
@@ -2243,6 +2381,9 @@ function _rebuildBathyCellLayers() {
   }
 }
 
+// La couleur de remplissage vient du relevé (données) ; le contour indique la sélection
+// courante (cases à relever au prochain lancement) — les deux sont indépendants, une case déjà
+// relevée reste sélectionnable pour un nouveau passage (contrôle, après travaux...).
 function _updateBathyCellStyles() {
   if (!_leafletMapBathy || !_bathyCellRects.length) return;
   const values = computeBathyDisplayValues();
@@ -2252,10 +2393,17 @@ function _updateBathyCellStyles() {
   for (let i = 0; i < _bathyCellRects.length; i++) {
     const rect = _bathyCellRects[i];
     if (!rect) continue;
+    const selected = !!state.cells[i]?.selected;
+    const style = selected
+      ? { stroke: true, color: '#0ea5e9', weight: 1.5, opacity: 0.85 }
+      : { stroke: false };
     const v = values ? values[i] : null;
-    if (v == null || min == null) { rect.setStyle({ fillOpacity: 0 }); continue; }
-    const frac = Math.max(0, Math.min(1, (v - min) / range));
-    rect.setStyle({ fillOpacity: 0.72, fillColor: bathyColorForFrac(metric, frac) });
+    if (v == null || min == null) style.fillOpacity = 0;
+    else {
+      const frac = Math.max(0, Math.min(1, (v - min) / range));
+      style.fillOpacity = 0.72; style.fillColor = bathyColorForFrac(metric, frac);
+    }
+    rect.setStyle(style);
   }
 }
 
@@ -2450,7 +2598,8 @@ function selectAllCells() {
   if (!state.cells.length) return;
   state.cells.forEach(c => { c.selected = true; });
   renderAllPondCanvases();
-  if (_satModeDash) _rebuildCellLayersDash();
+  if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash();
+  renderBathyCanvas();
   debouncedSaveSelection();
   showToast(`${state.cells.length} cases sélectionnées`);
 }
@@ -2458,7 +2607,8 @@ function selectAllCells() {
 function deselectAllCells() {
   state.cells.forEach(c => { c.selected = false; });
   renderAllPondCanvases();
-  if (_satModeDash) _rebuildCellLayersDash();
+  if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash();
+  renderBathyCanvas();
   debouncedSaveSelection();
 }
 
@@ -2470,7 +2620,8 @@ function selectRemainingCells() {
     if (!c.completed) count++;
   });
   renderAllPondCanvases();
-  if (_satModeDash) _rebuildCellLayersDash();
+  if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash();
+  renderBathyCanvas();
   debouncedSaveSelection();
   showToast(`${count} cases restantes sélectionnées`);
 }
@@ -3747,11 +3898,12 @@ function planRoute() {
 
 function setMode(mode) {
   state.view.mode = mode;
-  ['btnModeSelect','btnModeSelectMap'].forEach(id => { const el = document.getElementById(id); if(el) el.classList.toggle('active', mode==='select'); });
-  ['btnModeView','btnModeViewMap'].forEach(id => { const el = document.getElementById(id); if(el) el.classList.toggle('active', mode==='view'); });
+  ['btnModeSelect','btnModeSelectMap','btnBathyModeSelect'].forEach(id => { const el = document.getElementById(id); if(el) el.classList.toggle('active', mode==='select'); });
+  ['btnModeView','btnModeViewMap','btnBathyModeView'].forEach(id => { const el = document.getElementById(id); if(el) el.classList.toggle('active', mode==='view'); });
   const cur = mode === 'select' ? 'crosshair' : 'grab';
   ['dashPondCanvas','pondCanvas'].forEach(id => { const el = document.getElementById(id); if(el) el.style.cursor = cur; });
   if (_satModeDash) _applyModeToLeafletDash();
+  _applyModeToLeafletBathy();
 }
 
 // ============================================================
@@ -5065,6 +5217,7 @@ function init() {
   document.querySelectorAll('.nav-tab').forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
 
   initCanvasEvents();
+  _initBathyCanvasSelectionEvents();
 
   updatePondsList();
   updateUI();

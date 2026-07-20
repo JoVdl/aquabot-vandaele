@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v33</span>
+        <span class="logo-version" id="appVersion">v34</span>
       </div>
     </div>
     <div class="header-status">
@@ -634,6 +634,16 @@
                 <button class="view-toggle-btn" id="btnBathy3D" onclick="setBathyMode('3d')">◆ 3D</button>
               </div>
             </div>
+            <div class="bathy-controls-row bathy-selection-row">
+              <div class="bathy-mode-btns">
+                <button class="mode-btn active" id="btnBathyModeSelect" onclick="setMode('select')">✏ Sélection</button>
+                <button class="mode-btn" id="btnBathyModeView" onclick="setMode('view')">✋ Vue</button>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="selectAllCells()">☑ Toutes</button>
+              <button class="btn btn-secondary btn-sm" onclick="selectRemainingCells()">☑ Restantes</button>
+              <button class="btn btn-secondary btn-sm" onclick="deselectAllCells()">☐ Aucune</button>
+            </div>
+            <p class="energy-disclaimer" style="padding-top:6px">Cliquez ou glissez sur la carte pour sélectionner les cases à relever — même sélection que le tableau de bord, elle reste en place après un relevé.</p>
             <div class="bathy-controls-row">
               <select class="param-select" id="bathyMetricSelect" onchange="setBathyMetric(this.value)">
                 <option value="mud">Vase — profondeur</option>
@@ -666,9 +676,11 @@
               <div class="bathy-empty" id="bathyEmptyState">Aucun relevé pour cet étang — lancez un relevé ci-dessus.</div>
             </div>
             <div class="bathy-legend" id="bathyLegend">
-              <span class="bathy-legend-min" id="bathyLegendMin">—</span>
-              <div class="bathy-legend-bar" id="bathyLegendBar"></div>
-              <span class="bathy-legend-max" id="bathyLegendMax">—</span>
+              <div class="bathy-legend-title" id="bathyLegendTitle">—</div>
+              <div class="bathy-legend-bar-wrap">
+                <div class="bathy-legend-bar" id="bathyLegendBar"></div>
+                <div class="bathy-legend-ticks" id="bathyLegendTicks"></div>
+              </div>
             </div>
           </div>
 
