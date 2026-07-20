@@ -201,14 +201,24 @@ function subscribeSimState(pondId) {
     }, e => console.warn('simState listener:', e.message));
 }
 
-// Lecture unique au chargement : reprend la simulation si elle était en cours.
+// En-dessous de ce délai depuis la dernière écriture, on considère qu'un AUTRE appareil est
+// encore activement en train de piloter la simulation (il écrit toutes les ~200ms tant qu'il
+// tourne) — il ne faut surtout pas démarrer une seconde boucle locale concurrente dans ce cas :
+// c'était la vraie cause du décalage entre appareils (chacun calculait sa propre progression
+// en parallèle, se recopiant l'un sur l'autre au gré des écritures Firestore).
+const ACTIVE_DRIVER_THRESHOLD_MS = 4000;
+
+// Lecture unique au chargement : reprend la simulation si elle était en cours ET que
+// personne d'autre ne semble activement la piloter en ce moment (voir le seuil ci-dessus).
 // Séparé de subscribeSimState pour éviter tout risque de re-entrance.
 function checkAndResumeSim(pondId) {
-  if (!USE_CLOUD || !state.pond || state.robotMode === 'real') return;
+  if (!USE_CLOUD || !state.pond || state.pond.id !== pondId || state.robotMode === 'real') return;
   console.log('[checkAndResumeSim] Lecture aquabot_sim pour', pondId);
   window.db.collection('aquabot_sim').doc(pondId).get().then(doc => {
-    console.log('[checkAndResumeSim] doc.exists=', doc.exists, 'sim.running=', state.sim.running);
-    if (!doc.exists || state.sim.running) return;
+    // Le pond actif a pu changer pendant la relecture (première lecture ou nouvelle
+    // vérification différée après le délai d'inactivité) — ne rien appliquer si ce n'est
+    // plus le même étang, sinon on risquerait de reprendre la simulation du mauvais étang.
+    if (!doc.exists || state.sim.running || !state.pond || state.pond.id !== pondId) return;
     const sim = doc.data();
     console.log('[checkAndResumeSim] simRunning=', sim?.simRunning, 'lastUpdate=', sim?.lastUpdate, 'plannedPath.length=', sim?.plannedPath?.length, 'completedCells.length=', sim?.completedCells?.length);
     if (!sim || !sim.simRunning) return;
@@ -218,6 +228,15 @@ function checkAndResumeSim(pondId) {
     console.log('[checkAndResumeSim] pondResetAt=', pondResetAt, 'offlineMs=', offlineMs);
     if (pondResetAt > 0 && (sim.lastUpdate || 0) < pondResetAt) { console.log('[checkAndResumeSim] SKIP: antérieur au RAZ'); return; }
     if (offlineMs > 7200000) { console.log('[checkAndResumeSim] SKIP: trop ancien (>2h)'); return; }
+
+    if (offlineMs < ACTIVE_DRIVER_THRESHOLD_MS) {
+      // Un autre appareil écrit encore là, maintenant — rester simple suiveur passif
+      // (subscribeSimState s'en charge déjà) et revérifier une fois passé le délai, au cas
+      // où cet appareil s'arrêterait entre-temps sans clôturer proprement la simulation.
+      console.log('[checkAndResumeSim] Un autre appareil semble piloter activement — nouvelle vérification dans', ACTIVE_DRIVER_THRESHOLD_MS - offlineMs + 500, 'ms');
+      setTimeout(() => checkAndResumeSim(pondId), ACTIVE_DRIVER_THRESHOLD_MS - offlineMs + 500);
+      return;
+    }
 
     _resumeSimFromCloud(sim);
   }).catch(e => console.warn('checkAndResumeSim:', e.message));
