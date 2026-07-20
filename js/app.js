@@ -174,6 +174,7 @@ function saveSimState() {
     currentCellIdx: state.robot.currentCellIdx,
     pumpState:      state.robot.pumpState,
     pumpDepth:      state.robot.pumpDepth,
+    pumpTimer:      state.robot.pumpTimer,
     miniCyclesDone: state.robot.miniCyclesDone,
     heading:        state.robot.heading,
     motors:         state.robot.motors,
@@ -300,6 +301,7 @@ function subscribeSimState(pondId) {
       state.robot.y              = sim.y ?? state.robot.y;
       state.robot.pumpDepth      = sim.pumpDepth  ?? 0;
       state.robot.pumpState      = sim.simRunning ? (sim.pumpState || 'idle') : 'idle';
+      state.robot.pumpTimer      = sim.pumpTimer  ?? 0;
       state.robot.miniCyclesDone = sim.miniCyclesDone || 0;
       state.robot.currentCellIdx = sim.currentCellIdx || 0;
       state.robot.heading        = sim.heading ?? state.robot.heading;
@@ -2694,6 +2696,19 @@ function updateUI() {
   setText('depthWater', params.waterDepth.toFixed(1));
   setText('depthMud',   params.mudDepth.toFixed(2));
   setText('depthPump',  robot.pumpDepth.toFixed(2));
+
+  // Bandeau "pompage en cours" — décompte du temps restant sur la mini-cycle en cours, pour
+  // se repérer dans le cycle sans avoir à deviner d'après la profondeur de pompe seule.
+  const pumpingBanner = document.getElementById('pumpingBanner');
+  if (pumpingBanner) {
+    if (robot.pumpState === 'pumping') {
+      const remaining = Math.max(0, params.pumpTime - (robot.pumpTimer || 0));
+      pumpingBanner.style.display = 'flex';
+      setText('pumpingBannerTime', Math.ceil(remaining) + 's');
+    } else {
+      pumpingBanner.style.display = 'none';
+    }
+  }
 
   // Bottom bar — cumulative pond totals
   const pondDone  = state.cells.filter(c => c.completed).length;

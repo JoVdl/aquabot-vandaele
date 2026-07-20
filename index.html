@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v28</span>
+        <span class="logo-version" id="appVersion">v29</span>
       </div>
     </div>
     <div class="header-status">
@@ -114,6 +114,11 @@
                 <button class="section-widget-toggle" id="sectionWidgetToggle">−</button>
               </div>
               <div class="section-widget-body" id="sectionWidgetBody">
+                <div class="pumping-banner" id="pumpingBanner" style="display:none">
+                  <span class="pumping-banner-dot"></span>
+                  <span>Pompage en cours</span>
+                  <span class="pumping-banner-time" id="pumpingBannerTime">—s</span>
+                </div>
                 <div class="mini-propulsion">
                   <div class="mini-motor-grid">
                     <div class="mini-motor-cell"><span class="mini-motor-lbl">AV-G</span><span class="mini-motor-val" id="motorVal0mini">0%</span><div class="mini-motor-fill" id="motorFill0mini"></div></div>

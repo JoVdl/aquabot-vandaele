@@ -418,6 +418,22 @@ svg { display: block; }
 .section-widget.collapsed .section-widget-body { display: none; }
 .section-widget-body { padding: 8px; }
 
+/* Bandeau "pompage en cours" — visible uniquement pendant la phase de pompage d'une
+   mini-cycle, avec le décompte en secondes pour situer où on en est dans le cycle. */
+.pumping-banner {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; margin-bottom: 8px;
+  background: var(--accent-glow); border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  font-size: 11px; font-weight: 600; color: var(--accent);
+}
+.pumping-banner-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  background: var(--accent); box-shadow: 0 0 6px var(--accent);
+  animation: ledPulse 1.2s ease-in-out infinite;
+}
+.pumping-banner-time { margin-left: auto; font-variant-numeric: tabular-nums; }
+
 /* Propulsion temps réel — en haut de la coupe verticale, très compact */
 .mini-propulsion {
   display: flex; align-items: center; gap: 6px;
