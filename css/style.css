@@ -805,6 +805,11 @@ svg { display: block; }
 .bathy-rotation-row input[type="range"] { flex: 1; min-width: 80px; }
 .bathy-rotation-lbl { font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
 .bathy-rotation-val { font-family: var(--mono); font-size: 11.5px; color: var(--text-1); min-width: 32px; text-align: right; }
+.bathy-satellite-toggle {
+  display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-2);
+  white-space: nowrap; cursor: pointer; flex: none;
+}
+.bathy-satellite-toggle input { cursor: pointer; }
 .bathy-selection-row { gap: 6px; }
 .bathy-mode-btns { display: flex; gap: 5px; margin-right: 4px; }
 

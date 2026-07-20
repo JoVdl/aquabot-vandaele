@@ -1007,7 +1007,7 @@ const state = {
   bathy: {
     running: false, order: [], currentStep: 0, intervalId: null,
     pendingReadings: [], pendingType: null, markerIdx: null,
-    metric: 'mud', mode: '2d', palette: 'classic', rotation3D: 45,
+    metric: 'mud', mode: '2d', palette: 'classic', rotation3D: 45, show3DMap: true,
     selectedSurveyId: null, compareBeforeId: null, compareAfterId: null,
     _lastMin: null, _lastMax: null,
   },
@@ -2117,6 +2117,131 @@ function computeBathyIsoLayout(W, H, thetaDeg, maxH) {
   };
 }
 
+// ── Fond satellite plaqué sur le plan de sol isométrique 3D ────────────────────────────────
+// Principe : une tuile satellite est une image carrée alignée nord/est en lat/lng. Le plan de
+// sol isométrique est une transformation LINÉAIRE des mètres locaux (voir bathyIsoPoint), donc
+// l'image d'un rectangle par cette transformation est un parallélogramme — exactement ce que
+// canvas sait dessiner nativement via setTransform (3 coins suffisent, le 4ème est impliqué).
+// Pas de déformation manuelle pixel par pixel : c'est canvas qui fait l'interpolation.
+function lonLatToTileXY(lng, lat, z) {
+  const n = 2 ** z;
+  const x = (lng + 180) / 360 * n;
+  const latRad = lat * Math.PI / 180;
+  const y = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
+  return { x, y };
+}
+function tileXYToLonLat(tx, ty, z) {
+  const n = 2 ** z;
+  const lng = tx / n * 360 - 180;
+  const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * ty / n)));
+  return { lng, lat: latRad * 180 / Math.PI };
+}
+
+const _bathy3DTileCache = new Map(); // "z/x/y" → { img, loaded, failed, tx, ty, z }
+let _bathy3DTileList     = [];
+let _bathy3DTilesReady   = false;
+let _bathy3DTileZ        = null;
+let _bathy3DTilesPondId  = null;
+
+// Récupère (une seule fois par étang) les tuiles couvrant l'emprise de l'étang, au zoom natif
+// maximal du fond de carte choisi (mêmes fonds que le tableau de bord/la carte 2D). Un étang
+// résidentiel classique ne demande que quelques tuiles à ce zoom.
+function ensureBathy3DTiles() {
+  const pond = state.pond;
+  if (!pond || !isValidOrigin(pond.origin)) { _bathy3DTileList = []; return; }
+  const style = MAP_STYLES[_currentMapStyle];
+  const z = style.maxNativeZoom;
+  if (_bathy3DTilesPondId === pond.id && _bathy3DTileZ === z && _bathy3DTilesReady) return;
+  _bathy3DTilesPondId = pond.id; _bathy3DTileZ = z;
+
+  const bbox = getPondBbox(pond);
+  const corners = [
+    { x: bbox.minX, y: bbox.minY }, { x: bbox.maxX, y: bbox.minY },
+    { x: bbox.minX, y: bbox.maxY }, { x: bbox.maxX, y: bbox.maxY },
+  ].map(p => metersToLatLng(p.x, p.y)).filter(Boolean);
+  if (!corners.length) { _bathy3DTileList = []; return; }
+
+  let minTx = Infinity, maxTx = -Infinity, minTy = Infinity, maxTy = -Infinity;
+  corners.forEach(c => {
+    const t = lonLatToTileXY(c.lng, c.lat, z);
+    minTx = Math.min(minTx, Math.floor(t.x)); maxTx = Math.max(maxTx, Math.floor(t.x));
+    minTy = Math.min(minTy, Math.floor(t.y)); maxTy = Math.max(maxTy, Math.floor(t.y));
+  });
+  minTx--; minTy--; maxTx++; maxTy++; // marge d'une tuile pour ne pas couper les bords
+
+  // Garde-fou : un étang anormalement grand (ou un zoom mal calculé) ne doit jamais déclencher
+  // des dizaines de requêtes d'un coup.
+  if ((maxTx - minTx + 1) * (maxTy - minTy + 1) > 60) { _bathy3DTileList = []; return; }
+
+  const list = [];
+  for (let tx = minTx; tx <= maxTx; tx++) {
+    for (let ty = minTy; ty <= maxTy; ty++) {
+      const key = `${z}/${tx}/${ty}`;
+      if (!_bathy3DTileCache.has(key)) {
+        const img = new Image(); // pas de crossOrigin : on affiche, on ne relit pas les pixels
+        const entry = { img, loaded: false, failed: false, tx, ty, z };
+        img.onload  = () => { entry.loaded = true; renderBathyCanvas(); };
+        img.onerror = () => { entry.failed = true; };
+        img.src = style.url.replace('{z}', z).replace('{y}', ty).replace('{x}', tx);
+        _bathy3DTileCache.set(key, entry);
+      }
+      list.push(_bathy3DTileCache.get(key));
+    }
+  }
+  _bathy3DTileList = list;
+  _bathy3DTilesReady = true;
+}
+
+// Mètres locaux → point écran isométrique — même transform linéaire que les colonnes (col,row
+// = mètres/cellSize ; ça reste valable pour des points hors grille comme les coins de tuiles).
+function bathyWorldToIso(wx, wy, thetaDeg, tileW, tileH, offX, offY) {
+  const p = bathyIsoPoint(wx / params.cellSize, wy / params.cellSize, thetaDeg, tileW, tileH);
+  return { x: p.ix + offX, y: p.iy + offY };
+}
+
+function renderBathy3DSatelliteFloor(ctx, thetaDeg, tileW, tileH, offX, offY) {
+  const pond = state.pond;
+  if (!state.bathy.show3DMap || !pond || !isValidOrigin(pond.origin)) return;
+  ensureBathy3DTiles();
+  if (!_bathy3DTileList.length) return;
+  const origin = pond.origin;
+  const size = 256;
+  let drawn = 0;
+
+  for (const tile of _bathy3DTileList) {
+    if (!tile.loaded || tile.failed) continue;
+    drawn++;
+    const nw = tileXYToLonLat(tile.tx,     tile.ty,     tile.z);
+    const ne = tileXYToLonLat(tile.tx + 1, tile.ty,     tile.z);
+    const sw = tileXYToLonLat(tile.tx,     tile.ty + 1, tile.z);
+    const mNw = latLngToMeters(nw.lat, nw.lng, origin.lat, origin.lng);
+    const mNe = latLngToMeters(ne.lat, ne.lng, origin.lat, origin.lng);
+    const mSw = latLngToMeters(sw.lat, sw.lng, origin.lat, origin.lng);
+    const P00 = bathyWorldToIso(mNw.x, mNw.y, thetaDeg, tileW, tileH, offX, offY);
+    const P10 = bathyWorldToIso(mNe.x, mNe.y, thetaDeg, tileW, tileH, offX, offY);
+    const P01 = bathyWorldToIso(mSw.x, mSw.y, thetaDeg, tileW, tileH, offX, offY);
+
+    // Transform affine : 3 coins suffisent (a,b = vecteur colonne image ; c,d = vecteur ligne
+    // image ; e,f = origine) — le 4ème coin du parallélogramme en découle automatiquement.
+    const a = (P10.x - P00.x) / size, b = (P10.y - P00.y) / size;
+    const c = (P01.x - P00.x) / size, d = (P01.y - P00.y) / size;
+    ctx.save();
+    ctx.setTransform(a, b, c, d, P00.x, P00.y);
+    ctx.drawImage(tile.img, 0, 0, size, size);
+    ctx.restore();
+  }
+  // Léger voile sombre pour que les colonnes colorées ressortent sur la photo satellite — mais
+  // seulement si au moins une tuile s'est réellement affichée (sinon rien à assombrir, et un
+  // CDN indisponible ne doit pas laisser un plancher gris uni sans explication).
+  if (!drawn) return;
+  ctx.fillStyle = 'rgba(8,12,20,0.32)';
+  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+}
+function setBathy3DSatellite(checked) {
+  state.bathy.show3DMap = checked;
+  renderBathyCanvas();
+}
+
 // Dessine un segment de colonne isométrique (faces gauche/droite assombries + éventuel plafond
 // coloré) entre deux hauteurs d'écran — brique de base réutilisée pour les colonnes simples
 // (une seule teinte) et les colonnes empilées eau+vase à plafond plat (voir renderBathy3DStacked).
@@ -2162,6 +2287,8 @@ function renderBathy3D(ctx, W, H, values, min, range) {
   const offX = W / 2 - (layout.minIx + layout.maxIx) / 2;
   const offY = H * 0.78 - (layout.minIy + layout.maxIy) / 2 - maxH / 2;
 
+  renderBathy3DSatelliteFloor(ctx, theta, tileW, tileH, offX, offY);
+
   const pts = layout.pts.map(p => ({ ...p, v: values[p.i] }));
   // Tri par profondeur écran (valable à n'importe quel angle de rotation, contrairement à un
   // tri fixe sur col+row qui ne fonctionnait que pour la vue à 45°).
@@ -2192,6 +2319,8 @@ function renderBathy3DStacked(ctx, W, H, raw, theta, maxH) {
   // Les colonnes pendent SOUS le plafond plat (surface) au lieu de monter depuis une base —
   // on décale donc la référence vers le haut du canevas pour laisser la place en dessous.
   const offY = H * 0.32 - (layout.minIy + layout.maxIy) / 2;
+
+  renderBathy3DSatelliteFloor(ctx, theta, tileW, tileH, offX, offY);
 
   const pts = layout.pts.map(p => ({ ...p, r: raw[p.i] }));
   pts.sort((a, b) => a.iy - b.iy);

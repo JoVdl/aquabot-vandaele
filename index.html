@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v34</span>
+        <span class="logo-version" id="appVersion">v35</span>
       </div>
     </div>
     <div class="header-status">
@@ -669,6 +669,10 @@
               <span class="bathy-rotation-lbl">↻ Angle de vue</span>
               <input type="range" min="0" max="359" value="45" id="bathyRotationSlider" oninput="setBathy3DRotation(this.value)">
               <span class="bathy-rotation-val" id="bathyRotationVal">45°</span>
+              <label class="bathy-satellite-toggle">
+                <input type="checkbox" id="bathySatelliteToggle" checked onchange="setBathy3DSatellite(this.checked)">
+                🛰 Fond satellite
+              </label>
             </div>
             <div class="bathy-canvas-wrap" id="bathyCanvasWrap">
               <canvas id="bathyCanvas"></canvas>
