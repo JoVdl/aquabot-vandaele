@@ -56,9 +56,24 @@ async function claimSimOwnership(pondId) {
     await docRef.set({ driverId: _deviceSessionId, lastUpdate: Date.now() }, { merge: true });
     return true;
   } catch (e) {
-    console.warn('claimSimOwnership:', e.message);
+    reportFirestoreError(e, 'claimSimOwnership');
     return true; // ne bloque pas l'usage si le réseau/la revendication échoue
   }
+}
+
+// Remonte à l'écran une erreur Firestore de type "quota dépassé" (code resource-exhausted),
+// même sur un projet passé en Blaze : le quota gratuit y devient un simple seuil de
+// facturation plutôt qu'un mur bloquant, mais une limite peut malgré tout être atteinte
+// (facturation désactivée, incident Google, etc.) — dans ce cas toute la synchronisation
+// cloud s'arrête silencieusement sans que rien ne le signale à l'écran. On limite l'affichage
+// à un message toutes les 20s pour ne pas spammer si plusieurs écritures échouent d'un coup.
+let _lastQuotaToastAt = 0;
+function reportFirestoreError(e, context) {
+  console.warn(context + ':', e && e.message);
+  const isQuota = e && (e.code === 'resource-exhausted' || /quota/i.test(e.message || ''));
+  if (!isQuota || Date.now() - _lastQuotaToastAt < 20000) return;
+  _lastQuotaToastAt = Date.now();
+  showToast('Limite Firebase atteinte — la synchronisation entre appareils est interrompue pour le moment.', 'error');
 }
 
 function updateCloudStatus(status) {
@@ -172,7 +187,7 @@ function saveSimState() {
     miniCycles:     params.miniCycles,
     driverId:       _deviceSessionId,
     lastUpdate:     Date.now(),
-  }).catch(e => console.warn('simState save:', e.message));
+  }).catch(e => reportFirestoreError(e, 'simState save'));
 }
 
 // Debounced save of current cell selection (called after user changes selection)
@@ -183,7 +198,7 @@ function debouncedSaveSelection() {
   _selDebounce = setTimeout(() => {
     window.db.collection('aquabot_ponds').doc(state.pond.id)
       .update({ currentSelectedIndices: encodeSelection(state.cells), lastUsed: Date.now() })
-      .catch(e => console.warn('selSync:', e.message));
+      .catch(e => reportFirestoreError(e, 'selSync'));
     // Keep flag for 2s to absorb our own echo from onSnapshot
     setTimeout(() => { _localSelChanging = false; }, 2000);
   }, 500);
@@ -309,7 +324,7 @@ function subscribeSimState(pondId) {
       // Onglet Carte (vue satellite) : jusqu'ici jamais mis à jour par ce listener passif —
       // le robot y restait figé sur un appareil suiveur tant qu'on ne rechargeait pas l'étang.
       if (_satMode && _leafletMap) updateRobotMarker();
-    }, e => console.warn('simState listener:', e.message));
+    }, e => reportFirestoreError(e, 'simState listener'));
 }
 
 // En-dessous de ce délai depuis la dernière écriture, on considère qu'un AUTRE appareil est
@@ -356,7 +371,7 @@ function checkAndResumeSim(pondId) {
     }
 
     _resumeSimFromCloud(sim);
-  }).catch(e => console.warn('checkAndResumeSim:', e.message));
+  }).catch(e => reportFirestoreError(e, 'checkAndResumeSim'));
 }
 
 function _resumeSimFromCloud(sim) {
@@ -502,7 +517,7 @@ function sendRobotCommand(cmd) {
   }
   window.db.collection('aquabot_commands').doc(state.pond.id)
     .set(doc)
-    .catch(e => console.warn('Robot command error:', e));
+    .catch(e => reportFirestoreError(e, 'Robot command error'));
   showToast(`Commande "${cmd}" envoyée au robot`, 'success');
 }
 
@@ -548,7 +563,7 @@ function subscribeRobotTelemetry(pondId) {
       renderAllPondCanvases();
       renderSectionCanvas();
       updateUI();
-    }, e => console.warn('Telemetry listener:', e));
+    }, e => reportFirestoreError(e, 'Telemetry listener'));
 }
 
 // Rebuild a full local pond object from a Firestore document
@@ -577,6 +592,11 @@ function pondFromFirestore(data) {
 const ROBOT_SIZE  = 2.0;
 const CELL_SIZE   = 0.4;
 const SIM_TICK_MS = 50;
+// Intervalle entre deux écritures Firestore de miroir cross-appareils pendant la simulation
+// (voir simulationTick). Plus bas = plus fluide sur les appareils suiveurs, mais plus
+// d'écritures facturées sur le plan Blaze (~180$/million d'écritures) : 300ms est un bon
+// compromis fluidité/coût pour un robot qui se déplace lentement.
+const SIM_SAVE_INTERVAL_MS = 300;
 const CANVAS_IDS  = ['dashPondCanvas', 'pondCanvas'];
 
 // 4 propulseurs en configuration X (avant-gauche, avant-droit, arrière-gauche, arrière-droit)
@@ -633,7 +653,7 @@ function persistParams() {
   localStorage.setItem('aquabot_params', JSON.stringify(params));
   if (USE_CLOUD) {
     window.db.collection('aquabot_meta').doc('params').set(params)
-      .catch(e => console.warn('persistParams:', e.message));
+      .catch(e => reportFirestoreError(e, 'persistParams'));
   }
 }
 
@@ -1485,7 +1505,7 @@ function resetWork(pondId) {
       currentCellIdx: 0,
       plannedPath:    [],
       lastUpdate:     Date.now(),
-    }).catch(e => console.warn('resetWork sim:', e.message));
+    }).catch(e => reportFirestoreError(e, 'resetWork sim'));
   }
 
   if (_satModeDash && _leafletMapDash) { _rebuildPathLayerDash(); _rebuildDynamicLayersDash(); _rebuildCellLayersDash(); }
@@ -1758,7 +1778,7 @@ function subscribeParams() {
     updateEnergyTab();
     updateHoseLengthDisplay();
     renderAllPondCanvases();
-  }, e => console.warn('subscribeParams:', e.message));
+  }, e => reportFirestoreError(e, 'subscribeParams'));
 }
 
 // ============================================================
@@ -2336,7 +2356,7 @@ async function pauseSimulation() {
       if (!owns) {
         window.db.collection('aquabot_sim').doc(state.pond.id)
           .update({ simRunning: false, lastUpdate: Date.now() })
-          .catch(e => console.warn('pause (commande distante):', e.message));
+          .catch(e => reportFirestoreError(e, 'pause (commande distante)'));
         return;
       }
       // Personne ne pilote plus réellement (le vrai pilote a disparu sans s'arrêter proprement
@@ -2382,7 +2402,7 @@ async function stopSimulation() {
       if (!owns) {
         window.db.collection('aquabot_sim').doc(state.pond.id)
           .update({ simRunning: false, robotState: 'stopped', lastUpdate: Date.now() })
-          .catch(e => console.warn('stop (commande distante):', e.message));
+          .catch(e => reportFirestoreError(e, 'stop (commande distante)'));
         return;
       }
     }
@@ -2512,13 +2532,14 @@ function simulationTick() {
   robot.energyWh += computeInstantPowerBreakdown(robot).totalW * dt / 3600;
 
   // Sauvegarde périodique Firestore pour le miroir quasi temps réel sur les autres appareils.
-  // À 200ms, un fonctionnement réel de ~20h/jour représente ~360 000 écritures/jour — largement
-  // au-delà du quota gratuit Firestore (20 000/jour), qui bloque alors TOUTE écriture jusqu'au
-  // lendemain (erreur "resource-exhausted" observée en pratique). À 2s, on reste à ~36 000/jour
-  // (quasi gratuit sur le plan payant, et un décalage de 2s entre appareils reste imperceptible
-  // pour un robot qui se déplace aussi lentement).
+  // Sur le plan payant (Blaze), le quota gratuit journalier n'est plus qu'un seuil de
+  // facturation (et non plus un mur bloquant) : on privilégie donc la fluidité entre appareils
+  // plutôt que de rester sous le quota gratuit à tout prix. Pour référence, à ce rythme, un
+  // fonctionnement réel de ~20h/jour représente environ 240 000 écritures/jour, soit ~10-12
+  // €/mois au tarif Firestore standard si le robot tourne tous les jours — voir
+  // SIM_SAVE_INTERVAL_MS ci-dessous pour ajuster ce compromis fluidité/coût.
   const nowMs = Date.now();
-  if (USE_CLOUD && nowMs - state.sim.lastSimSave > 2000) {
+  if (USE_CLOUD && nowMs - state.sim.lastSimSave > SIM_SAVE_INTERVAL_MS) {
     state.sim.lastSimSave = nowMs;
     saveSimState();
   }
@@ -2757,7 +2778,7 @@ function handleSpeedChange(v) {
     // et pourrait même usurper sa revendication de pilotage via le champ driverId).
     window.db.collection('aquabot_sim').doc(state.pond.id)
       .update({ speed: state.sim.speed, lastUpdate: Date.now() })
-      .catch(e => console.warn('speed (commande distante):', e.message));
+      .catch(e => reportFirestoreError(e, 'speed (commande distante)'));
   }
 }
 
@@ -3144,7 +3165,7 @@ function deletePond(id) {
   if (!confirm('Supprimer cet étang et tout son historique ?')) return;
   if (USE_CLOUD) {
     window.db.collection('aquabot_ponds').doc(id).delete()
-      .catch(err => console.warn('Cloud delete error:', err.message));
+      .catch(err => reportFirestoreError(err, 'Cloud delete error'));
   }
   state.ponds = state.ponds.filter(p => p.id !== id);
   if (state.pond?.id === id) {
