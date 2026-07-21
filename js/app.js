@@ -1009,7 +1009,7 @@ const state = {
     pendingReadings: [], pendingType: null, markerIdx: null,
     metric: 'mud', mode: '2d', palette: 'classic', rotation3D: 45, show3DMap: true,
     zoom3D: 1, pan3D: { x: 0, y: 0 },
-    style3D: 'columns', meshTilt: 28, // 'columns' | 'mesh'
+    style3D: 'columns', tilt3D: 28, // 'columns' | 'mesh' — tilt3D partagé par les deux styles
     selectedSurveyId: null, compareBeforeId: null, compareAfterId: null,
     _lastMin: null, _lastMax: null,
   },
@@ -1807,7 +1807,9 @@ function setBathyMode(mode) {
   const styleRow = document.getElementById('bathy3DStyleRow');
   if (styleRow) styleRow.style.display = mode === '3d' ? 'flex' : 'none';
   const tiltRow = document.getElementById('bathyTiltRow');
-  if (tiltRow) tiltRow.style.display = (mode === '3d' && state.bathy.style3D === 'mesh') ? 'flex' : 'none';
+  if (tiltRow) tiltRow.style.display = mode === '3d' ? 'flex' : 'none';
+  const disclaimer = document.getElementById('bathyTiltDisclaimer');
+  if (disclaimer) disclaimer.style.display = state.bathy.style3D === 'mesh' ? 'block' : 'none';
   const canvas = document.getElementById('bathyCanvas');
   if (canvas) canvas.style.cursor = mode === '3d' ? 'grab' : '';
   renderBathyCanvas();
@@ -1829,18 +1831,20 @@ function setBathy3DRotation(deg) {
 // eau/vase) et "mesh" (surface continue triangulée + éclairage simulé, façon relevé sonar
 // classique — un seul canal de profondeur à la fois). Le fond satellite est disponible dans
 // les deux styles : pour "mesh", il est calé sur la même projection (rotation+inclinaison+
-// échelle) que le relief lui-même — voir renderBathyMeshSatelliteFloor.
+// échelle) que le relief lui-même — voir renderBathyMeshSatelliteFloor. L'inclinaison
+// (tilt3D) est elle aussi partagée par les deux styles — voir BATHY_COLUMNS_TILT_REF_DEG pour
+// comment "columns" reste identique à son rendu historique au réglage par défaut.
 function setBathy3DStyle(style) {
   state.bathy.style3D = style;
   document.getElementById('btnBathy3DColumns')?.classList.toggle('active', style === 'columns');
   document.getElementById('btnBathy3DMesh')?.classList.toggle('active', style === 'mesh');
-  const tiltRow = document.getElementById('bathyTiltRow');
-  if (tiltRow) tiltRow.style.display = style === 'mesh' ? 'flex' : 'none';
+  const disclaimer = document.getElementById('bathyTiltDisclaimer');
+  if (disclaimer) disclaimer.style.display = style === 'mesh' ? 'block' : 'none';
   renderBathyCanvas();
 }
 function setBathy3DTilt(deg) {
-  state.bathy.meshTilt = parseFloat(deg) || 0;
-  setText('bathyTiltVal', Math.round(state.bathy.meshTilt) + '°');
+  state.bathy.tilt3D = parseFloat(deg) || 0;
+  setText('bathyTiltVal', Math.round(state.bathy.tilt3D) + '°');
   renderBathyCanvas();
 }
 
@@ -1889,14 +1893,16 @@ function _bathy3DScreenToLocal(sx, sy, canvas) {
 // proche du clic, dans un rayon raisonnable (sinon : clic hors du relief, on ignore).
 function _bathyHitTest3DColumns(px, py, W, H) {
   const theta = state.bathy.rotation3D, maxH = 70, metric = state.bathy.metric;
-  const layout = computeBathyIsoLayout(W, H, theta, maxH);
+  const tiltDeg = state.bathy.tilt3D;
+  const heightFactor = Math.cos(tiltDeg * Math.PI / 180) / Math.cos(BATHY_COLUMNS_TILT_REF_DEG * Math.PI / 180);
+  const layout = computeBathyIsoLayout(W, H, theta, maxH * heightFactor, tiltDeg);
   let offX, offY;
   if (metric === 'total') {
     offX = W / 2 - (layout.minIx + layout.maxIx) / 2;
     offY = H * 0.32 - (layout.minIy + layout.maxIy) / 2;
   } else {
     offX = W / 2 - (layout.minIx + layout.maxIx) / 2;
-    offY = H * 0.78 - (layout.minIy + layout.maxIy) / 2 - maxH / 2;
+    offY = H * 0.78 - (layout.minIy + layout.maxIy) / 2 - (maxH * heightFactor) / 2;
   }
   const values = computeBathyDisplayValues();
   if (!values) return null;
@@ -1918,7 +1924,7 @@ function _bathyHitTest3DMesh(px, py) {
   const L = state.bathy._meshLayout;
   if (!L || !state.pond) return null;
   const thetaRad = state.bathy.rotation3D * Math.PI / 180;
-  const tiltRad  = state.bathy.meshTilt   * Math.PI / 180;
+  const tiltRad  = state.bathy.tilt3D     * Math.PI / 180;
   const cs = params.cellSize;
   const values = computeBathyDisplayValues();
   if (!values) return null;
@@ -2404,20 +2410,26 @@ function _initBathyCanvasSelectionEvents() {
 // rotation continue mathématiquement correcte : on tourne les coordonnées de grille (col,row)
 // AVANT d'appliquer l'aplatissement iso fixe (tileW/tileH), plutôt que de tourner les points déjà
 // projetés (ce qui déformerait la vue à tout angle qui n'est pas un multiple de 90°).
-function bathyIsoPoint(col, row, thetaDeg, tileW, tileH) {
+// Réglage par défaut du curseur d'inclinaison partagé (state.bathy.tilt3D) — à cette valeur,
+// le style "Colonnes" reproduit EXACTEMENT son rendu iso fixe historique (aucune régression
+// pour qui ne touche pas le curseur). L'ajuster change la "pente" du plan de sol (comme pour
+// le style Surface lisse), voir tiltFactor ci-dessous.
+const BATHY_COLUMNS_TILT_REF_DEG = 28;
+function bathyIsoPoint(col, row, thetaDeg, tileW, tileH, tiltDeg = BATHY_COLUMNS_TILT_REF_DEG) {
   const rad = thetaDeg * Math.PI / 180;
   const rx = col * Math.cos(rad) - row * Math.sin(rad);
   const ry = col * Math.sin(rad) + row * Math.cos(rad);
-  return { ix: rx * tileW, iy: ry * tileH };
+  const tiltFactor = Math.sin(tiltDeg * Math.PI / 180) / Math.sin(BATHY_COLUMNS_TILT_REF_DEG * Math.PI / 180);
+  return { ix: rx * tileW, iy: ry * tileH * tiltFactor };
 }
 
 // La rotation change la forme de l'empreinte projetée à l'écran (une grille rectangulaire
 // tournée peut devenir bien plus large ou plus haute) : on calcule donc une échelle de tuile
 // adaptée à l'angle courant pour que l'étang tienne toujours dans le canevas, quel que soit
 // l'angle de vue — sans ça, certains angles débordaient hors cadre.
-function computeBathyIsoLayout(W, H, thetaDeg, maxH) {
+function computeBathyIsoLayout(W, H, thetaDeg, maxH, tiltDeg = BATHY_COLUMNS_TILT_REF_DEG) {
   const unitW = 2, unitH = 1;
-  const rawPts = state.cells.map(c => bathyIsoPoint(c.col, c.row, thetaDeg, unitW, unitH));
+  const rawPts = state.cells.map(c => bathyIsoPoint(c.col, c.row, thetaDeg, unitW, unitH, tiltDeg));
   const rxs = rawPts.map(p => p.ix), rys = rawPts.map(p => p.iy);
   const spanX = (Math.max(...rxs) - Math.min(...rxs)) || 1;
   const spanY = (Math.max(...rys) - Math.min(...rys)) || 1;
@@ -2427,7 +2439,7 @@ function computeBathyIsoLayout(W, H, thetaDeg, maxH) {
   const tileW = unitW * fitScale, tileH = unitH * fitScale;
 
   const pts = state.cells.map((c, i) => {
-    const { ix, iy } = bathyIsoPoint(c.col, c.row, thetaDeg, tileW, tileH);
+    const { ix, iy } = bathyIsoPoint(c.col, c.row, thetaDeg, tileW, tileH, tiltDeg);
     return { ix, iy, c, i };
   });
   const pxs = pts.map(p => p.ix), pys = pts.map(p => p.iy);
@@ -2515,7 +2527,7 @@ function ensureBathy3DTiles() {
 
 // Mètres locaux → point écran isométrique — même transform linéaire que les colonnes (col,row
 // = mètres/cellSize ; ça reste valable pour des points hors grille comme les coins de tuiles).
-function bathyWorldToIso(wx, wy, thetaDeg, tileW, tileH, offX, offY) {
+function bathyWorldToIso(wx, wy, thetaDeg, tileW, tileH, offX, offY, tiltDeg = BATHY_COLUMNS_TILT_REF_DEG) {
   // Les colonnes utilisent cell.col/row, pas des mètres bruts divisés par cellSize — et
   // generateGrid() calcule cx = bbox.minX + col*cellSize + cellSize/2 (voir plus haut), donc
   // col = (cx - bbox.minX)/cellSize - 0.5. Sans ce même décalage ici, le plancher satellite et
@@ -2525,11 +2537,11 @@ function bathyWorldToIso(wx, wy, thetaDeg, tileW, tileH, offX, offY) {
   const cs = params.cellSize;
   const colEquiv = (wx - bbox.minX) / cs - 0.5;
   const rowEquiv = (wy - bbox.minY) / cs - 0.5;
-  const p = bathyIsoPoint(colEquiv, rowEquiv, thetaDeg, tileW, tileH);
+  const p = bathyIsoPoint(colEquiv, rowEquiv, thetaDeg, tileW, tileH, tiltDeg);
   return { x: p.ix + offX, y: p.iy + offY };
 }
 
-function renderBathy3DSatelliteFloor(ctx, thetaDeg, tileW, tileH, offX, offY) {
+function renderBathy3DSatelliteFloor(ctx, thetaDeg, tileW, tileH, offX, offY, tiltDeg = BATHY_COLUMNS_TILT_REF_DEG) {
   const pond = state.pond;
   if (!state.bathy.show3DMap || !pond || !isValidOrigin(pond.origin)) return;
   ensureBathy3DTiles();
@@ -2547,9 +2559,9 @@ function renderBathy3DSatelliteFloor(ctx, thetaDeg, tileW, tileH, offX, offY) {
     const mNw = latLngToMeters(nw.lat, nw.lng, origin.lat, origin.lng);
     const mNe = latLngToMeters(ne.lat, ne.lng, origin.lat, origin.lng);
     const mSw = latLngToMeters(sw.lat, sw.lng, origin.lat, origin.lng);
-    const P00 = bathyWorldToIso(mNw.x, mNw.y, thetaDeg, tileW, tileH, offX, offY);
-    const P10 = bathyWorldToIso(mNe.x, mNe.y, thetaDeg, tileW, tileH, offX, offY);
-    const P01 = bathyWorldToIso(mSw.x, mSw.y, thetaDeg, tileW, tileH, offX, offY);
+    const P00 = bathyWorldToIso(mNw.x, mNw.y, thetaDeg, tileW, tileH, offX, offY, tiltDeg);
+    const P10 = bathyWorldToIso(mNe.x, mNe.y, thetaDeg, tileW, tileH, offX, offY, tiltDeg);
+    const P01 = bathyWorldToIso(mSw.x, mSw.y, thetaDeg, tileW, tileH, offX, offY, tiltDeg);
 
     // Transform affine : 3 coins suffisent (a,b = vecteur colonne image ; c,d = vecteur ligne
     // image ; e,f = origine) — le 4ème coin du parallélogramme en découle automatiquement.
@@ -2610,19 +2622,24 @@ function drawIsoColumnSegment(ctx, x, yTopScreen, yBottomScreen, tileW, tileH, c
 function renderBathy3D(ctx, W, H, values, min, range) {
   const metric = state.bathy.metric;
   const theta  = state.bathy.rotation3D;
+  const tiltDeg = state.bathy.tilt3D;
+  // Comme pour le style Surface lisse : à l'inclinaison de référence, facteur = 1 (rendu
+  // historique inchangé) ; s'incliner plus (vue plus de dessus) aplatit les colonnes, s'incliner
+  // moins (vue plus rasante) les accentue — cohérent avec l'effet sur le plan de sol.
+  const heightFactor = Math.cos(tiltDeg * Math.PI / 180) / Math.cos(BATHY_COLUMNS_TILT_REF_DEG * Math.PI / 180);
   const maxH = 70;
 
   if (metric === 'total') {
     const raw = computeBathyRawReadings();
-    if (raw) { renderBathy3DStacked(ctx, W, H, raw, theta, maxH); return; }
+    if (raw) { renderBathy3DStacked(ctx, W, H, raw, theta, maxH, tiltDeg); return; }
   }
 
-  const layout = computeBathyIsoLayout(W, H, theta, maxH);
+  const layout = computeBathyIsoLayout(W, H, theta, maxH * heightFactor, tiltDeg);
   const { tileW, tileH } = layout;
   const offX = W / 2 - (layout.minIx + layout.maxIx) / 2;
-  const offY = H * 0.78 - (layout.minIy + layout.maxIy) / 2 - maxH / 2;
+  const offY = H * 0.78 - (layout.minIy + layout.maxIy) / 2 - (maxH * heightFactor) / 2;
 
-  renderBathy3DSatelliteFloor(ctx, theta, tileW, tileH, offX, offY);
+  renderBathy3DSatelliteFloor(ctx, theta, tileW, tileH, offX, offY, tiltDeg);
 
   const pts = layout.pts.map(p => ({ ...p, v: values[p.i] }));
   // Tri par profondeur écran (valable à n'importe quel angle de rotation, contrairement à un
@@ -2632,7 +2649,7 @@ function renderBathy3D(ctx, W, H, values, min, range) {
   for (const p of pts) {
     if (p.v == null) continue;
     const frac = Math.max(0, Math.min(1, (p.v - min) / range));
-    const h = 4 + frac * maxH;
+    const h = (4 + frac * maxH) * heightFactor;
     const x = p.ix + offX, yBase = p.iy + offY, yTop = yBase - h;
     drawIsoColumnSegment(ctx, x, yTop, yBase, tileW, tileH, bathyColorRGB(metric, frac), true);
   }
@@ -2640,22 +2657,23 @@ function renderBathy3D(ctx, W, H, values, min, range) {
 
 // "Profondeur totale" empile les deux couches (vase sous l'eau) avec un plafond commun plat —
 // la surface de l'eau étant globalement de niveau, seul le fond varie d'une case à l'autre.
-function renderBathy3DStacked(ctx, W, H, raw, theta, maxH) {
+function renderBathy3DStacked(ctx, W, H, raw, theta, maxH, tiltDeg = BATHY_COLUMNS_TILT_REF_DEG) {
   const waterVals = [], mudVals = [], totalVals = [];
   raw.forEach(r => { if (r) { waterVals.push(r.water); mudVals.push(r.mud); totalVals.push(r.water + r.mud); } });
   if (!totalVals.length) return;
   const wMin = Math.min(...waterVals), wRange = (Math.max(...waterVals) - wMin) || 1;
   const mMin = Math.min(...mudVals),   mRange = (Math.max(...mudVals)   - mMin) || 1;
   const maxTotal = Math.max(...totalVals) || 1;
+  const heightFactor = Math.cos(tiltDeg * Math.PI / 180) / Math.cos(BATHY_COLUMNS_TILT_REF_DEG * Math.PI / 180);
 
-  const layout = computeBathyIsoLayout(W, H, theta, maxH);
+  const layout = computeBathyIsoLayout(W, H, theta, maxH * heightFactor, tiltDeg);
   const { tileW, tileH } = layout;
   const offX = W / 2 - (layout.minIx + layout.maxIx) / 2;
   // Les colonnes pendent SOUS le plafond plat (surface) au lieu de monter depuis une base —
   // on décale donc la référence vers le haut du canevas pour laisser la place en dessous.
   const offY = H * 0.32 - (layout.minIy + layout.maxIy) / 2;
 
-  renderBathy3DSatelliteFloor(ctx, theta, tileW, tileH, offX, offY);
+  renderBathy3DSatelliteFloor(ctx, theta, tileW, tileH, offX, offY, tiltDeg);
 
   const pts = layout.pts.map(p => ({ ...p, r: raw[p.i] }));
   pts.sort((a, b) => a.iy - b.iy);
@@ -2669,7 +2687,7 @@ function renderBathy3DStacked(ctx, W, H, raw, theta, maxH) {
   for (const p of pts) {
     if (!p.r) continue;
     const total = p.r.water + p.r.mud;
-    const colH   = 4 + (total / maxTotal) * maxH;
+    const colH   = (4 + (total / maxTotal) * maxH) * heightFactor;
     const waterH = total > 0 ? colH * (p.r.water / total) : 0;
 
     const x = p.ix + offX, yTop = p.iy + offY; // plafond plat commun — surface de l'eau
@@ -2767,7 +2785,7 @@ function renderBathy3DMesh(ctx, W, H, values, min, range) {
   if (!pond) return;
   const metric = state.bathy.metric;
   const thetaRad = state.bathy.rotation3D * Math.PI / 180;
-  const tiltRad  = state.bathy.meshTilt   * Math.PI / 180;
+  const tiltRad  = state.bathy.tilt3D     * Math.PI / 180;
   const cs = params.cellSize;
 
   // Exagération verticale relative à la taille de l'étang — sans ça, un relief de quelques
@@ -2842,6 +2860,27 @@ function renderBathy3DMesh(ctx, W, H, values, min, range) {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const t of tris) {
     for (const p of [t.a, t.b, t.c]) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+  }
+  // Si le fond satellite est actif, l'emprise réelle de l'étang entre aussi dans le calcul
+  // d'échelle — pas seulement les cases relevées. Sans ça, quand seule une petite partie de
+  // l'étang a un relevé, le maillage (petit) fixe l'échelle tout seul et le plancher satellite
+  // (toute l'emprise réelle, généralement bien plus grande) se retrouve à une échelle
+  // incohérente avec lui : le sol déborde du cadre ou semble décalé par rapport au relief,
+  // un décalage qui varie avec l'inclinaison puisque la hauteur du relief (via z) et l'étendue
+  // au sol (via ry) ne sont pas affectées de la même façon par sin/cos(inclinaison).
+  if (state.bathy.show3DMap && isValidOrigin(pond.origin)) {
+    const pbbox = getPondBbox(pond);
+    const corners = [
+      [pbbox.minX, pbbox.minY], [pbbox.maxX, pbbox.minY],
+      [pbbox.minX, pbbox.maxY], [pbbox.maxX, pbbox.maxY],
+    ];
+    for (const [wx, wy] of corners) {
+      const colEquiv = (wx - pbbox.minX) / cs - 0.5;
+      const rowEquiv = (wy - pbbox.minY) / cs - 0.5;
+      const p = bathyMeshProjectXY(colEquiv, rowEquiv, 0, thetaRad, tiltRad, heightScale, cs);
       if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
       if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
     }
@@ -4986,6 +5025,18 @@ function setActiveTab(tab) {
     refreshSolarIrradianceForPond();
     updateEnergyTab();
   } else if (tab === 'bathymetry') {
+    // Un étang fraîchement chargé a TOUTES ses cases sélectionnées par défaut (comportement
+    // voulu pour le curage — voir generateGrid). Cette sélection est partagée avec le tableau
+    // de bord, donc arriver ici avec tout sélectionné noie la carte sous les contours bleus et
+    // masque les relevés tant qu'on n'a pas cliqué "Aucune". On ne l'efface QUE si elle
+    // correspond encore exactement à ce défaut intouché (jamais une sélection partielle
+    // volontaire faite pour un relevé) — l'effet est le même qu'un clic manuel sur "Aucune".
+    if (state.cells.length && state.cells.every(c => c.selected)) {
+      state.cells.forEach(c => { c.selected = false; });
+      renderAllPondCanvases();
+      if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash();
+      debouncedSaveSelection();
+    }
     renderBathyTab();
   }
 }

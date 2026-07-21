@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v42</span>
+        <span class="logo-version" id="appVersion">v43</span>
       </div>
     </div>
     <div class="header-status">
@@ -686,7 +686,7 @@
               <span class="bathy-rotation-lbl">↕ Inclinaison</span>
               <input type="range" min="10" max="80" value="28" id="bathyTiltSlider" oninput="setBathy3DTilt(this.value)">
               <span class="bathy-rotation-val" id="bathyTiltVal">28°</span>
-              <p class="energy-disclaimer" style="padding:0;margin:0;flex-basis:100%">Surface lisse : un seul canal de profondeur à la fois, pas de transparence eau/vase combinée (voir le style Colonnes pour ça). Le fond satellite, si activé, est calé exactement sur le relief.</p>
+              <p class="energy-disclaimer" style="padding:0;margin:0;flex-basis:100%;display:none" id="bathyTiltDisclaimer">Surface lisse : un seul canal de profondeur à la fois, pas de transparence eau/vase combinée (voir le style Colonnes pour ça). Le fond satellite, si activé, est calé exactement sur le relief.</p>
             </div>
             <div class="bathy-canvas-wrap" id="bathyCanvasWrap">
               <canvas id="bathyCanvas"></canvas>
