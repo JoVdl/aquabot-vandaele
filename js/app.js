@@ -1828,12 +1828,12 @@ function latestBathySurvey(pond, type) {
 // profondeur globale uniforme des paramètres — comportement inchangé pour un étang sans
 // bathymétrie.
 function getCellBathyBaseline(cellIdx) {
-  // Exclut le relevé "en direct" actuellement en cours de remplissage (voir
-  // startLiveBathySurveyIfEnabled) : c'est le RÉSULTAT de ce chantier, pas une référence
-  // d'entrée — sans cette exclusion, il redeviendrait systématiquement "le plus récent" dès sa
-  // création (toutes ses lectures encore nulles), masquant le vrai dernier relevé exploitable
-  // (ex. "avant travaux") et faisant retomber chaque case sur le repli global par erreur.
-  const surveys = (state.pond?.bathySurveys || []).filter(s => s.id !== state.bathy._liveSurveyId);
+  // Le relevé "en direct" (voir startLiveBathySurveyIfEnabled) est une bathymétrie UNIQUE qui
+  // évolue au fil des chantiers successifs, pas un instantané isolé du chantier en cours — il doit
+  // donc bien participer normalement à "le plus récent", y compris pour une case déjà nettoyée
+  // lors d'un chantier précédent (sa vase déjà réduite EST la vraie référence actuelle, pas la
+  // valeur d'avant-travaux d'origine).
+  const surveys = state.pond?.bathySurveys || [];
   if (surveys.length) {
     const latest = surveys.reduce((a, b) => (b.date > a.date ? b : a));
     const r = latest.readings[cellIdx];
@@ -1877,20 +1877,30 @@ function setBathyLiveDuringWork(checked) {
   state.bathy.liveDuringWork = !!checked;
 }
 
-// Crée un nouveau relevé bathymétrique vide au tout début d'un chantier (démarrage à froid, pas
-// une reprise après pause — voir startSimulation) si l'utilisateur a coché le suivi en direct.
-// Ses lectures se remplissent case par case au fur et à mesure du travail (voir
-// _recordLiveBathyReading), pour visualiser en temps réel l'évolution de la vase et l'efficacité
-// du robot, sans attendre un relevé bathymétrique séparé après coup.
+// Bathymétrie "en direct" : une UNIQUE bathymétrie par étang, qui évolue case par case au fil des
+// chantiers successifs (voir _recordLiveBathyReading) si l'utilisateur a coché le suivi en direct
+// — pas un nouveau relevé à chaque "Démarrer" (voir startSimulation). Les bathymétries manuelles
+// (relevé "avant travaux", contrôle, génération rapide) restent des instantanés distincts, propres
+// à l'historique ; celle-ci est la seule qui se met à jour en continu et s'affiche comme la
+// dernière bathymétrie de l'étang.
 function startLiveBathySurveyIfEnabled() {
   if (!state.bathy.liveDuringWork || !state.pond) { state.bathy._liveSurveyId = null; return; }
-  // Parti d'une COPIE du relevé le plus récent existant, pas d'un tableau vide : sur un petit
-  // chantier ne couvrant qu'une poignée de cases, un relevé vide ne contenait ensuite que ces
-  // quelques cases — tout le reste de l'étang restait à null, et l'aperçu bathymétrique (qui
-  // affiche le DERNIER relevé) se retrouvait quasi vide dès la création de ce relevé "en direct",
-  // avant même la moindre case nettoyée. En partant d'une copie complète, puis en n'écrasant que
-  // les cases réellement nettoyées au fil du travail (voir _recordLiveBathyReading), ce relevé
-  // reste toujours complet, dès sa création.
+  const existing = state.pond.bathySurveys?.find(s => s.type === 'live');
+  if (existing) {
+    // Déjà une bathymétrie en direct pour cet étang (d'un chantier précédent) : on continue de
+    // l'alimenter, pas de nouvelle copie.
+    state.bathy._liveSurveyId    = existing.id;
+    state.bathy.selectedSurveyId = existing.id;
+    existing.date  = Date.now();
+    existing.label = bathyTypeLabel('live');
+    persistPondSurveys();
+    return;
+  }
+  // Toute première bathymétrie en direct pour cet étang : partie d'une COPIE du relevé le plus
+  // récent existant, pas d'un tableau vide — sur un petit chantier ne couvrant qu'une poignée de
+  // cases, un relevé vide ne contenait ensuite que ces quelques cases, tout le reste de l'étang
+  // restant à null, et l'aperçu bathymétrique (qui affiche le DERNIER relevé) se retrouvait quasi
+  // vide dès la création, avant même la moindre case nettoyée.
   const latest = state.pond.bathySurveys?.length
     ? state.pond.bathySurveys.reduce((a, b) => (b.date > a.date ? b : a))
     : null;
@@ -3606,23 +3616,16 @@ function setDash3DTilt(deg) {
   renderDash3D();
 }
 
-// Profondeur de vase par case pour la vue 3D en direct — préfère le relevé "en cours" pendant un
-// chantier actif (la vase y disparaît en direct au fil du curage), sinon le dernier relevé
-// "avant travaux" connu, sinon le tout dernier relevé disponible, sinon aucune donnée.
-// "Référence" = le relevé le plus récent EXCLUANT le suivi en direct courant (même principe que
-// getCellBathyBaseline) : pendant un chantier, c'est le dernier "avant travaux" ; une fois le
-// chantier terminé (_liveSurveyId réinitialisé par finalizeLiveBathySurveyIfActive, qui met aussi
-// à jour la date), c'est justement le relevé "après travaux" qui vient d'être finalisé. Fusionne
-// case traitée cette session (valeur en direct) avec le reste (valeur de référence inchangée) —
-// sinon le relevé "en direct", vide à sa création, effacerait tout le relief le temps du chantier.
+// Profondeur eau/vase par case pour la vue 3D en direct — le relevé le plus récent, tous types
+// confondus. La bathymétrie "en direct" (voir startLiveBathySurveyIfEnabled) est une bathymétrie
+// UNIQUE, toujours complète (jamais de case à null), dont la date se rafraîchit à chaque chantier
+// : elle ressort donc naturellement comme "la plus récente" pendant et après un chantier suivi,
+// sans logique de fusion séparée à maintenir ici.
 function computeDashLiveRawReadings() {
   const pond = state.pond;
   if (!pond?.bathySurveys?.length) return null;
-  const liveSurvey = pond.bathySurveys.find(s => s.id === state.bathy._liveSurveyId);
-  const others = pond.bathySurveys.filter(s => s.id !== state.bathy._liveSurveyId);
-  const baseSurvey = others.length ? others.reduce((a, b) => (b.date > a.date ? b : a)) : null;
-  if (!liveSurvey && !baseSurvey) return null;
-  return state.cells.map((c, i) => liveSurvey?.readings[i] || baseSurvey?.readings[i] || null);
+  const latest = pond.bathySurveys.reduce((a, b) => (b.date > a.date ? b : a));
+  return latest.readings;
 }
 
 // Vue 3D du tableau de bord — réutilise directement renderBathy3DMeshStacked (socle + vase +
@@ -5534,33 +5537,6 @@ function simulationTick() {
   if (_satModeDash) updateRobotMarkerDash();
 }
 
-// Le suivi bathymétrique en direct (voir startLiveBathySurveyIfEnabled/_recordLiveBathyReading)
-// EST déjà, cellule par cellule, la donnée "après travaux" la plus à jour en fin de chantier —
-// inutile d'imposer un second scan complet séparé. On le retype/relabellise donc en relevé
-// "après travaux" définitif et on le branche sur le comparatif avant/après existant.
-function finalizeLiveBathySurveyIfActive() {
-  const b = state.bathy;
-  if (!b._liveSurveyId || !state.pond) return;
-  const survey = state.pond.bathySurveys?.find(s => s.id === b._liveSurveyId);
-  if (!survey) { b._liveSurveyId = null; return; }
-  survey.type  = 'after';
-  survey.date  = Date.now();
-  survey.label = `Après travaux (temps réel) — ${new Date().toLocaleDateString('fr-FR')}`;
-  const before = latestBathySurvey(state.pond, 'before');
-  // Complète les cases non travaillées cette session (sélection partielle, chantier arrêté tôt...)
-  // avec leur valeur "avant travaux" inchangée — même principe que la génération rapide "zone en
-  // cours" (voir generateQuickBathyAfterSurvey) : un relevé "après travaux" doit rester une photo
-  // cohérente de l'étang entier, pas seulement des quelques cases effectivement traitées.
-  if (before) {
-    survey.readings = survey.readings.map((r, i) => r || (before.readings[i] ? { ...before.readings[i] } : null));
-  }
-  if (before) b.compareBeforeId = before.id;
-  b.compareAfterId = survey.id;
-  b._liveSurveyId = null; // ce chantier est terminé — un prochain "Démarrer" créera un nouveau suivi
-  persistPondSurveys();
-  if (state.activeTab === 'bathymetry') renderBathyTab();
-}
-
 function finishSimulation() {
   state.sim.running = false;
   clearInterval(state.sim.intervalId);
@@ -5572,7 +5548,11 @@ function finishSimulation() {
   setLED('blue', 'Terminé');
   updateButtonStates();
   updateStatus('Travail terminé !', 'Toutes les cases traitées');
-  finalizeLiveBathySurveyIfActive();
+  // Le suivi bathymétrique en direct (voir startLiveBathySurveyIfEnabled/_recordLiveBathyReading)
+  // reste la MÊME bathymétrie unique d'un chantier à l'autre — rien à figer/reconvertir ici, elle
+  // continue simplement d'être la dernière bathymétrie de l'étang, prête à être mise à jour au
+  // prochain chantier. Une bathymétrie "après travaux" figée reste possible à tout moment, mais
+  // en tant qu'action manuelle distincte (relevé complet ou génération rapide), pas automatique.
   saveWork();
   updatePondsList();
   showToast('Curage terminé ! Résultats enregistrés.', 'success');
