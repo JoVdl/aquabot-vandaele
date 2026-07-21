@@ -1827,17 +1827,15 @@ function setBathy3DRotation(deg) {
 
 // Deux styles de vue 3D : "columns" (colonnes extrudées, avec fond satellite et transparence
 // eau/vase) et "mesh" (surface continue triangulée + éclairage simulé, façon relevé sonar
-// classique — un seul canal de profondeur à la fois, pas de fond satellite pour l'instant).
+// classique — un seul canal de profondeur à la fois). Le fond satellite est disponible dans
+// les deux styles : pour "mesh", il est calé sur la même projection (rotation+inclinaison+
+// échelle) que le relief lui-même — voir renderBathyMeshSatelliteFloor.
 function setBathy3DStyle(style) {
   state.bathy.style3D = style;
   document.getElementById('btnBathy3DColumns')?.classList.toggle('active', style === 'columns');
   document.getElementById('btnBathy3DMesh')?.classList.toggle('active', style === 'mesh');
   const tiltRow = document.getElementById('bathyTiltRow');
   if (tiltRow) tiltRow.style.display = style === 'mesh' ? 'flex' : 'none';
-  // Le fond satellite n'existe que pour les colonnes (texturer une surface maillée inclinée
-  // demanderait un mapping bien plus complexe) — on masque juste ce contrôle en mode surface.
-  const satToggle = document.getElementById('bathySatelliteToggle');
-  if (satToggle) satToggle.closest('label').style.display = style === 'mesh' ? 'none' : 'flex';
   renderBathyCanvas();
 }
 function setBathy3DTilt(deg) {
@@ -2542,8 +2540,59 @@ function renderBathy3DStacked(ctx, W, H, raw, theta, maxH) {
 
 // ── Style "Surface lisse" — maillage triangulé continu + éclairage simulé, façon relevé
 // bathymétrique sonar classique (une seule teinte de profondeur à la fois, ombrage selon la
-// pente locale). Pas de fond satellite ni de transparence eau/vase ici — voir renderBathy3D /
-// renderBathy3DStacked pour le style "Colonnes" qui a ces deux fonctionnalités.
+// pente locale). Pas de transparence eau/vase combinée ici — voir renderBathy3D /
+// renderBathy3DStacked pour le style "Colonnes" qui a cette fonctionnalité.
+//
+// Fond satellite : contrairement aux colonnes (plan de sol fixe, iso à angle fixe), le
+// maillage utilise sa propre projection (rotation + inclinaison variable + échelle ajustée à
+// l'étendue du relief). Pour que le relief ait l'air réellement "creusé" dans la vraie carte
+// (et pas posé au-dessus d'un rectangle séparé), les tuiles satellite sont projetées avec
+// EXACTEMENT la même fonction et la même échelle que les sommets du maillage — voir
+// renderBathyMeshSatelliteFloor(), appelée depuis renderBathy3DMesh avec son "project" local.
+function renderBathyMeshSatelliteFloor(ctx, project, fitScale, offX, offY) {
+  const pond = state.pond;
+  if (!state.bathy.show3DMap || !pond || !isValidOrigin(pond.origin)) return;
+  ensureBathy3DTiles();
+  if (!_bathy3DTileList.length) return;
+  const origin = pond.origin;
+  const bbox = getPondBbox(pond);
+  const cs = params.cellSize;
+  const size = 256;
+  let drawn = 0;
+
+  // Même conversion mètres→col/row que bathyWorldToIso, mais projetée via la fonction du
+  // maillage (val=0 : le plan de sol correspond à une profondeur nulle) plutôt que via
+  // bathyIsoPoint — c'est ce qui garantit l'alignement avec le relief.
+  function toScreen(wx, wy) {
+    const colEquiv = (wx - bbox.minX) / cs - 0.5;
+    const rowEquiv = (wy - bbox.minY) / cs - 0.5;
+    const p = project(colEquiv, rowEquiv, 0);
+    return { x: p.x * fitScale + offX, y: p.y * fitScale + offY };
+  }
+
+  for (const tile of _bathy3DTileList) {
+    if (!tile.loaded || tile.failed) continue;
+    drawn++;
+    const nw = tileXYToLonLat(tile.tx,     tile.ty,     tile.z);
+    const ne = tileXYToLonLat(tile.tx + 1, tile.ty,     tile.z);
+    const sw = tileXYToLonLat(tile.tx,     tile.ty + 1, tile.z);
+    const mNw = latLngToMeters(nw.lat, nw.lng, origin.lat, origin.lng);
+    const mNe = latLngToMeters(ne.lat, ne.lng, origin.lat, origin.lng);
+    const mSw = latLngToMeters(sw.lat, sw.lng, origin.lat, origin.lng);
+    const P00 = toScreen(mNw.x, mNw.y);
+    const P10 = toScreen(mNe.x, mNe.y);
+    const P01 = toScreen(mSw.x, mSw.y);
+
+    const a = (P10.x - P00.x) / size, b = (P10.y - P00.y) / size;
+    const c = (P01.x - P00.x) / size, d = (P01.y - P00.y) / size;
+    ctx.save();
+    ctx.transform(a, b, c, d, P00.x, P00.y);
+    ctx.drawImage(tile.img, 0, 0, size, size);
+    ctx.restore();
+  }
+  state.bathy._floorTilesDrawn = drawn;
+}
+
 const BATHY_MESH_LIGHT = (() => {
   const v = { x: -0.4, y: -0.55, z: 0.73 }; // lumière fixe côté caméra (pas le monde), depuis le
                                              // haut-gauche — reste cohérente quel que soit l'angle
@@ -2643,6 +2692,11 @@ function renderBathy3DMesh(ctx, W, H, values, min, range) {
   const fitScale = Math.min((W * 0.88) / spanX, (H * 0.82) / spanY);
   const offX = W / 2 - ((minX + maxX) / 2) * fitScale;
   const offY = H / 2 - ((minY + maxY) / 2) * fitScale;
+
+  // Dessiné avant le relief : la vraie carte n'apparaît qu'aux endroits sans triangle
+  // (bords de l'étendue relevée, trous de sélection) — c'est ce qui donne l'impression que le
+  // relief est creusé dans la carte plutôt que posé par-dessus.
+  renderBathyMeshSatelliteFloor(ctx, project, fitScale, offX, offY);
 
   const frac = v => Math.max(0, Math.min(1, (v - min) / range));
   for (const t of tris) {
