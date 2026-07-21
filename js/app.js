@@ -1816,11 +1816,22 @@ function setBathy3DRotation(deg) {
   setText('bathyRotationVal', Math.round(state.bathy.rotation3D) + '°');
   renderBathyCanvas();
 }
+// NB: _syncBathyRotationUI (voir plus bas) fait la même chose que les deux lignes ci-dessus
+// mais met aussi à jour le curseur — utilisé par le pivot tactile à deux doigts, qui doit
+// garder le curseur synchronisé avec un angle changé par un autre geste que lui.
 
-// ── Zoom / pan à la souris et au doigt sur la vue 3D isométrique ───────────────────────────
+// ── Zoom / pan / rotation à la souris et au doigt sur la vue 3D isométrique ────────────────
 // Un canevas personnalisé n'a pas de zoom/pan natif comme Leaflet : on l'implémente à la main,
 // comme une transform globale appliquée par renderBathyCanvas() par-dessus l'ajustement
 // automatique de computeBathyIsoLayout (qui reste le cadrage de départ, zoom=1/pan=0).
+const BATHY_ZOOM_MIN = 0.15, BATHY_ZOOM_MAX = 6;
+
+function _syncBathyRotationUI(deg) {
+  setText('bathyRotationVal', Math.round(deg) + '°');
+  const slider = document.getElementById('bathyRotationSlider');
+  if (slider) slider.value = deg;
+}
+
 function resetBathy3DView() {
   state.bathy.zoom3D = 1;
   state.bathy.pan3D = { x: 0, y: 0 };
@@ -1840,7 +1851,7 @@ function _bathyCanvasPoint(e, canvas) {
 function _zoomBathy3DAt(px, py, canvas, factor) {
   const b = state.bathy;
   const oldZoom = b.zoom3D;
-  const newZoom = Math.max(0.4, Math.min(6, oldZoom * factor));
+  const newZoom = Math.max(BATHY_ZOOM_MIN, Math.min(BATHY_ZOOM_MAX, oldZoom * factor));
   if (newZoom === oldZoom) return;
   const W = canvas.width, H = canvas.height;
   const wx = (px - W / 2 - b.pan3D.x) / oldZoom;
@@ -1889,7 +1900,15 @@ function _initBathy3DPanZoomEvents() {
       _bathy3DTouch = { mode: 'pan', x: t.clientX, y: t.clientY, panX: state.bathy.pan3D.x, panY: state.bathy.pan3D.y };
     } else if (e.touches.length === 2) {
       const [a, b] = e.touches;
-      _bathy3DTouch = { mode: 'pinch', dist: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY), zoom: state.bathy.zoom3D };
+      _bathy3DTouch = {
+        mode: 'pinch',
+        dist: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY),
+        zoom: state.bathy.zoom3D,
+        // Angle initial entre les deux doigts — tourner les doigts l'un autour de l'autre
+        // (comme pivoter une photo) fait tourner la vue 3D, en plus du pincement pour zoomer.
+        angle: Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180 / Math.PI,
+        rotation: state.bathy.rotation3D,
+      };
     }
   }, { passive: true });
 
@@ -1905,7 +1924,14 @@ function _initBathy3DPanZoomEvents() {
     } else if (_bathy3DTouch.mode === 'pinch' && e.touches.length === 2) {
       const [a, b] = e.touches;
       const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
-      state.bathy.zoom3D = Math.max(0.4, Math.min(6, _bathy3DTouch.zoom * (dist / _bathy3DTouch.dist)));
+      state.bathy.zoom3D = Math.max(BATHY_ZOOM_MIN, Math.min(BATHY_ZOOM_MAX, _bathy3DTouch.zoom * (dist / _bathy3DTouch.dist)));
+
+      const angle = Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180 / Math.PI;
+      let rotation = (_bathy3DTouch.rotation + (angle - _bathy3DTouch.angle)) % 360;
+      if (rotation < 0) rotation += 360;
+      state.bathy.rotation3D = rotation;
+      _syncBathyRotationUI(rotation);
+
       renderBathyCanvas();
     }
     e.preventDefault();
