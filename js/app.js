@@ -1858,7 +1858,7 @@ function setBathy3DTilt(deg) {
 // spectaculaire, quasi latérale, où la carte plaquée à plat gênerait plus qu'elle n'aiderait) et
 // reste bien visible aux fortes inclinaisons (vue plus "de dessus", où elle sert surtout de
 // repère d'orientation réelle) — même comportement pour les styles Colonnes et Surface lisse.
-const BATHY_MAP_ALPHA_AT_MIN_TILT = 0.12, BATHY_MAP_ALPHA_AT_MAX_TILT = 0.95;
+const BATHY_MAP_ALPHA_AT_MIN_TILT = 0.05, BATHY_MAP_ALPHA_AT_MAX_TILT = 1;
 function bathyMapAlphaForTilt(tiltDeg) {
   const t = Math.max(0, Math.min(1, (tiltDeg - BATHY_TILT_MIN) / (BATHY_TILT_MAX - BATHY_TILT_MIN)));
   return BATHY_MAP_ALPHA_AT_MIN_TILT + t * (BATHY_MAP_ALPHA_AT_MAX_TILT - BATHY_MAP_ALPHA_AT_MIN_TILT);
@@ -2849,10 +2849,18 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
     return { x: p.x, y: p.y, depth: p.ry * Math.cos(tiltRad) + p.z * Math.sin(tiltRad), rx: p.rx, ry: p.ry, z: p.z };
   }
 
-  // Deux maillages avec la même topologie (mêmes cases, mêmes trous) : le fond dur (val =
-  // eau+vase, plus profond = plus creux) et la surface de l'eau (val = totalMin partout —
-  // plafond plat commun au niveau de la case la moins profonde, l'eau trouve son niveau).
-  const mudTris = [], waterTris = [];
+  // Trois maillages avec la même topologie (mêmes cases, mêmes trous) : le fond dur/socle de
+  // l'étang (val = eau+vase, plus profond = plus creux), la surface de la vase (le dessus du
+  // sédiment, entre le socle et l'eau claire — pour qu'on perçoive l'épaisseur de vase comme un
+  // vrai volume, pas juste une teinte) et la surface de l'eau (val = totalMin partout — plafond
+  // plat commun au niveau de la case la moins profonde, l'eau trouve son niveau).
+  //
+  // La position de la surface de vase est calculée comme une fraction du chemin entre l'eau
+  // (0) et le socle (offset_floor), proportionnelle à mud/(eau+vase) — comme pour les Colonnes
+  // (waterH = colH*(water/total)) plutôt qu'avec la profondeur de vase absolue : les valeurs
+  // d'eau et de vase n'ont pas la même échelle (l'eau domine largement en valeur absolue), donc
+  // un simple val=mud aurait recréé le même décalage réglé plus haut entre plancher et relief.
+  const floorTris = [], mudTopTris = [], waterTris = [];
   for (let ci = 0; ci < sampleCols.length - 1; ci++) {
     const c0 = sampleCols[ci], c1 = sampleCols[ci + 1];
     for (let ri = 0; ri < sampleRows.length - 1; ri++) {
@@ -2865,8 +2873,18 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
 
       const b00 = projectVal(c0, r0, w00 + m00), b10 = projectVal(c1, r0, w10 + m10);
       const b01 = projectVal(c0, r1, w01 + m01), b11 = projectVal(c1, r1, w11 + m11);
-      mudTris.push({ a: b00, b: b10, c: b01, val: (m00 + m10 + m01) / 3 });
-      mudTris.push({ a: b10, b: b11, c: b01, val: (m10 + m11 + m01) / 3 });
+      floorTris.push({ a: b00, b: b10, c: b01 });
+      floorTris.push({ a: b10, b: b11, c: b01 });
+
+      // val de la surface de vase = totalMin + (fraction mud/total du chemin vers le socle).
+      const mudTopVal = (w, m) => {
+        const total = w + m;
+        return totalMin + (total > 0 ? (total - totalMin) * (m / total) : 0);
+      };
+      const t00 = projectVal(c0, r0, mudTopVal(w00, m00)), t10 = projectVal(c1, r0, mudTopVal(w10, m10));
+      const t01 = projectVal(c0, r1, mudTopVal(w01, m01)), t11 = projectVal(c1, r1, mudTopVal(w11, m11));
+      mudTopTris.push({ a: t00, b: t10, c: t01, val: (m00 + m10 + m01) / 3 });
+      mudTopTris.push({ a: t10, b: t11, c: t01, val: (m10 + m11 + m01) / 3 });
 
       const s00 = projectVal(c0, r0, totalMin), s10 = projectVal(c1, r0, totalMin);
       const s01 = projectVal(c0, r1, totalMin), s11 = projectVal(c1, r1, totalMin);
@@ -2874,7 +2892,7 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
       waterTris.push({ a: s10, b: s11, c: s01, val: (w10 + w11 + w01) / 3 });
     }
   }
-  if (!mudTris.length) return;
+  if (!floorTris.length) return;
 
   function shadeAndSort(tris) {
     for (const t of tris) {
@@ -2890,13 +2908,14 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
     }
     tris.sort((p, q) => p.screenDepth - q.screenDepth);
   }
-  shadeAndSort(mudTris);
+  shadeAndSort(floorTris);
+  shadeAndSort(mudTopTris);
   shadeAndSort(waterTris);
 
-  // Ajustement à l'échelle : les deux maillages (fond + surface) et, si le fond satellite est
-  // actif, l'emprise réelle de l'étang — voir renderBathy3DMesh pour le raisonnement complet.
+  // Ajustement à l'échelle : les trois maillages (socle + vase + eau) et, si le fond satellite
+  // est actif, l'emprise réelle de l'étang — voir renderBathy3DMesh pour le raisonnement complet.
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const tris of [mudTris, waterTris]) {
+  for (const tris of [floorTris, mudTopTris, waterTris]) {
     for (const t of tris) {
       for (const p of [t.a, t.b, t.c]) {
         if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
@@ -2930,38 +2949,41 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
   function projectForFloor(col, row, val) { return projectVal(col, row, val + totalMin); }
   renderBathyMeshSatelliteFloor(ctx, projectForFloor, fitScale, offX, offY);
 
-  // Fond dur d'abord (opaque, coloré par la vase — bien visible), puis la surface de l'eau
-  // par-dessus (translucide) : l'eau est partout au-dessus du fond, ce tri en deux passes
-  // suffit (même stratégie que drawIsoColumnSegment pour les Colonnes).
-  const mudFrac = v => Math.max(0, Math.min(1, (v - mMin) / mRange));
-  for (const t of mudTris) {
-    const shaded = rgbCss(rgbShade(bathyColorRGB('mud', mudFrac(t.val)), t.shade));
-    ctx.fillStyle = shaded; ctx.strokeStyle = shaded; ctx.lineWidth = 0.75;
-    ctx.beginPath();
-    ctx.moveTo(t.a.x * fitScale + offX, t.a.y * fitScale + offY);
-    ctx.lineTo(t.b.x * fitScale + offX, t.b.y * fitScale + offY);
-    ctx.lineTo(t.c.x * fitScale + offX, t.c.y * fitScale + offY);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-  }
+  // Trois passes, du plus profond au plus proche : le socle (roche/argile d'origine, opaque,
+  // teinte neutre — sert de référence "fond de l'étang", pas de la vase), la surface de vase
+  // (semi-transparente, teinte marron habituelle — laisse deviner le socle en dessous, donnant
+  // une vraie impression d'épaisseur) puis l'eau (très transparente, teinte bleue, par-dessus
+  // tout). Même stratégie de superposition que drawIsoColumnSegment pour les Colonnes.
+  const drawLayer = (tris, alpha, stroke) => {
+    const prevAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = prevAlpha * alpha;
+    for (const t of tris.fill) {
+      ctx.fillStyle = t.color;
+      if (stroke) { ctx.strokeStyle = t.color; ctx.lineWidth = 0.75; }
+      ctx.beginPath();
+      ctx.moveTo(t.a.x * fitScale + offX, t.a.y * fitScale + offY);
+      ctx.lineTo(t.b.x * fitScale + offX, t.b.y * fitScale + offY);
+      ctx.lineTo(t.c.x * fitScale + offX, t.c.y * fitScale + offY);
+      ctx.closePath(); ctx.fill();
+      if (stroke) ctx.stroke();
+    }
+    ctx.globalAlpha = prevAlpha;
+  };
 
-  // Beaucoup plus transparente que le fond, et un ombrage aplati (pas la pleine variation de
-  // pente comme la vase) : une eau plate qui bouge peu de teinte facette à facette lit comme
-  // une nappe d'eau lisse plutôt que comme un maillage texturé — les coutures ne sont pas
-  // renforcées par un trait (pas de stroke), pour éviter l'effet grille/quadrillage.
+  const BATHY_FLOOR_RGB = { r: 74, g: 66, b: 58 }; // socle neutre (roche/argile), pas la vase
+  drawLayer({ fill: floorTris.map(t => ({ ...t, color: rgbCss(rgbShade(BATHY_FLOOR_RGB, t.shade)) })) }, 1, true);
+
+  const mudFrac = v => Math.max(0, Math.min(1, (v - mMin) / mRange));
+  const MUD_TOP_ALPHA = 0.6;
+  drawLayer({ fill: mudTopTris.map(t => ({ ...t, color: rgbCss(rgbShade(bathyColorRGB('mud', mudFrac(t.val)), t.shade)) })) }, MUD_TOP_ALPHA, true);
+
+  // Beaucoup plus transparente que la vase, et un ombrage aplati (pas la pleine variation de
+  // pente) : une eau plate qui bouge peu de teinte facette à facette lit comme une nappe d'eau
+  // lisse plutôt que comme un maillage texturé — pas de trait de contour, pour éviter l'effet
+  // grille/quadrillage.
   const WATER_ALPHA = 0.16;
   const waterFrac = v => Math.max(0, Math.min(1, (v - wMin) / wRange));
-  const prevAlpha = ctx.globalAlpha;
-  ctx.globalAlpha = prevAlpha * WATER_ALPHA;
-  for (const t of waterTris) {
-    const flatShade = 0.8 + t.shade * 0.2;
-    ctx.fillStyle = rgbCss(rgbShade(bathyColorRGB('water', waterFrac(t.val)), flatShade));
-    ctx.beginPath();
-    ctx.moveTo(t.a.x * fitScale + offX, t.a.y * fitScale + offY);
-    ctx.lineTo(t.b.x * fitScale + offX, t.b.y * fitScale + offY);
-    ctx.lineTo(t.c.x * fitScale + offX, t.c.y * fitScale + offY);
-    ctx.closePath(); ctx.fill();
-  }
-  ctx.globalAlpha = prevAlpha;
+  drawLayer({ fill: waterTris.map(t => ({ ...t, color: rgbCss(rgbShade(bathyColorRGB('water', waterFrac(t.val)), 0.8 + t.shade * 0.2)) })) }, WATER_ALPHA, false);
 }
 
 function renderBathy3DMesh(ctx, W, H, values, min, range) {
