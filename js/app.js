@@ -2879,10 +2879,12 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
       // La surface de vase se situe juste au-dessus du socle, à une distance du socle
       // proportionnelle à l'épaisseur de vase (mud/total) — l'eau occupe la part dominante du
       // haut (water/total, souvent la plus grande partie de la colonne), la vase la fine part du
-      // bas juste avant le socle. Une exagération (MUD_LAYER_EXAGGERATION) élargit
-      // artificiellement cet écart pour que l'épaisseur de vase reste perceptible à l'oeil même
-      // quand elle est fine comparée à la hauteur d'eau au-dessus.
-      const MUD_LAYER_EXAGGERATION = 3;
+      // bas juste avant le socle. Une exagération modérée (MUD_LAYER_EXAGGERATION) élargit cet
+      // écart pour que l'épaisseur de vase reste perceptible à l'oeil même quand elle est fine
+      // comparée à la hauteur d'eau au-dessus — mais reste douce : un étang réel avec ~2m d'eau
+      // pour ~30cm de vase (vase ≈ 13 % du total) doit rester majoritairement lu comme "de
+      // l'eau", pas comme moitié vase moitié eau.
+      const MUD_LAYER_EXAGGERATION = 1.6;
       const mudTopVal = (w, m) => {
         const total = w + m;
         if (total <= 0) return totalMin;
@@ -2978,8 +2980,12 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
     ctx.globalAlpha = prevAlpha;
   };
 
-  const BATHY_FLOOR_RGB = { r: 74, g: 66, b: 58 }; // socle neutre (roche/argile), pas la vase
-  drawLayer({ fill: floorTris.map(t => ({ ...t, color: rgbCss(rgbShade(BATHY_FLOOR_RGB, t.shade)) })) }, 1, true);
+  // Teinte grise/bleutée nettement différente du marron de la vase (sinon les deux couches se
+  // confondent visuellement en "beaucoup de vase" à l'oeil, même quand la vase est fine) — et
+  // un ombrage borné (jamais en dessous de 0.6) pour que le socle reste identifiable comme un
+  // vrai fond neutre plutôt que de virer au noir aux pentes les plus sombres.
+  const BATHY_FLOOR_RGB = { r: 100, g: 104, b: 110 };
+  drawLayer({ fill: floorTris.map(t => ({ ...t, color: rgbCss(rgbShade(BATHY_FLOOR_RGB, Math.max(0.6, t.shade))) })) }, 1, true);
 
   const mudFrac = v => Math.max(0, Math.min(1, (v - mMin) / mRange));
   const MUD_TOP_ALPHA = 0.78;
