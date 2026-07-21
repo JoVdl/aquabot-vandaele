@@ -4022,7 +4022,23 @@ function loadPonds() {
       .orderBy('lastUsed', 'desc')
       .onSnapshot(snapshot => {
         updateCloudStatus('online');
-        state.ponds = snapshot.docs.map(doc => pondFromFirestore(doc.data()));
+        // Ne redécode QUE les ponds dont le document a réellement changé (docChanges), au lieu de
+        // repasser TOUTE la collection par pondFromFirestore à chaque snapshot — décoder
+        // l'historique bathymétrique d'un étang (potentiellement plusieurs relevés de plusieurs
+        // milliers de cases chacun) coûte plusieurs dizaines de ms, et le refaire pour CHAQUE
+        // étang à CHAQUE snapshot (y compris pour un changement sur un seul autre étang, ou nos
+        // propres écritures pendant un chantier en cours) causait un ralentissement sensible du
+        // navigateur, en particulier avec plusieurs étangs ou beaucoup de relevés accumulés.
+        const byId = new Map(state.ponds.map(p => [p.id, p]));
+        snapshot.docChanges().forEach(change => {
+          if (change.type === 'removed') { byId.delete(change.doc.id); return; }
+          // L'étang activement piloté localement n'a pas besoin d'être redécodé pour ses propres
+          // écritures (de toute façon ignorées ci-dessous tant que state.sim.running) — regénérer
+          // toute sa grille de cases à chaque sauvegarde périodique serait un travail perdu.
+          if (state.sim.running && state.pond && change.doc.id === state.pond.id) return;
+          byId.set(change.doc.id, pondFromFirestore(change.doc.data()));
+        });
+        state.ponds = snapshot.docs.map(d => byId.get(d.id)).filter(Boolean);
 
         // Sync active pond when another user makes changes
         if (state.pond && !state.sim.running) {
@@ -4422,8 +4438,13 @@ function renderSectionCanvas() {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
-  const wd  = params.waterDepth, md = params.mudDepth;
-  const tot = wd + 0.5, pd = state.robot.pumpDepth;
+  // Profondeur RÉELLE de la case en cours de travail (dernier relevé bathymétrique — voir
+  // getCellBathyBaseline/simulationTick) plutôt que la valeur générique des paramètres, sans quoi
+  // la coupe verticale ne reflétait jamais la vase réellement mesurée et pouvait même désaligner
+  // visuellement la pompe (sa profondeur cible réelle diffère désormais de ce repère générique).
+  const baseline = state.robot._cellBaseline || { water: params.waterDepth, mud: params.mudDepth };
+  const wd = baseline.water, md = baseline.mud;
+  const tot = wd + md + 0.3, pd = state.robot.pumpDepth;
   const rW  = 40, padL = rW+8, padT = 16, padB = 16;
   const dW  = W - padL - 12, dH = H - padT - padB;
   const sc  = dH / tot;
@@ -5083,9 +5104,11 @@ function updateUI() {
   const wm = WORK_MODES[params.workMode];
   if (wm) setText('dashWorkModeLabel', wm.label);
 
-  // Depths
-  setText('depthWater', params.waterDepth.toFixed(1));
-  setText('depthMud',   params.mudDepth.toFixed(2));
+  // Depths — profondeur RÉELLE de la case en cours de travail si disponible (voir
+  // getCellBathyBaseline/simulationTick), repli sur les paramètres génériques sinon.
+  const sectionBaseline = robot._cellBaseline || { water: params.waterDepth, mud: params.mudDepth };
+  setText('depthWater', sectionBaseline.water.toFixed(2));
+  setText('depthMud',   sectionBaseline.mud.toFixed(2));
   setText('depthPump',  robot.pumpDepth.toFixed(2));
 
   // Bandeau "pompage en cours" — décompte du temps restant sur la mini-cycle en cours, pour
@@ -5491,6 +5514,12 @@ function getTouchDist(t) {
 function updatePondsList() {
   const container = document.getElementById('pondsList');
   if (!container) return;
+  // Reconstruit le HTML complet ET redessine une vignette par étang (boucle sur toutes les
+  // cases de CHAQUE étang) — coûteux avec plusieurs étangs et/ou de gros étangs, pour un onglet
+  // qui n'est même pas forcément visible. Appelée à chaque snapshot Firestore (ex. pendant un
+  // chantier en cours), ce travail perdu et répété causait un ralentissement sensible du
+  // navigateur. setActiveTab() rappelle cette fonction en arrivant sur l'onglet Étangs.
+  if (state.activeTab !== 'ponds') return;
 
   if (!state.ponds.length) {
     container.innerHTML = `<div class="pond-empty">
@@ -5701,6 +5730,8 @@ function setActiveTab(tab) {
       debouncedSaveSelection();
     }
     renderBathyTab();
+  } else if (tab === 'ponds') {
+    updatePondsList();
   }
 }
 
