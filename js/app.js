@@ -1837,6 +1837,18 @@ function getCellBathyBaseline(cellIdx) {
   }
   return { water: params.waterDepth, mud: params.mudDepth };
 }
+// Profondeur de la case en cours de travail, pour l'AFFICHAGE (coupe verticale) — recalculée à la
+// demande plutôt que lue depuis robot._cellBaseline, qui n'est qu'un cache local à l'appareil
+// PILOTANT la simulation (jamais synchronisé via saveSimState/télémétrie) : un appareil simple
+// spectateur (voir subscribeSimState), ou ce même appareil après un rechargement de page en plein
+// cycle, ne l'aurait sinon jamais et retombait à tort sur les valeurs génériques des paramètres.
+function currentWorkingCellBaseline() {
+  const path = state.plannedPath, idx = state.robot.currentCellIdx;
+  if (state.robot.pumpState !== 'idle' && path && idx < path.length) {
+    return getCellBathyBaseline(path[idx]);
+  }
+  return { water: params.waterDepth, mud: params.mudDepth };
+}
 // Résultat physique du nettoyage d'une case selon l'objectif de curage courant (params.curageMode)
 // — utilisé à la fois pour fixer la profondeur cible du robot (voir simulationTick) et, si le
 // suivi bathymétrique en direct est actif, pour enregistrer une lecture réaliste après coup
@@ -4442,7 +4454,7 @@ function renderSectionCanvas() {
   // getCellBathyBaseline/simulationTick) plutôt que la valeur générique des paramètres, sans quoi
   // la coupe verticale ne reflétait jamais la vase réellement mesurée et pouvait même désaligner
   // visuellement la pompe (sa profondeur cible réelle diffère désormais de ce repère générique).
-  const baseline = state.robot._cellBaseline || { water: params.waterDepth, mud: params.mudDepth };
+  const baseline = currentWorkingCellBaseline();
   const wd = baseline.water, md = baseline.mud;
   const tot = wd + md + 0.3, pd = state.robot.pumpDepth;
   const rW  = 40, padL = rW+8, padT = 16, padB = 16;
@@ -4835,6 +4847,26 @@ function simulationTick() {
   const targetCell = state.cells[path[robot.currentCellIdx]];
   if (!targetCell) { robot.currentCellIdx++; return; }
 
+  // Filet de sécurité : le cache de cible par case (robot._cellFullDepth etc.) n'est normalement
+  // posé qu'à la transition idle→descending. Si la session locale reprend en plein cycle sans
+  // être passée par cette transition ICI (rechargement de page, reprise après mise en arrière-
+  // plan, appareil qui redevient pilote après un relais...), ce cache reste undefined —
+  // Math.min/max(undefined, ...) vaut NaN, qui empoisonne alors pumpDepth pour le reste de la
+  // session (NaN reste NaN dans tous les calculs suivants). On le (re)calcule donc ici dès qu'il
+  // manque, plutôt que de dépendre uniquement de cette seule transition.
+  if (robot.pumpState !== 'idle' && robot._cellFullDepth === undefined) {
+    robot._cellBaseline     = getCellBathyBaseline(path[robot.currentCellIdx]);
+    robot._cellResult       = computeCleaningResult(robot._cellBaseline);
+    robot._cellFullDepth    = robot._cellResult.water;
+    robot._cellPartialDepth = robot._cellBaseline.water;
+  }
+  // Filet de sécurité complémentaire : si pumpDepth est déjà NaN (poisoning déjà survenu avant ce
+  // correctif, ou toute autre cause), le remettre à une valeur cohérente avec la phase en cours
+  // plutôt que de laisser NaN se perpétuer indéfiniment.
+  if (!Number.isFinite(robot.pumpDepth)) {
+    robot.pumpDepth = robot.pumpState === 'pumping' ? (robot._cellFullDepth ?? 0) : 0;
+  }
+
   // Le robot n'est jamais parfaitement immobile pendant le travail sur une case : courant et
   // agitation de l'eau par la pompe le font dériver légèrement, les moteurs corrigent en continu.
   if (robot.pumpState !== 'idle') {
@@ -5106,7 +5138,7 @@ function updateUI() {
 
   // Depths — profondeur RÉELLE de la case en cours de travail si disponible (voir
   // getCellBathyBaseline/simulationTick), repli sur les paramètres génériques sinon.
-  const sectionBaseline = robot._cellBaseline || { water: params.waterDepth, mud: params.mudDepth };
+  const sectionBaseline = currentWorkingCellBaseline();
   setText('depthWater', sectionBaseline.water.toFixed(2));
   setText('depthMud',   sectionBaseline.mud.toFixed(2));
   // En mode Robot réel, pumpDepth vient de la télémétrie ESP32 (subscribeRobotTelemetry) — un
