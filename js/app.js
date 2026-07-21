@@ -1008,6 +1008,7 @@ const state = {
     running: false, order: [], currentStep: 0, intervalId: null,
     pendingReadings: [], pendingType: null, markerIdx: null,
     metric: 'mud', mode: '2d', palette: 'classic', rotation3D: 45, show3DMap: true,
+    zoom3D: 1, pan3D: { x: 0, y: 0 },
     selectedSurveyId: null, compareBeforeId: null, compareAfterId: null,
     _lastMin: null, _lastMax: null,
   },
@@ -1802,6 +1803,8 @@ function setBathyMode(mode) {
   document.getElementById('btnBathy3D')?.classList.toggle('active', mode === '3d');
   const rotRow = document.getElementById('bathyRotationRow');
   if (rotRow) rotRow.style.display = mode === '3d' ? 'flex' : 'none';
+  const canvas = document.getElementById('bathyCanvas');
+  if (canvas) canvas.style.cursor = mode === '3d' ? 'grab' : '';
   renderBathyCanvas();
 }
 // Rotation de la vue 3D (isométrique) — mathématiquement correcte à n'importe quel angle, voir
@@ -1812,6 +1815,103 @@ function setBathy3DRotation(deg) {
   state.bathy.rotation3D = parseFloat(deg) || 0;
   setText('bathyRotationVal', Math.round(state.bathy.rotation3D) + '°');
   renderBathyCanvas();
+}
+
+// ── Zoom / pan à la souris et au doigt sur la vue 3D isométrique ───────────────────────────
+// Un canevas personnalisé n'a pas de zoom/pan natif comme Leaflet : on l'implémente à la main,
+// comme une transform globale appliquée par renderBathyCanvas() par-dessus l'ajustement
+// automatique de computeBathyIsoLayout (qui reste le cadrage de départ, zoom=1/pan=0).
+function resetBathy3DView() {
+  state.bathy.zoom3D = 1;
+  state.bathy.pan3D = { x: 0, y: 0 };
+  renderBathyCanvas();
+}
+
+function _bathyCanvasPoint(e, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left) * (canvas.width / rect.width),
+    y: (e.clientY - rect.top)  * (canvas.height / rect.height),
+  };
+}
+
+// Zoom centré sur un point écran donné (curseur ou milieu du pincement) — recalcule le pan
+// pour que ce point reste visuellement fixe pendant le zoom, comme une carte/visionneuse photo.
+function _zoomBathy3DAt(px, py, canvas, factor) {
+  const b = state.bathy;
+  const oldZoom = b.zoom3D;
+  const newZoom = Math.max(0.4, Math.min(6, oldZoom * factor));
+  if (newZoom === oldZoom) return;
+  const W = canvas.width, H = canvas.height;
+  const wx = (px - W / 2 - b.pan3D.x) / oldZoom;
+  const wy = (py - H / 2 - b.pan3D.y) / oldZoom;
+  b.pan3D.x = px - W / 2 - wx * newZoom;
+  b.pan3D.y = py - H / 2 - wy * newZoom;
+  b.zoom3D = newZoom;
+  renderBathyCanvas();
+}
+
+let _bathy3DDrag  = null; // glisser souris
+let _bathy3DTouch = null; // glisser/pincer tactile
+
+function _initBathy3DPanZoomEvents() {
+  const canvas = document.getElementById('bathyCanvas');
+  if (!canvas) return;
+
+  canvas.addEventListener('wheel', e => {
+    if (state.bathy.mode !== '3d') return;
+    e.preventDefault();
+    const p = _bathyCanvasPoint(e, canvas);
+    _zoomBathy3DAt(p.x, p.y, canvas, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+  }, { passive: false });
+
+  canvas.addEventListener('mousedown', e => {
+    if (state.bathy.mode !== '3d' || e.button !== 0) return;
+    _bathy3DDrag = { startX: e.clientX, startY: e.clientY, panX: state.bathy.pan3D.x, panY: state.bathy.pan3D.y };
+    canvas.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!_bathy3DDrag) return;
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
+    state.bathy.pan3D.x = _bathy3DDrag.panX + (e.clientX - _bathy3DDrag.startX) * sx;
+    state.bathy.pan3D.y = _bathy3DDrag.panY + (e.clientY - _bathy3DDrag.startY) * sy;
+    renderBathyCanvas();
+  });
+  window.addEventListener('mouseup', () => {
+    if (_bathy3DDrag) { _bathy3DDrag = null; canvas.style.cursor = state.bathy.mode === '3d' ? 'grab' : ''; }
+  });
+
+  canvas.addEventListener('touchstart', e => {
+    if (state.bathy.mode !== '3d') return;
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      _bathy3DTouch = { mode: 'pan', x: t.clientX, y: t.clientY, panX: state.bathy.pan3D.x, panY: state.bathy.pan3D.y };
+    } else if (e.touches.length === 2) {
+      const [a, b] = e.touches;
+      _bathy3DTouch = { mode: 'pinch', dist: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY), zoom: state.bathy.zoom3D };
+    }
+  }, { passive: true });
+
+  canvas.addEventListener('touchmove', e => {
+    if (state.bathy.mode !== '3d' || !_bathy3DTouch) return;
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
+    if (_bathy3DTouch.mode === 'pan' && e.touches.length === 1) {
+      const t = e.touches[0];
+      state.bathy.pan3D.x = _bathy3DTouch.panX + (t.clientX - _bathy3DTouch.x) * sx;
+      state.bathy.pan3D.y = _bathy3DTouch.panY + (t.clientY - _bathy3DTouch.y) * sy;
+      renderBathyCanvas();
+    } else if (_bathy3DTouch.mode === 'pinch' && e.touches.length === 2) {
+      const [a, b] = e.touches;
+      const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+      state.bathy.zoom3D = Math.max(0.4, Math.min(6, _bathy3DTouch.zoom * (dist / _bathy3DTouch.dist)));
+      renderBathyCanvas();
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', () => { _bathy3DTouch = null; });
 }
 function setBathyMetric(metric) {
   state.bathy.metric = metric;
@@ -2000,8 +2100,28 @@ function renderBathyCanvas() {
   const min = state.bathy._lastMin;
   const range = (state.bathy._lastMax - min) || (Math.abs(state.bathy._lastMax) || 1) * 0.05 || 1;
 
-  if (state.bathy.mode === '3d') renderBathy3D(ctx, canvas.width, canvas.height, values, min, range);
-  else                            renderBathy2D(ctx, canvas.width, canvas.height, values, min, range);
+  if (state.bathy.mode === '3d') {
+    // Zoom/pan utilisateur — appliqués comme une transform globale autour du centre du
+    // canevas, par-dessus la mise à l'échelle automatique de computeBathyIsoLayout (qui reste
+    // le point de départ par défaut). Voir _initBathy3DPanZoomEvents pour les gestes.
+    const { zoom3D, pan3D } = state.bathy;
+    ctx.save();
+    ctx.translate(canvas.width / 2 + pan3D.x, canvas.height / 2 + pan3D.y);
+    ctx.scale(zoom3D, zoom3D);
+    ctx.translate(-canvas.width / 2, -canvas.height / 2);
+    state.bathy._floorTilesDrawn = 0;
+    renderBathy3D(ctx, canvas.width, canvas.height, values, min, range);
+    ctx.restore();
+    // Le voile d'assombrissement du fond satellite se dessine hors de la transform zoom/pan
+    // (espace identité) pour toujours couvrir tout le canevas physique, quel que soit le niveau
+    // de zoom/pan courant.
+    if (state.bathy._floorTilesDrawn) {
+      ctx.fillStyle = 'rgba(8,12,20,0.32)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+  } else {
+    renderBathy2D(ctx, canvas.width, canvas.height, values, min, range);
+  }
 }
 
 // Repli sans position GPS : rendu canevas 2D simple (mêmes couleurs, pas de fond satellite,
@@ -2232,19 +2352,19 @@ function renderBathy3DSatelliteFloor(ctx, thetaDeg, tileW, tileH, offX, offY) {
 
     // Transform affine : 3 coins suffisent (a,b = vecteur colonne image ; c,d = vecteur ligne
     // image ; e,f = origine) — le 4ème coin du parallélogramme en découle automatiquement.
+    // ctx.transform() (pas setTransform) : on compose sur la transform déjà active plutôt que
+    // de l'écraser, pour que le zoom/pan utilisateur (voir renderBathyCanvas) s'applique aussi
+    // au fond satellite, pas seulement aux colonnes.
     const a = (P10.x - P00.x) / size, b = (P10.y - P00.y) / size;
     const c = (P01.x - P00.x) / size, d = (P01.y - P00.y) / size;
     ctx.save();
-    ctx.setTransform(a, b, c, d, P00.x, P00.y);
+    ctx.transform(a, b, c, d, P00.x, P00.y);
     ctx.drawImage(tile.img, 0, 0, size, size);
     ctx.restore();
   }
-  // Léger voile sombre pour que les colonnes colorées ressortent sur la photo satellite — mais
-  // seulement si au moins une tuile s'est réellement affichée (sinon rien à assombrir, et un
-  // CDN indisponible ne doit pas laisser un plancher gris uni sans explication).
-  if (!drawn) return;
-  ctx.fillStyle = 'rgba(8,12,20,0.32)';
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  // Le voile d'assombrissement est dessiné par l'appelant (renderBathyCanvas), hors de la
+  // transform zoom/pan, pour couvrir tout le canevas quel que soit le niveau de zoom courant.
+  state.bathy._floorTilesDrawn = drawn;
 }
 function setBathy3DSatellite(checked) {
   state.bathy.show3DMap = checked;
@@ -5356,6 +5476,7 @@ function init() {
 
   initCanvasEvents();
   _initBathyCanvasSelectionEvents();
+  _initBathy3DPanZoomEvents();
 
   updatePondsList();
   updateUI();

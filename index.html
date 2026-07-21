@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v36</span>
+        <span class="logo-version" id="appVersion">v37</span>
       </div>
     </div>
     <div class="header-status">
@@ -673,6 +673,7 @@
                 <input type="checkbox" id="bathySatelliteToggle" checked onchange="setBathy3DSatellite(this.checked)">
                 🛰 Fond satellite
               </label>
+              <button class="btn btn-ghost btn-sm" onclick="resetBathy3DView()" title="Réinitialiser le zoom/déplacement">⊙ Recentrer</button>
             </div>
             <div class="bathy-canvas-wrap" id="bathyCanvasWrap">
               <canvas id="bathyCanvas"></canvas>
