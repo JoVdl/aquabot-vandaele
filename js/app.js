@@ -1872,6 +1872,80 @@ function _bathyCanvasPoint(e, canvas) {
 
 // Zoom centré sur un point écran donné (curseur ou milieu du pincement) — recalcule le pan
 // pour que ce point reste visuellement fixe pendant le zoom, comme une carte/visionneuse photo.
+// Point écran (coordonnées canevas déjà mises à l'échelle DPR) → coordonnées "locales", c'est-
+// à-dire dans le repère utilisé par computeBathyIsoLayout/renderBathy3DMesh AVANT la transform
+// zoom/pan utilisateur appliquée par renderBathyCanvas — inverse exact de cette transform.
+function _bathy3DScreenToLocal(sx, sy, canvas) {
+  const { zoom3D, pan3D } = state.bathy;
+  const W = canvas.width, H = canvas.height;
+  return {
+    x: (sx - W / 2 - pan3D.x) / zoom3D + W / 2,
+    y: (sy - H / 2 - pan3D.y) / zoom3D + H / 2,
+  };
+}
+
+// Hit-test pour le mode Vue en 3D "Colonnes" : reconstruit le même layout iso qu'au rendu
+// (même angle, même formule d'offset selon la métrique) et cherche la case projetée la plus
+// proche du clic, dans un rayon raisonnable (sinon : clic hors du relief, on ignore).
+function _bathyHitTest3DColumns(px, py, W, H) {
+  const theta = state.bathy.rotation3D, maxH = 70, metric = state.bathy.metric;
+  const layout = computeBathyIsoLayout(W, H, theta, maxH);
+  let offX, offY;
+  if (metric === 'total') {
+    offX = W / 2 - (layout.minIx + layout.maxIx) / 2;
+    offY = H * 0.32 - (layout.minIy + layout.maxIy) / 2;
+  } else {
+    offX = W / 2 - (layout.minIx + layout.maxIx) / 2;
+    offY = H * 0.78 - (layout.minIy + layout.maxIy) / 2 - maxH / 2;
+  }
+  const values = computeBathyDisplayValues();
+  if (!values) return null;
+  let best = null, bestDist = Infinity;
+  for (const p of layout.pts) {
+    if (values[p.i] == null) continue;
+    const d = Math.hypot(p.ix + offX - px, p.iy + offY - py);
+    if (d < bestDist) { bestDist = d; best = p.i; }
+  }
+  const thresh = Math.max(layout.tileW, layout.tileH) * 1.6;
+  return bestDist <= thresh ? best : null;
+}
+
+// Hit-test pour le mode Vue en 3D "Surface lisse" : réutilise le layout mis en cache par le
+// dernier rendu du maillage (state.bathy._meshLayout, voir renderBathy3DMesh) et la même
+// fonction de projection que les sommets du maillage — sinon disponible qu'après un premier
+// rendu (toujours le cas ici, le canevas est déjà affiché avant qu'un clic soit possible).
+function _bathyHitTest3DMesh(px, py) {
+  const L = state.bathy._meshLayout;
+  if (!L || !state.pond) return null;
+  const thetaRad = state.bathy.rotation3D * Math.PI / 180;
+  const tiltRad  = state.bathy.meshTilt   * Math.PI / 180;
+  const cs = params.cellSize;
+  const values = computeBathyDisplayValues();
+  if (!values) return null;
+  let best = null, bestDist = Infinity;
+  state.cells.forEach((c, i) => {
+    if (values[i] == null) return;
+    const p = bathyMeshProjectXY(c.col, c.row, values[i], thetaRad, tiltRad, L.heightScale, cs);
+    const x = p.x * L.fitScale + L.offX, y = p.y * L.fitScale + L.offY;
+    const d = Math.hypot(x - px, y - py);
+    if (d < bestDist) { bestDist = d; best = i; }
+  });
+  const thresh = Math.max(8, cs * L.fitScale * 0.7);
+  return bestDist <= thresh ? best : null;
+}
+
+// Point d'entrée commun clic (souris/tactile) en 3D — routé vers le hit-test du style actif.
+function _handleBathy3DClick(clientX, clientY, canvas) {
+  if (!state.pond) return;
+  const rect = canvas.getBoundingClientRect();
+  const raw = { x: (clientX - rect.left) * (canvas.width / rect.width), y: (clientY - rect.top) * (canvas.height / rect.height) };
+  const local = _bathy3DScreenToLocal(raw.x, raw.y, canvas);
+  const idx = state.bathy.style3D === 'mesh'
+    ? _bathyHitTest3DMesh(local.x, local.y)
+    : _bathyHitTest3DColumns(local.x, local.y, canvas.width, canvas.height);
+  if (idx != null) showBathyCellInfo(idx); else closeBathyCellInfo();
+}
+
 function _zoomBathy3DAt(px, py, canvas, factor) {
   const b = state.bathy;
   const oldZoom = b.zoom3D;
@@ -1913,8 +1987,16 @@ function _initBathy3DPanZoomEvents() {
     state.bathy.pan3D.y = _bathy3DDrag.panY + (e.clientY - _bathy3DDrag.startY) * sy;
     renderBathyCanvas();
   });
-  window.addEventListener('mouseup', () => {
-    if (_bathy3DDrag) { _bathy3DDrag = null; canvas.style.cursor = state.bathy.mode === '3d' ? 'grab' : ''; }
+  window.addEventListener('mouseup', e => {
+    if (_bathy3DDrag) {
+      // Distinction clic/glisser : un déplacement minime depuis le mousedown est traité comme
+      // un clic (fiche d'info en mode Vue) plutôt qu'un geste de pan, pour rester utilisable
+      // sans que le moindre tremblement de souris ne fasse rater le clic.
+      const moved = Math.hypot(e.clientX - _bathy3DDrag.startX, e.clientY - _bathy3DDrag.startY);
+      _bathy3DDrag = null;
+      canvas.style.cursor = state.bathy.mode === '3d' ? 'grab' : '';
+      if (moved < 6 && state.bathy.mode === '3d') _handleBathy3DClick(e.clientX, e.clientY, canvas);
+    }
   });
 
   canvas.addEventListener('touchstart', e => {
@@ -1961,7 +2043,16 @@ function _initBathy3DPanZoomEvents() {
     e.preventDefault();
   }, { passive: false });
 
-  canvas.addEventListener('touchend', () => { _bathy3DTouch = null; });
+  canvas.addEventListener('touchend', e => {
+    // Tap (déplacement minime depuis touchstart, un seul doigt) = clic → fiche d'info, comme
+    // pour la souris ; un vrai glisser/pincement ne déclenche pas la fiche.
+    if (_bathy3DTouch && _bathy3DTouch.mode === 'pan' && e.changedTouches.length) {
+      const t = e.changedTouches[0];
+      const moved = Math.hypot(t.clientX - _bathy3DTouch.x, t.clientY - _bathy3DTouch.y);
+      if (moved < 8) _handleBathy3DClick(t.clientX, t.clientY, canvas);
+    }
+    _bathy3DTouch = null;
+  });
 }
 function setBathyMetric(metric) {
   state.bathy.metric = metric;
@@ -2016,6 +2107,59 @@ function computeBathyRawReadings() {
   const survey = pond.bathySurveys?.find(s => s.id === b.selectedSurveyId)
               || pond.bathySurveys?.[pond.bathySurveys.length - 1];
   return survey ? survey.readings : null;
+}
+
+// ── Fiche d'information d'une case (mode Vue) — coordonnées + profondeurs du relevé affiché,
+// plus la comparaison avant/après si les deux relevés existent pour cette case. Disponible en
+// 2D (carte réelle ou repli canevas) et en 3D (colonnes ou surface lisse) — voir les points
+// d'entrée showBathyCellInfo() (appelé après un hit-test propre à chaque vue).
+function bathyCellInfoHTML(idx) {
+  const cell = state.cells[idx];
+  const pond = state.pond;
+  if (!cell || !pond) return '';
+  const fmt = v => v.toFixed(2) + ' m';
+
+  let html = `<div class="bathy-cell-info-coords">Case (col ${cell.col}, ligne ${cell.row}) — ${cell.cx.toFixed(1)} m, ${cell.cy.toFixed(1)} m</div>`;
+
+  const survey = pond.bathySurveys?.find(s => s.id === state.bathy.selectedSurveyId)
+              || pond.bathySurveys?.[pond.bathySurveys.length - 1];
+  const current = survey ? survey.readings[idx] : null;
+  if (current) {
+    html += `<div class="bathy-cell-info-row"><span>💧 Eau</span><b>${fmt(current.water)}</b></div>`;
+    html += `<div class="bathy-cell-info-row"><span>🟤 Vase</span><b>${fmt(current.mud)}</b></div>`;
+  } else {
+    html += `<div class="bathy-cell-info-empty">Aucun relevé pour cette case.</div>`;
+  }
+
+  const before = latestBathySurvey(pond, 'before');
+  const after  = latestBathySurvey(pond, 'after');
+  const rb = before?.readings[idx], ra = after?.readings[idx];
+  if (rb || ra) {
+    html += `<div class="bathy-cell-info-sep"></div>`;
+    if (rb) html += `<div class="bathy-cell-info-row"><span>📍 Avant — eau / vase</span><b>${rb.water.toFixed(2)} / ${rb.mud.toFixed(2)} m</b></div>`;
+    if (ra) html += `<div class="bathy-cell-info-row"><span>✅ Après — eau / vase</span><b>${ra.water.toFixed(2)} / ${ra.mud.toFixed(2)} m</b></div>`;
+    if (rb && ra) {
+      // Diff calculée à partir des valeurs déjà arrondies à 2 décimales (celles affichées
+      // ci-dessus) — sinon l'utilisateur voit deux nombres qui ne "s'additionnent" pas
+      // exactement à cause du bruit de précision flottante sous-jacent.
+      const rbMud = Math.round(rb.mud * 100) / 100, raMud = Math.round(ra.mud * 100) / 100;
+      const diffMud = rbMud - raMud;
+      const sign = diffMud >= 0 ? '−' : '+';
+      html += `<div class="bathy-cell-info-row bathy-cell-info-diff"><span>Vase retirée</span><b>${sign}${Math.abs(diffMud).toFixed(2)} m</b></div>`;
+    }
+  }
+  return html;
+}
+function showBathyCellInfo(idx) {
+  const card = document.getElementById('bathyCellInfo');
+  const body = document.getElementById('bathyCellInfoBody');
+  if (!card || !body) return;
+  body.innerHTML = bathyCellInfoHTML(idx);
+  card.style.display = 'block';
+}
+function closeBathyCellInfo() {
+  const card = document.getElementById('bathyCellInfo');
+  if (card) card.style.display = 'none';
 }
 
 // ── Échelle de couleurs — plusieurs jeux de couleurs sélectionnables ───────────────────────
@@ -2233,15 +2377,21 @@ function _initBathyCanvasSelectionEvents() {
   const canvas = document.getElementById('bathyCanvas');
   if (!canvas) return;
   canvas.addEventListener('click', e => {
-    if (state.bathy.mode !== '2d' || !state.pond || state.view.mode !== 'select') return;
+    if (state.bathy.mode !== '2d' || !state.pond) return;
     if (isValidOrigin(state.pond.origin) && typeof L !== 'undefined') return; // géré par la carte Leaflet
     const rect = canvas.getBoundingClientRect();
     const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
     const { toWorld } = _bathyCanvasFallbackTransform(canvas.width, canvas.height);
     const w = toWorld(sx, sy);
     const hcs = params.cellSize / 2;
-    const cell = state.cells.find(c => Math.abs(c.cx - w.x) <= hcs && Math.abs(c.cy - w.y) <= hcs);
-    if (!cell) return;
+    const idx = state.cells.findIndex(c => Math.abs(c.cx - w.x) <= hcs && Math.abs(c.cy - w.y) <= hcs);
+
+    if (state.view.mode === 'view') {
+      if (idx !== -1) showBathyCellInfo(idx); else closeBathyCellInfo();
+      return;
+    }
+    if (state.view.mode !== 'select' || idx === -1) return;
+    const cell = state.cells[idx];
     cell.selected = !cell.selected;
     renderBathyCanvas();
     renderAllPondCanvases();
@@ -2600,6 +2750,18 @@ const BATHY_MESH_LIGHT = (() => {
   return { x: v.x / len, y: v.y / len, z: v.z / len };
 })();
 
+// Projection (col,row,val) → point écran (avant échelle/offset de rendu) — fonction pure,
+// partagée entre le rendu du maillage (project(), ci-dessous) et le hit-test au clic
+// (_bathyHitTest3DMesh) : les deux DOIVENT utiliser exactement la même formule, sous peine de
+// désynchronisation entre ce qui est affiché et la case retrouvée au clic.
+function bathyMeshProjectXY(col, row, val, thetaRad, tiltRad, heightScale, cs) {
+  const wx = col * cs, wy = row * cs;
+  const rx = wx * Math.cos(thetaRad) - wy * Math.sin(thetaRad);
+  const ry = wx * Math.sin(thetaRad) + wy * Math.cos(thetaRad);
+  const z  = -val * heightScale; // plus profond → vers le bas, comme un vrai creux
+  return { x: rx, y: ry * Math.sin(tiltRad) - z * Math.cos(tiltRad), rx, ry, z };
+}
+
 function renderBathy3DMesh(ctx, W, H, values, min, range) {
   const pond = state.pond;
   if (!pond) return;
@@ -2631,15 +2793,11 @@ function renderBathy3DMesh(ctx, W, H, values, min, range) {
   const sampleRows = []; for (let r = minRow; r <= maxRow; r += stride) sampleRows.push(r);
 
   function project(col, row, val) {
-    const wx = col * cs, wy = row * cs;
-    const rx = wx * Math.cos(thetaRad) - wy * Math.sin(thetaRad);
-    const ry = wx * Math.sin(thetaRad) + wy * Math.cos(thetaRad);
-    const z  = -val * heightScale; // plus profond → vers le bas, comme un vrai creux
+    const p = bathyMeshProjectXY(col, row, val, thetaRad, tiltRad, heightScale, cs);
     return {
-      x: rx,
-      y: ry * Math.sin(tiltRad) - z * Math.cos(tiltRad),
-      depth: ry * Math.cos(tiltRad) + z * Math.sin(tiltRad), // pour le tri peintre
-      rx, ry, z,
+      x: p.x, y: p.y,
+      depth: p.ry * Math.cos(tiltRad) + p.z * Math.sin(tiltRad), // pour le tri peintre
+      rx: p.rx, ry: p.ry, z: p.z,
     };
   }
 
@@ -2692,6 +2850,10 @@ function renderBathy3DMesh(ctx, W, H, values, min, range) {
   const fitScale = Math.min((W * 0.88) / spanX, (H * 0.82) / spanY);
   const offX = W / 2 - ((minX + maxX) / 2) * fitScale;
   const offY = H / 2 - ((minY + maxY) / 2) * fitScale;
+
+  // Mis en cache pour le hit-test au clic (mode Vue, voir _bathyHitTest3DMesh) — même échelle
+  // et mêmes paramètres qu'à l'instant du rendu, pour retrouver la bonne case sous le clic.
+  state.bathy._meshLayout = { heightScale, fitScale, offX, offY };
 
   // Dessiné avant le relief : la vraie carte n'apparaît qu'aux endroits sans triangle
   // (bords de l'étendue relevée, trous de sélection) — c'est ce qui donne l'impression que le
@@ -2845,6 +3007,17 @@ function _addSelectionHandlersBathy() {
   _leafletMapBathy.getContainer().addEventListener('mouseleave', () => {
     if (_selRectLayer) { _leafletMapBathy.removeLayer(_selRectLayer); _selRectLayer = null; }
     if (_startLL) { if (state.view.mode === 'select') _leafletMapBathy.dragging.disable(); else _leafletMapBathy.dragging.enable(); _startLL = null; }
+  });
+
+  // Mode Vue : un clic sur une case affiche sa fiche d'info au lieu de (dé)sélectionner —
+  // le glisser natif Leaflet (pan) reste actif, ce handler ne réagit qu'au clic simple.
+  _leafletMapBathy.on('click', e => {
+    if (state.view.mode !== 'view') return;
+    const origin = state.pond?.origin; if (!origin) return;
+    const local = latLngToMeters(e.latlng.lat, e.latlng.lng, origin.lat, origin.lng);
+    const hcs = params.cellSize / 2;
+    const idx = state.cells.findIndex(c => Math.abs(c.cx - local.x) <= hcs && Math.abs(c.cy - local.y) <= hcs);
+    if (idx !== -1) showBathyCellInfo(idx); else closeBathyCellInfo();
   });
 }
 

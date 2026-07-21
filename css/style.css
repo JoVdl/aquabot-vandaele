@@ -825,6 +825,30 @@ svg { display: block; }
   pointer-events: none;
 }
 
+.bathy-cell-info {
+  position: absolute; top: 8px; left: 8px; z-index: 8; width: 214px; max-width: calc(100% - 16px);
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35); padding: 10px 12px; font-size: 11px;
+}
+.bathy-cell-info-close {
+  position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; line-height: 20px;
+  text-align: center; border: none; background: transparent; color: var(--text-3);
+  cursor: pointer; font-size: 12px; padding: 0;
+}
+.bathy-cell-info-close:hover { color: var(--text-1); }
+.bathy-cell-info-coords {
+  font-size: 10px; font-weight: 700; color: var(--text-1); padding-right: 18px;
+  margin-bottom: 6px; font-variant-numeric: tabular-nums;
+}
+.bathy-cell-info-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 2px 0; color: var(--text-2); font-variant-numeric: tabular-nums;
+}
+.bathy-cell-info-row b { color: var(--text-1); font-weight: 700; }
+.bathy-cell-info-sep { border-top: 1px solid var(--border); margin: 6px 0; }
+.bathy-cell-info-diff b { color: var(--accent); }
+.bathy-cell-info-empty { color: var(--text-3); font-style: italic; }
+
 .bathy-legend { padding: 10px 14px 14px; font-variant-numeric: tabular-nums; }
 .bathy-legend-title {
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
