@@ -1824,7 +1824,7 @@ function deleteBathySurvey(id) {
 // case à l'autre — cohérent avec la façon dont la vase se dépose et se nivelle réellement, même
 // sur un fond irrégulier (voir aussi generateBathyBaseReading, qui applique le même principe aux
 // prochains relevés simulés).
-function relevelBathySurveyReadings(readings) {
+function relevelBathySurveyReadings(readings, targetMeanMud) {
   const cells = state.cells;
   const byColRow = new Map();
   cells.forEach((c, i) => byColRow.set(c.col + ',' + c.row, i));
@@ -1843,11 +1843,23 @@ function relevelBathySurveyReadings(readings) {
     return count ? sum / count : totals[i];
   });
 
+  // Écart entre le fond réel de chaque case et la tendance lissée du voisinage : positif dans
+  // un creux local (plus profond que ses voisins), négatif sur un haut-fond — c'est cette forme
+  // de variation qui module l'épaisseur de vase. Par construction, sa moyenne sur tout le relevé
+  // tend vers 0 (un lissage local ne fait que retirer la tendance moyenne) : la soustraire telle
+  // quelle (comme avant) ramenait donc la vase quasiment à 0 partout au lieu de varier AUTOUR de
+  // la moyenne visée par l'utilisateur — d'où le recentrage explicite sur targetMeanMud ci-dessous.
+  const residuals = totals.map((t, i) => t == null ? null : t - smoothed[i]);
+  const validResiduals = residuals.filter(r => r != null);
+  const meanResidual = validResiduals.length ? validResiduals.reduce((a, b) => a + b, 0) / validResiduals.length : 0;
+
   const MIN_MUD = 0.02;
+  const MIN_WATER = 0.05;
   return readings.map((r, i) => {
     if (!r) return null;
     const total = totals[i];
-    const mud = Math.max(MIN_MUD, total - smoothed[i]);
+    const rawMud = targetMeanMud + (residuals[i] - meanResidual);
+    const mud = Math.min(Math.max(rawMud, MIN_MUD), Math.max(MIN_MUD, total - MIN_WATER));
     const water = total - mud;
     return { water: round3(water), mud: round3(mud) };
   });
@@ -1858,8 +1870,19 @@ function relevelCurrentBathySurvey() {
   const survey = pond.bathySurveys?.find(s => s.id === state.bathy.selectedSurveyId)
               || pond.bathySurveys?.[pond.bathySurveys.length - 1];
   if (!survey) { showToast('Aucun relevé sélectionné', 'error'); return; }
-  if (!confirm(`Relisser la répartition eau/vase du relevé "${survey.label}" ?\n\nLa profondeur totale de chaque case reste inchangée (c'est la mesure) — seule la répartition eau/vase est recalculée pour que la vase se concentre dans les creux et se nivelle. Ceci modifie les données enregistrées de ce relevé.`)) return;
-  survey.readings = relevelBathySurveyReadings(survey.readings);
+
+  const currentMuds = survey.readings.filter(Boolean).map(r => r.mud);
+  const currentAvgMud = currentMuds.length ? currentMuds.reduce((a, b) => a + b, 0) / currentMuds.length : 0.5;
+  const input = prompt(
+    `Profondeur moyenne de vase visée pour ce relevé (en m) ?\n\nLa profondeur totale (eau + vase) de chaque case reste inchangée (c'est la mesure) — seule la répartition eau/vase est recalculée autour de cette moyenne, avec plus de vase dans les creux du fond et moins sur les hauts-fonds.`,
+    currentAvgMud.toFixed(2)
+  );
+  if (input == null) return;
+  const targetMeanMud = parseFloat(String(input).replace(',', '.'));
+  if (!isFinite(targetMeanMud) || targetMeanMud < 0) { showToast('Valeur invalide', 'error'); return; }
+
+  if (!confirm(`Relisser la répartition eau/vase du relevé "${survey.label}" autour d'une moyenne de ${targetMeanMud.toFixed(2)} m de vase ?\n\nCeci modifie les données enregistrées de ce relevé.`)) return;
+  survey.readings = relevelBathySurveyReadings(survey.readings, targetMeanMud);
   persistPondSurveys();
   renderBathyTab();
   showToast('Répartition eau/vase relissée pour ce relevé', 'success');
