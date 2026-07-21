@@ -2374,7 +2374,10 @@ function setBathy3DSatellite(checked) {
 // Dessine un segment de colonne isométrique (faces gauche/droite assombries + éventuel plafond
 // coloré) entre deux hauteurs d'écran — brique de base réutilisée pour les colonnes simples
 // (une seule teinte) et les colonnes empilées eau+vase à plafond plat (voir renderBathy3DStacked).
-function drawIsoColumnSegment(ctx, x, yTopScreen, yBottomScreen, tileW, tileH, colorRGB, capTop) {
+function drawIsoColumnSegment(ctx, x, yTopScreen, yBottomScreen, tileW, tileH, colorRGB, capTop, alpha = 1) {
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = prevAlpha * alpha;
+
   ctx.fillStyle = rgbCss(rgbShade(colorRGB, 0.72));
   ctx.beginPath();
   ctx.moveTo(x - tileW, yBottomScreen); ctx.lineTo(x, yBottomScreen + tileH);
@@ -2395,6 +2398,8 @@ function drawIsoColumnSegment(ctx, x, yTopScreen, yBottomScreen, tileW, tileH, c
     ctx.closePath(); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 0.5; ctx.stroke();
   }
+
+  ctx.globalAlpha = prevAlpha;
 }
 
 // Isométrique : chaque case devient une petite colonne extrudée (hauteur = profondeur), triée
@@ -2454,22 +2459,27 @@ function renderBathy3DStacked(ctx, W, H, raw, theta, maxH) {
   const pts = layout.pts.map(p => ({ ...p, r: raw[p.i] }));
   pts.sort((a, b) => a.iy - b.iy);
 
+  // L'eau est semi-transparente : on voit la vase par transparence, comme si on regardait à
+  // l'intérieur de l'étang — pour ça, la colonne "vase" est dessinée sur toute la hauteur (pas
+  // seulement sa propre épaisseur), et le voile d'eau translucide vient juste se superposer par
+  // dessus sur la partie eau. Sans cette pleine hauteur en dessous, il n'y aurait rien à voir
+  // en transparence : juste le fond du canevas.
+  const WATER_ALPHA = 0.25;
   for (const p of pts) {
     if (!p.r) continue;
     const total = p.r.water + p.r.mud;
     const colH   = 4 + (total / maxTotal) * maxH;
     const waterH = total > 0 ? colH * (p.r.water / total) : 0;
-    const mudH   = colH - waterH;
 
     const x = p.ix + offX, yTop = p.iy + offY; // plafond plat commun — surface de l'eau
     const yWaterBottom = yTop + waterH;
-    const yMudBottom   = yWaterBottom + mudH;
+    const yMudBottom   = yTop + colH;
 
     const waterFrac = (p.r.water - wMin) / wRange;
     const mudFrac   = (p.r.mud   - mMin) / mRange;
 
-    drawIsoColumnSegment(ctx, x, yTop,          yWaterBottom, tileW, tileH, bathyColorRGB('water', waterFrac), true);
-    drawIsoColumnSegment(ctx, x, yWaterBottom,  yMudBottom,   tileW, tileH, bathyColorRGB('mud',   mudFrac),   false);
+    drawIsoColumnSegment(ctx, x, yTop, yMudBottom,    tileW, tileH, bathyColorRGB('mud', mudFrac), false);
+    drawIsoColumnSegment(ctx, x, yTop, yWaterBottom,  tileW, tileH, bathyColorRGB('water', waterFrac), true, WATER_ALPHA);
   }
 
   ctx.font = '10px ui-monospace, monospace';
