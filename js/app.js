@@ -2783,6 +2783,166 @@ function bathyMeshProjectXY(col, row, val, thetaRad, tiltRad, heightScale, cs) {
   return { x: rx, y: ry * Math.sin(tiltRad) - z * Math.cos(tiltRad), rx, ry, z };
 }
 
+// "Profondeur totale" pour le maillage : le fond dur (relief coloré par la vase — pour qu'elle
+// reste bien visible et perceptible, comme demandé) est dessiné sous un plafond d'eau plat et
+// semi-transparent, façon vraie photo de fond marin peu profond où l'on voit le relief à
+// travers l'eau turquoise. Même principe physique que renderBathy3DStacked pour les Colonnes
+// (la surface de l'eau est globalement de niveau, seul le fond dur varie d'une case à l'autre),
+// porté au style Surface lisse.
+function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
+  const pond = state.pond;
+  const waterVals = [], mudVals = [], totalVals = [];
+  raw.forEach(r => { if (r) { waterVals.push(r.water); mudVals.push(r.mud); totalVals.push(r.water + r.mud); } });
+  if (!totalVals.length) return;
+  const wMin = Math.min(...waterVals), wRange = (Math.max(...waterVals) - wMin) || 1;
+  const mMin = Math.min(...mudVals),   mRange = (Math.max(...mudVals)   - mMin) || 1;
+  const totalMin = Math.min(...totalVals), totalRange = (Math.max(...totalVals) - totalMin) || 1;
+
+  // Emprise des seules cases relevées (pas tout l'étang) — voir renderBathy3DMesh pour le
+  // raisonnement complet ; même souci ici pour l'exagération verticale et la décimation.
+  let minCol = Infinity, maxCol = -Infinity, minRow = Infinity, maxRow = -Infinity;
+  const gridWater = new Map(), gridMud = new Map();
+  state.cells.forEach((c, i) => {
+    const r = raw[i];
+    gridWater.set(c.col + ',' + c.row, r ? r.water : null);
+    gridMud.set(c.col + ',' + c.row, r ? r.mud : null);
+    if (!r) return;
+    minCol = Math.min(minCol, c.col); maxCol = Math.max(maxCol, c.col);
+    minRow = Math.min(minRow, c.row); maxRow = Math.max(maxRow, c.row);
+  });
+  if (!isFinite(minCol)) return;
+
+  const horizontalSpan = Math.max((maxCol - minCol) * cs, (maxRow - minRow) * cs) || 1;
+  const heightScale = totalRange > 0 ? (horizontalSpan * 0.22) / totalRange : 1;
+
+  const spanCols = maxCol - minCol + 1, spanRows = maxRow - minRow + 1;
+  const stride = Math.max(1, Math.ceil(Math.sqrt((spanCols * spanRows) / 3000)));
+  const sampleCols = []; for (let c = minCol; c <= maxCol; c += stride) sampleCols.push(c);
+  const sampleRows = []; for (let r = minRow; r <= maxRow; r += stride) sampleRows.push(r);
+
+  // val est compté à partir de totalMin (la case la moins profonde), pas de zéro absolu — sinon
+  // le fond (creusé de plusieurs mètres en valeur absolue) et le plafond d'eau (val=0 littéral)
+  // se retrouvaient à des altitudes totalement différentes une fois inclinés/projetés, comme
+  // deux formes disjointes au lieu d'une eau qui recouvre le relief. Avec ce décalage, la case
+  // la moins profonde touche presque le plafond d'eau, et seul l'écart de profondeur RELATIF
+  // (exagéré par heightScale) enfonce le fond en dessous — c'est cet écart qui doit être visible,
+  // pas la profondeur absolue de l'étang.
+  function projectVal(col, row, val) {
+    const p = bathyMeshProjectXY(col, row, val - totalMin, thetaRad, tiltRad, heightScale, cs);
+    return { x: p.x, y: p.y, depth: p.ry * Math.cos(tiltRad) + p.z * Math.sin(tiltRad), rx: p.rx, ry: p.ry, z: p.z };
+  }
+
+  // Deux maillages avec la même topologie (mêmes cases, mêmes trous) : le fond dur (val =
+  // eau+vase, plus profond = plus creux) et la surface de l'eau (val = totalMin partout —
+  // plafond plat commun au niveau de la case la moins profonde, l'eau trouve son niveau).
+  const mudTris = [], waterTris = [];
+  for (let ci = 0; ci < sampleCols.length - 1; ci++) {
+    const c0 = sampleCols[ci], c1 = sampleCols[ci + 1];
+    for (let ri = 0; ri < sampleRows.length - 1; ri++) {
+      const r0 = sampleRows[ri], r1 = sampleRows[ri + 1];
+      const w00 = gridWater.get(c0 + ',' + r0), w10 = gridWater.get(c1 + ',' + r0);
+      const w01 = gridWater.get(c0 + ',' + r1), w11 = gridWater.get(c1 + ',' + r1);
+      const m00 = gridMud.get(c0 + ',' + r0), m10 = gridMud.get(c1 + ',' + r0);
+      const m01 = gridMud.get(c0 + ',' + r1), m11 = gridMud.get(c1 + ',' + r1);
+      if (w00 == null || w10 == null || w01 == null || w11 == null) continue;
+
+      const b00 = projectVal(c0, r0, w00 + m00), b10 = projectVal(c1, r0, w10 + m10);
+      const b01 = projectVal(c0, r1, w01 + m01), b11 = projectVal(c1, r1, w11 + m11);
+      mudTris.push({ a: b00, b: b10, c: b01, val: (m00 + m10 + m01) / 3 });
+      mudTris.push({ a: b10, b: b11, c: b01, val: (m10 + m11 + m01) / 3 });
+
+      const s00 = projectVal(c0, r0, totalMin), s10 = projectVal(c1, r0, totalMin);
+      const s01 = projectVal(c0, r1, totalMin), s11 = projectVal(c1, r1, totalMin);
+      waterTris.push({ a: s00, b: s10, c: s01, val: (w00 + w10 + w01) / 3 });
+      waterTris.push({ a: s10, b: s11, c: s01, val: (w10 + w11 + w01) / 3 });
+    }
+  }
+  if (!mudTris.length) return;
+
+  function shadeAndSort(tris) {
+    for (const t of tris) {
+      const e1x = t.b.rx - t.a.rx, e1y = t.b.ry - t.a.ry, e1z = t.b.z - t.a.z;
+      const e2x = t.c.rx - t.a.rx, e2y = t.c.ry - t.a.ry, e2z = t.c.z - t.a.z;
+      let nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+      const nLen = Math.hypot(nx, ny, nz) || 1;
+      nx /= nLen; ny /= nLen; nz /= nLen;
+      let dot = nx * BATHY_MESH_LIGHT.x + ny * BATHY_MESH_LIGHT.y + nz * BATHY_MESH_LIGHT.z;
+      if (dot < 0) dot = -dot;
+      t.shade = Math.max(0.35, Math.min(1, dot));
+      t.screenDepth = (t.a.depth + t.b.depth + t.c.depth) / 3;
+    }
+    tris.sort((p, q) => p.screenDepth - q.screenDepth);
+  }
+  shadeAndSort(mudTris);
+  shadeAndSort(waterTris);
+
+  // Ajustement à l'échelle : les deux maillages (fond + surface) et, si le fond satellite est
+  // actif, l'emprise réelle de l'étang — voir renderBathy3DMesh pour le raisonnement complet.
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const tris of [mudTris, waterTris]) {
+    for (const t of tris) {
+      for (const p of [t.a, t.b, t.c]) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+      }
+    }
+  }
+  if (state.bathy.show3DMap && isValidOrigin(pond.origin)) {
+    const pbbox = getPondBbox(pond);
+    const corners = [
+      [pbbox.minX, pbbox.minY], [pbbox.maxX, pbbox.minY],
+      [pbbox.minX, pbbox.maxY], [pbbox.maxX, pbbox.maxY],
+    ];
+    for (const [wx, wy] of corners) {
+      const colEquiv = (wx - pbbox.minX) / cs - 0.5;
+      const rowEquiv = (wy - pbbox.minY) / cs - 0.5;
+      const p = projectVal(colEquiv, rowEquiv, totalMin); // même référence que le plafond d'eau
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+  const fitScale = Math.min((W * 0.88) / spanX, (H * 0.82) / spanY);
+  const offX = W / 2 - ((minX + maxX) / 2) * fitScale;
+  const offY = H / 2 - ((minY + maxY) / 2) * fitScale;
+
+  state.bathy._meshLayout = { heightScale, fitScale, offX, offY };
+
+  // Le plancher satellite se cale lui aussi sur le plafond d'eau (val=0 demandé par
+  // renderBathyMeshSatelliteFloor → correspond ici à totalMin, pas à zéro absolu).
+  function projectForFloor(col, row, val) { return projectVal(col, row, val + totalMin); }
+  renderBathyMeshSatelliteFloor(ctx, projectForFloor, fitScale, offX, offY);
+
+  // Fond dur d'abord (opaque, coloré par la vase — bien visible), puis la surface de l'eau
+  // par-dessus (translucide) : l'eau est partout au-dessus du fond, ce tri en deux passes
+  // suffit (même stratégie que drawIsoColumnSegment pour les Colonnes).
+  const mudFrac = v => Math.max(0, Math.min(1, (v - mMin) / mRange));
+  for (const t of mudTris) {
+    const shaded = rgbCss(rgbShade(bathyColorRGB('mud', mudFrac(t.val)), t.shade));
+    ctx.fillStyle = shaded; ctx.strokeStyle = shaded; ctx.lineWidth = 0.75;
+    ctx.beginPath();
+    ctx.moveTo(t.a.x * fitScale + offX, t.a.y * fitScale + offY);
+    ctx.lineTo(t.b.x * fitScale + offX, t.b.y * fitScale + offY);
+    ctx.lineTo(t.c.x * fitScale + offX, t.c.y * fitScale + offY);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+
+  const WATER_ALPHA = 0.32;
+  const waterFrac = v => Math.max(0, Math.min(1, (v - wMin) / wRange));
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = prevAlpha * WATER_ALPHA;
+  for (const t of waterTris) {
+    const shaded = rgbCss(rgbShade(bathyColorRGB('water', waterFrac(t.val)), t.shade));
+    ctx.fillStyle = shaded; ctx.strokeStyle = shaded; ctx.lineWidth = 0.75;
+    ctx.beginPath();
+    ctx.moveTo(t.a.x * fitScale + offX, t.a.y * fitScale + offY);
+    ctx.lineTo(t.b.x * fitScale + offX, t.b.y * fitScale + offY);
+    ctx.lineTo(t.c.x * fitScale + offX, t.c.y * fitScale + offY);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  ctx.globalAlpha = prevAlpha;
+}
+
 function renderBathy3DMesh(ctx, W, H, values, min, range) {
   const pond = state.pond;
   if (!pond) return;
@@ -2790,6 +2950,11 @@ function renderBathy3DMesh(ctx, W, H, values, min, range) {
   const thetaRad = state.bathy.rotation3D * Math.PI / 180;
   const tiltRad  = state.bathy.tilt3D     * Math.PI / 180;
   const cs = params.cellSize;
+
+  if (metric === 'total') {
+    const raw = computeBathyRawReadings();
+    if (raw) { renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs); return; }
+  }
 
   // Emprise des SEULES cases avec une donnée (pas tout l'étang) — l'exagération verticale et
   // la décimation doivent correspondre à ce qui est réellement dessiné. Se baser sur l'étang
