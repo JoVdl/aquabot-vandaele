@@ -1615,17 +1615,37 @@ function bathyTerrainNoise(x, y, seed) {
        + Math.sin(x * 0.35 - y * 0.28 + p * 5.3) * 0.25
        + Math.sin(x * 0.8  + y * 0.55 + p * 2.2) * 0.15;
 }
+// Seule la composante basse fréquence de bathyTerrainNoise (la forme générale du bassin, sans
+// les bosses locales) — utilisée pour le niveau d'eau "auto-nivelé" par la vase, voir
+// generateBathyBaseReading ci-dessous.
+function bathyTerrainNoiseLowFreq(x, y, seed) {
+  const p = (seed % 997) * 0.01;
+  return Math.sin(x * 0.18 + p * 3.1) * Math.cos(y * 0.14 + p * 1.7);
+}
 function pondBathySeed(pond) { return hashStr(pond?.id || '0'); }
 
 function round3(v) { return Math.round(v * 1000) / 1000; }
 
+// La vase se dépose plutôt dans les creux et nivelle sa propre surface, même quand le fond réel
+// (le socle) a des irrégularités locales — plutôt que deux bruits d'eau/vase indépendants (comme
+// avant), on génère : (1) un fond réel bruité (bosses locales incluses) qui varie comme
+// n'importe quelle topographie, et (2) un niveau d'eau bien plus lisse (seulement la composante
+// basse fréquence du même bruit, sans les bosses). La vase comble alors l'écart entre les deux —
+// épaisse dans les creux profonds du fond réel, fine/minimale sur les hauts-fonds — au lieu
+// d'être une variable indépendante sans lien avec la profondeur.
 function generateBathyBaseReading(cell, seed) {
-  const nWater  = bathyTerrainNoise(cell.cx, cell.cy, seed + 11);
-  const nMud    = bathyTerrainNoise(cell.cx + 50, cell.cy - 30, seed + 37); // champ décalé → indépendant de l'eau
-  const jitterW = (pseudoRandom01(cell.col, cell.row, seed + 5)  - 0.5) * 0.05;
-  const jitterM = (pseudoRandom01(cell.col, cell.row, seed + 91) - 0.5) * 0.05;
-  const water = Math.max(0.2,  params.waterDepth + nWater * params.waterDepth * 0.3 + jitterW);
-  const mud   = Math.max(0.02, params.mudDepth   + nMud   * params.mudDepth   * 0.7 + jitterM);
+  const nFloor  = bathyTerrainNoise(cell.cx, cell.cy, seed + 11);
+  const nLevel  = bathyTerrainNoiseLowFreq(cell.cx, cell.cy, seed + 11);
+  const jitterF = (pseudoRandom01(cell.col, cell.row, seed + 5)  - 0.5) * 0.05;
+  const jitterW = (pseudoRandom01(cell.col, cell.row, seed + 91) - 0.5) * 0.05;
+
+  const nominalTotal = params.waterDepth + params.mudDepth;
+  const totalDepth = Math.max(0.25, nominalTotal + nFloor * nominalTotal * 0.3 + jitterF);
+  const waterLevel = Math.max(0.15, params.waterDepth + nLevel * params.waterDepth * 0.15 + jitterW);
+
+  const MIN_MUD = 0.02;
+  const mud   = Math.max(MIN_MUD, totalDepth - waterLevel);
+  const water = totalDepth - mud;
   return { water: round3(water), mud: round3(mud) };
 }
 // Relevé "après travaux" : cases traitées → résidu de vase faible (3-9%), profondeur d'eau
@@ -1797,6 +1817,54 @@ function deleteBathySurvey(id) {
   showToast('Relevé supprimé', '');
 }
 
+// Recalcule la répartition eau/vase d'un relevé DÉJÀ enregistré, sans nouveau scan : la
+// profondeur totale (eau+vase) de chaque case reste inchangée (c'est la mesure), seule la façon
+// dont elle se répartit entre eau et vase est ajustée pour que la vase se concentre dans les
+// creux du fond réel et que son sommet (donc la profondeur d'eau) reste relativement lisse d'une
+// case à l'autre — cohérent avec la façon dont la vase se dépose et se nivelle réellement, même
+// sur un fond irrégulier (voir aussi generateBathyBaseReading, qui applique le même principe aux
+// prochains relevés simulés).
+function relevelBathySurveyReadings(readings) {
+  const cells = state.cells;
+  const byColRow = new Map();
+  cells.forEach((c, i) => byColRow.set(c.col + ',' + c.row, i));
+  const totals = readings.map(r => r ? r.water + r.mud : null);
+
+  const RADIUS = 3; // rayon de lissage, en cases
+  const smoothed = cells.map((c, i) => {
+    if (totals[i] == null) return null;
+    let sum = 0, count = 0;
+    for (let dc = -RADIUS; dc <= RADIUS; dc++) {
+      for (let dr = -RADIUS; dr <= RADIUS; dr++) {
+        const j = byColRow.get((c.col + dc) + ',' + (c.row + dr));
+        if (j != null && totals[j] != null) { sum += totals[j]; count++; }
+      }
+    }
+    return count ? sum / count : totals[i];
+  });
+
+  const MIN_MUD = 0.02;
+  return readings.map((r, i) => {
+    if (!r) return null;
+    const total = totals[i];
+    const mud = Math.max(MIN_MUD, total - smoothed[i]);
+    const water = total - mud;
+    return { water: round3(water), mud: round3(mud) };
+  });
+}
+function relevelCurrentBathySurvey() {
+  const pond = state.pond;
+  if (!pond) return;
+  const survey = pond.bathySurveys?.find(s => s.id === state.bathy.selectedSurveyId)
+              || pond.bathySurveys?.[pond.bathySurveys.length - 1];
+  if (!survey) { showToast('Aucun relevé sélectionné', 'error'); return; }
+  if (!confirm(`Relisser la répartition eau/vase du relevé "${survey.label}" ?\n\nLa profondeur totale de chaque case reste inchangée (c'est la mesure) — seule la répartition eau/vase est recalculée pour que la vase se concentre dans les creux et se nivelle. Ceci modifie les données enregistrées de ce relevé.`)) return;
+  survey.readings = relevelBathySurveyReadings(survey.readings);
+  persistPondSurveys();
+  renderBathyTab();
+  showToast('Répartition eau/vase relissée pour ce relevé', 'success');
+}
+
 // ── Vue (2D / 3D), métrique affichée, sélection des relevés comparés ───────────────────────
 function setBathyMode(mode) {
   state.bathy.mode = mode;
@@ -1944,10 +2012,14 @@ function _bathyHitTest3DMesh(px, py) {
   const cs = params.cellSize;
   const values = computeBathyDisplayValues();
   if (!values) return null;
+  // En "profondeur totale", le rendu du socle utilise (val - totalMin) comme référence, pas val
+  // brut (voir renderBathy3DMeshStacked) — sans reproduire ce même décalage ici, le clic visait
+  // une position différente de ce qui est réellement affiché.
+  const valOffset = L.totalMin != null ? L.totalMin : 0;
   let best = null, bestDist = Infinity;
   state.cells.forEach((c, i) => {
     if (values[i] == null) return;
-    const p = bathyMeshProjectXY(c.col, c.row, values[i], thetaRad, tiltRad, L.heightScale, cs);
+    const p = bathyMeshProjectXY(c.col, c.row, values[i] - valOffset, thetaRad, tiltRad, L.heightScale, cs);
     const x = p.x * L.fitScale + L.offX, y = p.y * L.fitScale + L.offY;
     const d = Math.hypot(x - px, y - py);
     if (d < bestDist) { bestDist = d; best = i; }
@@ -2952,7 +3024,10 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
   const offX = W / 2 - ((minX + maxX) / 2) * fitScale;
   const offY = H / 2 - ((minY + maxY) / 2) * fitScale;
 
-  state.bathy._meshLayout = { heightScale, fitScale, offX, offY };
+  // totalMin mis en cache pour le hit-test au clic (_bathyHitTest3DMesh) — le rendu du socle
+  // utilise (val - totalMin), pas val brut ; sans ce décalage aussi côté hit-test, le clic
+  // visait une position complètement différente de ce qui est réellement affiché ici.
+  state.bathy._meshLayout = { heightScale, fitScale, offX, offY, totalMin };
 
   // Le plancher satellite se cale lui aussi sur le plafond d'eau (val=0 demandé par
   // renderBathyMeshSatelliteFloor → correspond ici à totalMin, pas à zéro absolu).
