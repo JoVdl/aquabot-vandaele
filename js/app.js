@@ -3751,13 +3751,22 @@ function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale
 
   const center = screenAt(totalMin);
 
+  // Toutes les tailles/épaisseurs du robot sont dérivées de sa taille RÉELLE à l'écran une fois
+  // projetée (platformPxHalf), pas de constantes en pixels bruts — sinon, en dézoomant (le robot
+  // occupe alors une toute petite portion du canevas), des éléments à taille fixe comme la pompe
+  // finissaient par paraître PLUS GROS que le robot entier, incohérent avec l'échelle du reste de
+  // la scène 3D. `lw()` fixe juste un plancher de 1px pour rester visible même très dézoomé.
+  const edgePt = projectDashRobotQuad(colF, rowF, [[0.55, 0]], 0, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY)[0];
+  const platformPxHalf = Math.max(4, Math.hypot(edgePt.x - center.x, edgePt.y - center.y));
+  const lw = f => Math.max(1, platformPxHalf * f);
+
   ctx.save();
 
   // Plateforme modulaire (flotteurs sombres séparés, comme sur la photo du robot réel), pas un
   // simple carré plein.
-  ctx.fillStyle = '#1e293b';
-  ctx.strokeStyle = '#64748b';
-  ctx.lineWidth = 1.2;
+  ctx.fillStyle = '#334155';
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = lw(0.05);
   for (const corners of DASH_ROBOT_PONTOONS) {
     const pontoon = projectDashRobotQuad(colF, rowF, corners, 0, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY);
     ctx.beginPath();
@@ -3768,27 +3777,26 @@ function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale
 
   // Mât central (boîtier électronique + antenne GPS, comme sur la photo) — trait simple en
   // espace écran plutôt qu'une vraie extrusion 3D : juste un repère schématique, pas une pièce
-  // du relief à projeter avec la même précision que le maillage.
-  const edgePt = projectDashRobotQuad(colF, rowF, [[0.55, 0]], 0, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY)[0];
-  const platformPxHalf = Math.max(6, Math.hypot(edgePt.x - center.x, edgePt.y - center.y));
-  const mastH = platformPxHalf * 1.3;
+  // du relief à projeter avec la même précision que le maillage. Le mât reste nettement plus
+  // petit que l'empreinte de la plateforme (proportions de la photo), pas l'inverse.
+  const mastH = platformPxHalf * 0.9;
   const mastTop = { x: center.x, y: center.y - mastH };
   ctx.strokeStyle = '#94a3b8';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = lw(0.1);
   ctx.beginPath(); ctx.moveTo(center.x, center.y); ctx.lineTo(mastTop.x, mastTop.y); ctx.stroke();
   // Antenne GPS (fine tige qui dépasse du boîtier).
-  ctx.lineWidth = 1;
+  ctx.lineWidth = lw(0.05);
   ctx.beginPath(); ctx.moveTo(mastTop.x, mastTop.y); ctx.lineTo(mastTop.x, mastTop.y - mastH * 0.35); ctx.stroke();
   // Boîtier électronique + écran.
   ctx.fillStyle = '#0f172a';
   ctx.strokeStyle = '#cbd5e1';
-  ctx.lineWidth = 1;
-  const boxW = platformPxHalf * 0.7, boxH = platformPxHalf * 0.5;
+  ctx.lineWidth = lw(0.05);
+  const boxW = platformPxHalf * 0.5, boxH = platformPxHalf * 0.35;
   ctx.beginPath();
-  ctx.roundRect(mastTop.x - boxW / 2, mastTop.y - boxH * 0.3, boxW, boxH, 2);
+  ctx.roundRect(mastTop.x - boxW / 2, mastTop.y - boxH * 0.3, boxW, boxH, Math.max(1, boxH * 0.2));
   ctx.fill(); ctx.stroke();
   ctx.fillStyle = '#22c55e';
-  ctx.beginPath(); ctx.arc(mastTop.x, mastTop.y - boxH * 0.05, 1.6, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(mastTop.x, mastTop.y - boxH * 0.05, Math.max(1, platformPxHalf * 0.08), 0, Math.PI * 2); ctx.fill();
 
   const pumpDepth = Number.isFinite(robot.pumpDepth) ? robot.pumpDepth : 0;
   if (pumpDepth > 0.02) {
@@ -3810,17 +3818,22 @@ function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale
     const pPump = screenAt(pumpVal);
 
     ctx.strokeStyle = 'rgba(125,211,252,0.85)';
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = lw(0.12);
     ctx.beginPath(); ctx.moveTo(center.x, center.y); ctx.lineTo(pPump.x, pPump.y); ctx.stroke();
 
+    // Boîtier du moteur/pompe — nettement plus petit que la plateforme (comme le bloc noir sous
+    // le robot réel sur la photo), proportionnel à platformPxHalf comme le reste du robot, pas
+    // une taille fixe en pixels (c'est ce qui le faisait paraître plus gros que tout le robot une
+    // fois dézoomé).
     const pumping = robot.pumpState === 'pumping';
     const inMud = pumpDepth > waterHere;
-    ctx.globalAlpha = inMud ? 0.75 : 1; // légèrement estompé une fois dans la vase, comme immergé dedans
+    const pumpW = platformPxHalf * 0.5, pumpH = platformPxHalf * 0.65;
+    ctx.globalAlpha = inMud ? 0.92 : 1; // à peine estompé une fois dans la vase, juste un indice d'immersion
     ctx.fillStyle   = pumping ? '#10b981' : '#2563eb';
     ctx.strokeStyle = pumping ? '#6ee7b7' : '#93c5fd';
-    if (pumping) { ctx.shadowColor = '#34d399'; ctx.shadowBlur = 10; }
+    if (pumping) { ctx.shadowColor = '#34d399'; ctx.shadowBlur = Math.max(2, platformPxHalf * 0.2); }
     ctx.beginPath();
-    ctx.roundRect(pPump.x - 5, pPump.y - 6, 10, 12, 3);
+    ctx.roundRect(pPump.x - pumpW / 2, pPump.y - pumpH * 0.5, pumpW, pumpH, Math.max(1, pumpW * 0.25));
     ctx.fill(); ctx.stroke();
     ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
