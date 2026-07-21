@@ -1063,9 +1063,10 @@ const state = {
     selectedSurveyId: null, compareBeforeId: null, compareAfterId: null,
     _lastMin: null, _lastMax: null,
     // Suivi bathymétrique en direct pendant le curage — voir startSimulation()/simulationTick().
-    // Case cochée par l'utilisateur AVANT de cliquer "Démarrer" (pas persisté d'une session à
-    // l'autre, c'est un réglage "pour le prochain chantier", pas une préférence durable).
-    liveDuringWork: false,
+    // Actif par défaut (comportement normal du curage : le relevé "en cours" se met à jour case
+    // par case et devient le relevé "après travaux" en fin de chantier, voir finishSimulation) —
+    // décochable si besoin, mais pas persisté d'une session à l'autre.
+    liveDuringWork: true,
     _liveSurveyId: null,
   },
 };
@@ -4999,6 +5000,26 @@ function simulationTick() {
   if (_satModeDash) updateRobotMarkerDash();
 }
 
+// Le suivi bathymétrique en direct (voir startLiveBathySurveyIfEnabled/_recordLiveBathyReading)
+// EST déjà, cellule par cellule, la donnée "après travaux" la plus à jour en fin de chantier —
+// inutile d'imposer un second scan complet séparé. On le retype/relabellise donc en relevé
+// "après travaux" définitif et on le branche sur le comparatif avant/après existant.
+function finalizeLiveBathySurveyIfActive() {
+  const b = state.bathy;
+  if (!b._liveSurveyId || !state.pond) return;
+  const survey = state.pond.bathySurveys?.find(s => s.id === b._liveSurveyId);
+  if (!survey) { b._liveSurveyId = null; return; }
+  survey.type  = 'after';
+  survey.date  = Date.now();
+  survey.label = `Après travaux (temps réel) — ${new Date().toLocaleDateString('fr-FR')}`;
+  const before = latestBathySurvey(state.pond, 'before');
+  if (before) b.compareBeforeId = before.id;
+  b.compareAfterId = survey.id;
+  b._liveSurveyId = null; // ce chantier est terminé — un prochain "Démarrer" créera un nouveau suivi
+  persistPondSurveys();
+  if (state.activeTab === 'bathymetry') renderBathyTab();
+}
+
 function finishSimulation() {
   state.sim.running = false;
   clearInterval(state.sim.intervalId);
@@ -5010,6 +5031,7 @@ function finishSimulation() {
   setLED('blue', 'Terminé');
   updateButtonStates();
   updateStatus('Travail terminé !', 'Toutes les cases traitées');
+  finalizeLiveBathySurveyIfActive();
   saveWork();
   updatePondsList();
   showToast('Curage terminé ! Résultats enregistrés.', 'success');

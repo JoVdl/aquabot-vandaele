@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v61</span>
+        <span class="logo-version" id="appVersion">v62</span>
       </div>
     </div>
     <div class="header-status">
@@ -657,10 +657,10 @@
 
           <div class="card">
             <div class="card-header">Suivi en direct pendant le curage</div>
-            <p class="energy-disclaimer" style="padding-top:6px">Le robot cible désormais la vase RÉELLEMENT mesurée (dernier relevé bathymétrique) selon l'objectif de curage choisi dans Paramètres — intégral ou à profondeur cible. Cochez cette case avant de démarrer le curage (onglet Tableau de bord) pour qu'un nouveau relevé se remplisse case par case au fil du travail, et suivre en direct l'évolution de la vase et l'efficacité du robot.</p>
+            <p class="energy-disclaimer" style="padding-top:6px">Activé par défaut : le robot cible la vase RÉELLEMENT mesurée (dernier relevé bathymétrique) selon l'objectif de curage choisi dans Paramètres, et un relevé "en cours" se remplit case par case au fil du travail — visible en direct ici. En fin de chantier, ce relevé devient automatiquement le relevé "après travaux" (inutile de relancer un scan complet, sauf si vous voulez vérifier/recommencer).</p>
             <label class="bathy-satellite-toggle">
-              <input type="checkbox" id="bathyLiveDuringWork" onchange="setBathyLiveDuringWork(this.checked)">
-              📡 Activer le relevé bathymétrique en direct au prochain démarrage
+              <input type="checkbox" id="bathyLiveDuringWork" checked onchange="setBathyLiveDuringWork(this.checked)">
+              📡 Suivre l'évolution de la vase en direct pendant le curage
             </label>
           </div>
 
