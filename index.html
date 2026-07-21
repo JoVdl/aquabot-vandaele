@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v53</span>
+        <span class="logo-version" id="appVersion">v54</span>
       </div>
     </div>
     <div class="header-status">
@@ -624,14 +624,19 @@
               <span class="bathy-scan-cell" id="bathyScanCellLabel">—</span>
               <button class="btn btn-ghost btn-sm" onclick="cancelBathySurvey()">✕</button>
             </div>
+            <p class="energy-disclaimer" style="padding-top:10px">Génération rapide (instantanée, sans balayage animé) d'un relevé "après travaux" simulé à partir du dernier relevé "avant travaux" — pratique pour visualiser l'effet attendu sans attendre un vrai relevé complet.</p>
+            <div class="bathy-scan-actions">
+              <button class="btn btn-secondary btn-sm" onclick="quickBathyAfterZone()" title="Ne retravaille que les cases déjà nettoyées par le robot (zone en cours) : retire une épaisseur de vase donnée (réduction absolue, pas un pourcentage), en laissant toujours un petit fond résiduel.">⚡ Après travaux — zone en cours</button>
+              <button class="btn btn-secondary btn-sm" onclick="quickBathyAfterPond()" title="Simule l'étang ENTIÈREMENT terminé : résidu de vase variable par endroit, comme un vrai chantier fini.">⚡ Après travaux — étang complet</button>
+            </div>
           </div>
 
           <div class="card bathy-map-card">
             <div class="card-header">
               <span>Carte bathymétrique</span>
               <div class="view-toggle-group bathy-view-toggle">
-                <button class="view-toggle-btn active" id="btnBathy2D" onclick="setBathyMode('2d')">▦ 2D</button>
-                <button class="view-toggle-btn" id="btnBathy3D" onclick="setBathyMode('3d')">◆ 3D</button>
+                <button class="view-toggle-btn" id="btnBathy2D" onclick="setBathyMode('2d')">▦ 2D</button>
+                <button class="view-toggle-btn active" id="btnBathy3D" onclick="setBathyMode('3d')">◆ 3D</button>
               </div>
             </div>
             <div class="bathy-controls-row bathy-selection-row">
@@ -648,7 +653,7 @@
               <select class="param-select" id="bathyMetricSelect" onchange="setBathyMetric(this.value)">
                 <option value="mud">Vase — profondeur</option>
                 <option value="water">Eau — profondeur</option>
-                <option value="total">Profondeur totale (eau + vase)</option>
+                <option value="total" selected>Profondeur totale (eau + vase)</option>
                 <option value="diff">Différence — vase retirée</option>
               </select>
               <select class="param-select" id="bathySurveySelect" onchange="setBathySurvey(this.value)"></select>
@@ -666,14 +671,14 @@
                 <option value="viridis">Palette Viridis</option>
               </select>
             </div>
-            <div class="bathy-controls-row bathy-rotation-row" id="bathy3DStyleRow" style="display:none">
+            <div class="bathy-controls-row bathy-rotation-row" id="bathy3DStyleRow" style="display:flex">
               <span class="bathy-rotation-lbl">Style</span>
               <div class="view-toggle-group">
-                <button class="view-toggle-btn active" id="btnBathy3DColumns" onclick="setBathy3DStyle('columns')">▦ Colonnes</button>
-                <button class="view-toggle-btn" id="btnBathy3DMesh" onclick="setBathy3DStyle('mesh')">⛰ Surface lisse</button>
+                <button class="view-toggle-btn" id="btnBathy3DColumns" onclick="setBathy3DStyle('columns')">▦ Colonnes</button>
+                <button class="view-toggle-btn active" id="btnBathy3DMesh" onclick="setBathy3DStyle('mesh')">⛰ Surface lisse</button>
               </div>
             </div>
-            <div class="bathy-controls-row bathy-rotation-row" id="bathyRotationRow" style="display:none">
+            <div class="bathy-controls-row bathy-rotation-row" id="bathyRotationRow" style="display:flex">
               <span class="bathy-rotation-lbl">↻ Angle de vue</span>
               <input type="range" min="0" max="359" value="45" id="bathyRotationSlider" oninput="setBathy3DRotation(this.value)">
               <span class="bathy-rotation-val" id="bathyRotationVal">45°</span>
@@ -683,11 +688,11 @@
               </label>
               <button class="btn btn-ghost btn-sm" onclick="resetBathy3DView()" title="Réinitialiser le zoom/déplacement">⊙ Recentrer</button>
             </div>
-            <div class="bathy-controls-row bathy-rotation-row" id="bathyTiltRow" style="display:none">
+            <div class="bathy-controls-row bathy-rotation-row" id="bathyTiltRow" style="display:flex">
               <span class="bathy-rotation-lbl">↕ Inclinaison</span>
               <input type="range" min="5" max="80" value="28" id="bathyTiltSlider" oninput="setBathy3DTilt(this.value)">
               <span class="bathy-rotation-val" id="bathyTiltVal">28°</span>
-              <p class="energy-disclaimer" style="padding:0;margin:0;flex-basis:100%;display:none" id="bathyTiltDisclaimer">Surface lisse : sélectionnez "Profondeur totale (eau + vase)" pour voir le fond de vase à travers une surface d'eau translucide. Le fond satellite, si activé, est calé exactement sur le relief.</p>
+              <p class="energy-disclaimer" style="padding:0;margin:0;flex-basis:100%;display:block" id="bathyTiltDisclaimer">Surface lisse : sélectionnez "Profondeur totale (eau + vase)" pour voir le fond de vase à travers une surface d'eau translucide. Le fond satellite, si activé, est calé exactement sur le relief.</p>
             </div>
             <div class="bathy-canvas-wrap" id="bathyCanvasWrap">
               <canvas id="bathyCanvas"></canvas>

@@ -1007,9 +1007,12 @@ const state = {
   bathy: {
     running: false, order: [], currentStep: 0, intervalId: null,
     pendingReadings: [], pendingType: null, markerIdx: null,
-    metric: 'mud', mode: '2d', palette: 'classic', rotation3D: 45, show3DMap: true,
+    // Vue par défaut : 3D / profondeur totale / surface lisse — la plus lisible pour se rendre
+    // compte visuellement de l'épaisseur de vase (voir index.html pour les classes/valeurs HTML
+    // statiques qui doivent rester synchronisées avec ces valeurs par défaut).
+    metric: 'total', mode: '3d', palette: 'classic', rotation3D: 45, show3DMap: true,
     zoom3D: 1, pan3D: { x: 0, y: 0 },
-    style3D: 'columns', tilt3D: 28, // 'columns' | 'mesh' — tilt3D partagé par les deux styles
+    style3D: 'mesh', tilt3D: 28, // 'columns' | 'mesh' — tilt3D partagé par les deux styles
     selectedSurveyId: null, compareBeforeId: null, compareAfterId: null,
     _lastMin: null, _lastMax: null,
   },
@@ -1675,6 +1678,80 @@ function generateBathyAfterReading(beforeReading, cell, treated, seed) {
   const residualMud  = round3(beforeReading.mud * residualFrac);
   const water        = round3(beforeReading.water + (beforeReading.mud - residualMud));
   return { water, mud: residualMud };
+}
+
+// Passage effectif de la machine sur une zone : retire une épaisseur de vase ABSOLUE (pas un
+// pourcentage) — une case à 10cm de vase et une case à 80cm perdent toutes les deux ~reductionAvg
+// m, comme un outil qui racle une épaisseur donnée plutôt qu'une proportion. Un tout petit fond
+// résiduel est toujours conservé (jamais totalement à sec), comme en réalité.
+function generateBathyAfterReadingAbsolute(beforeReading, cell, reductionAvg, seed) {
+  const jitter = (pseudoRandom01(cell.col, cell.row, seed + 401) - 0.5) * 0.1; // ± 5 cm autour de la moyenne visée
+  const reduction = Math.max(0, reductionAvg + jitter);
+  const MIN_MUD = 0.02;
+  const residual = Math.max(MIN_MUD, round3(beforeReading.mud * 0.06));
+  const mud = Math.max(residual, round3(beforeReading.mud - reduction));
+  const water = round3(beforeReading.water + (beforeReading.mud - mud));
+  return { water, mud: round3(mud) };
+}
+
+// Génère INSTANTANÉMENT (sans balayage animé) un relevé "après travaux" simulé, à partir du
+// dernier relevé "avant travaux" de l'étang — pratique pour visualiser rapidement l'effet attendu
+// sans relancer un vrai relevé qui prendrait plusieurs minutes case par case.
+// scope='zone' : seules les cases déjà nettoyées par le robot dans le chantier en cours
+// (cell.completed) sont retravaillées, avec une réduction ABSOLUE de vase (reductionAvg) ; le
+// reste de l'étang reste identique au relevé "avant travaux".
+// scope='pond'  : la totalité de l'étang est considérée terminée (même modèle que le relevé
+// "après travaux" animé existant — résidu de vase variable par endroit, jamais parfaitement à sec).
+function generateQuickBathyAfterSurvey(scope, reductionAvg) {
+  const pond = state.pond;
+  if (!pond) { showToast('Aucun étang chargé', 'error'); return; }
+  const before = latestBathySurvey(pond, 'before');
+  if (!before) { showToast('Aucun relevé "avant travaux" pour cet étang', 'error'); return; }
+  if (scope === 'zone' && !state.cells.some(c => c.completed)) {
+    showToast('Aucune case marquée comme nettoyée pour l’instant', 'error');
+    return;
+  }
+
+  const seed = pondBathySeed(pond);
+  const readings = new Array(state.cells.length).fill(null);
+  let treatedCount = 0;
+  state.cells.forEach((cell, i) => {
+    const beforeReading = before.readings[i];
+    if (!beforeReading) return;
+    const treat = scope === 'pond' || (scope === 'zone' && cell.completed);
+    if (!treat) { readings[i] = { ...beforeReading }; return; }
+    readings[i] = scope === 'zone'
+      ? generateBathyAfterReadingAbsolute(beforeReading, cell, reductionAvg, seed)
+      : generateBathyAfterReading(beforeReading, cell, true, seed);
+    treatedCount++;
+  });
+
+  const dateStr = new Date().toLocaleDateString('fr-FR');
+  const label = scope === 'zone'
+    ? `Après travaux — zone en cours — ${dateStr}`
+    : `Après travaux — étang complet — ${dateStr}`;
+  const survey = { id: Date.now().toString(), type: 'after', label, date: Date.now(), readings };
+  if (!pond.bathySurveys) pond.bathySurveys = [];
+  pond.bathySurveys.push(survey);
+  state.bathy.selectedSurveyId = survey.id;
+  state.bathy.compareBeforeId  = before.id;
+  state.bathy.compareAfterId   = survey.id;
+  persistPondSurveys();
+  renderBathyTab();
+  showToast(`"${label}" généré — ${treatedCount} case(s) traitée(s)`, 'success');
+}
+function quickBathyAfterZone() {
+  const input = prompt(
+    'Épaisseur moyenne de vase retirée par le passage de la machine sur la zone déjà traitée (en m) ?\n\nUn tout petit fond résiduel sera toujours conservé, comme en réalité. Le reste de l’étang (zone non encore traitée) reste inchangé.',
+    '0.45'
+  );
+  if (input == null) return;
+  const reductionAvg = parseFloat(String(input).replace(',', '.'));
+  if (!isFinite(reductionAvg) || reductionAvg < 0) { showToast('Valeur invalide', 'error'); return; }
+  generateQuickBathyAfterSurvey('zone', reductionAvg);
+}
+function quickBathyAfterPond() {
+  generateQuickBathyAfterSurvey('pond');
 }
 
 function latestBathySurvey(pond, type) {
