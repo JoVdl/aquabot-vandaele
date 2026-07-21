@@ -5109,7 +5109,10 @@ function updateUI() {
   const sectionBaseline = robot._cellBaseline || { water: params.waterDepth, mud: params.mudDepth };
   setText('depthWater', sectionBaseline.water.toFixed(2));
   setText('depthMud',   sectionBaseline.mud.toFixed(2));
-  setText('depthPump',  robot.pumpDepth.toFixed(2));
+  // En mode Robot réel, pumpDepth vient de la télémétrie ESP32 (subscribeRobotTelemetry) — un
+  // champ manquant ou une lecture capteur défaillante peut y transiter en NaN plutôt qu'un
+  // simple 0, ce qui affichait littéralement "NaN m" à l'écran.
+  setText('depthPump',  Number.isFinite(robot.pumpDepth) ? robot.pumpDepth.toFixed(2) : '—');
 
   // Bandeau "pompage en cours" — décompte du temps restant sur la mini-cycle en cours, pour
   // se repérer dans le cycle sans avoir à deviner d'après la profondeur de pompe seule.
