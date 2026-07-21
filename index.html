@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v39</span>
+        <span class="logo-version" id="appVersion">v40</span>
       </div>
     </div>
     <div class="header-status">
@@ -665,6 +665,13 @@
                 <option value="viridis">Palette Viridis</option>
               </select>
             </div>
+            <div class="bathy-controls-row bathy-rotation-row" id="bathy3DStyleRow" style="display:none">
+              <span class="bathy-rotation-lbl">Style</span>
+              <div class="view-toggle-group">
+                <button class="view-toggle-btn active" id="btnBathy3DColumns" onclick="setBathy3DStyle('columns')">▦ Colonnes</button>
+                <button class="view-toggle-btn" id="btnBathy3DMesh" onclick="setBathy3DStyle('mesh')">⛰ Surface lisse</button>
+              </div>
+            </div>
             <div class="bathy-controls-row bathy-rotation-row" id="bathyRotationRow" style="display:none">
               <span class="bathy-rotation-lbl">↻ Angle de vue</span>
               <input type="range" min="0" max="359" value="45" id="bathyRotationSlider" oninput="setBathy3DRotation(this.value)">
@@ -674,6 +681,12 @@
                 🛰 Fond satellite
               </label>
               <button class="btn btn-ghost btn-sm" onclick="resetBathy3DView()" title="Réinitialiser le zoom/déplacement">⊙ Recentrer</button>
+            </div>
+            <div class="bathy-controls-row bathy-rotation-row" id="bathyTiltRow" style="display:none">
+              <span class="bathy-rotation-lbl">↕ Inclinaison</span>
+              <input type="range" min="10" max="80" value="28" id="bathyTiltSlider" oninput="setBathy3DTilt(this.value)">
+              <span class="bathy-rotation-val" id="bathyTiltVal">28°</span>
+              <p class="energy-disclaimer" style="padding:0;margin:0;flex-basis:100%">Surface lisse : un seul canal de profondeur à la fois, pas de fond satellite ni de transparence eau/vase (voir le style Colonnes pour ça).</p>
             </div>
             <div class="bathy-canvas-wrap" id="bathyCanvasWrap">
               <canvas id="bathyCanvas"></canvas>

@@ -1009,6 +1009,7 @@ const state = {
     pendingReadings: [], pendingType: null, markerIdx: null,
     metric: 'mud', mode: '2d', palette: 'classic', rotation3D: 45, show3DMap: true,
     zoom3D: 1, pan3D: { x: 0, y: 0 },
+    style3D: 'columns', meshTilt: 28, // 'columns' | 'mesh'
     selectedSurveyId: null, compareBeforeId: null, compareAfterId: null,
     _lastMin: null, _lastMax: null,
   },
@@ -1803,6 +1804,10 @@ function setBathyMode(mode) {
   document.getElementById('btnBathy3D')?.classList.toggle('active', mode === '3d');
   const rotRow = document.getElementById('bathyRotationRow');
   if (rotRow) rotRow.style.display = mode === '3d' ? 'flex' : 'none';
+  const styleRow = document.getElementById('bathy3DStyleRow');
+  if (styleRow) styleRow.style.display = mode === '3d' ? 'flex' : 'none';
+  const tiltRow = document.getElementById('bathyTiltRow');
+  if (tiltRow) tiltRow.style.display = (mode === '3d' && state.bathy.style3D === 'mesh') ? 'flex' : 'none';
   const canvas = document.getElementById('bathyCanvas');
   if (canvas) canvas.style.cursor = mode === '3d' ? 'grab' : '';
   renderBathyCanvas();
@@ -1819,6 +1824,27 @@ function setBathy3DRotation(deg) {
 // NB: _syncBathyRotationUI (voir plus bas) fait la même chose que les deux lignes ci-dessus
 // mais met aussi à jour le curseur — utilisé par le pivot tactile à deux doigts, qui doit
 // garder le curseur synchronisé avec un angle changé par un autre geste que lui.
+
+// Deux styles de vue 3D : "columns" (colonnes extrudées, avec fond satellite et transparence
+// eau/vase) et "mesh" (surface continue triangulée + éclairage simulé, façon relevé sonar
+// classique — un seul canal de profondeur à la fois, pas de fond satellite pour l'instant).
+function setBathy3DStyle(style) {
+  state.bathy.style3D = style;
+  document.getElementById('btnBathy3DColumns')?.classList.toggle('active', style === 'columns');
+  document.getElementById('btnBathy3DMesh')?.classList.toggle('active', style === 'mesh');
+  const tiltRow = document.getElementById('bathyTiltRow');
+  if (tiltRow) tiltRow.style.display = style === 'mesh' ? 'flex' : 'none';
+  // Le fond satellite n'existe que pour les colonnes (texturer une surface maillée inclinée
+  // demanderait un mapping bien plus complexe) — on masque juste ce contrôle en mode surface.
+  const satToggle = document.getElementById('bathySatelliteToggle');
+  if (satToggle) satToggle.closest('label').style.display = style === 'mesh' ? 'none' : 'flex';
+  renderBathyCanvas();
+}
+function setBathy3DTilt(deg) {
+  state.bathy.meshTilt = parseFloat(deg) || 0;
+  setText('bathyTiltVal', Math.round(state.bathy.meshTilt) + '°');
+  renderBathyCanvas();
+}
 
 // ── Zoom / pan / rotation à la souris et au doigt sur la vue 3D isométrique ────────────────
 // Un canevas personnalisé n'a pas de zoom/pan natif comme Leaflet : on l'implémente à la main,
@@ -2136,7 +2162,8 @@ function renderBathyCanvas() {
     ctx.scale(zoom3D, zoom3D);
     ctx.translate(-canvas.width / 2, -canvas.height / 2);
     state.bathy._floorTilesDrawn = 0;
-    renderBathy3D(ctx, canvas.width, canvas.height, values, min, range);
+    if (state.bathy.style3D === 'mesh') renderBathy3DMesh(ctx, canvas.width, canvas.height, values, min, range);
+    else                                 renderBathy3D(ctx, canvas.width, canvas.height, values, min, range);
     ctx.restore();
     // Le voile d'assombrissement du fond satellite se dessine hors de la transform zoom/pan
     // (espace identité) pour toujours couvrir tout le canevas physique, quel que soit le niveau
@@ -2511,6 +2538,126 @@ function renderBathy3DStacked(ctx, W, H, raw, theta, maxH) {
   ctx.font = '10px ui-monospace, monospace';
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.fillText('surface de l\'eau (plafond plat)', 8, layout.minIy + offY - 6);
+}
+
+// ── Style "Surface lisse" — maillage triangulé continu + éclairage simulé, façon relevé
+// bathymétrique sonar classique (une seule teinte de profondeur à la fois, ombrage selon la
+// pente locale). Pas de fond satellite ni de transparence eau/vase ici — voir renderBathy3D /
+// renderBathy3DStacked pour le style "Colonnes" qui a ces deux fonctionnalités.
+const BATHY_MESH_LIGHT = (() => {
+  const v = { x: -0.4, y: -0.55, z: 0.73 }; // lumière fixe côté caméra (pas le monde), depuis le
+                                             // haut-gauche — reste cohérente quel que soit l'angle
+  const len = Math.hypot(v.x, v.y, v.z);
+  return { x: v.x / len, y: v.y / len, z: v.z / len };
+})();
+
+function renderBathy3DMesh(ctx, W, H, values, min, range) {
+  const pond = state.pond;
+  if (!pond) return;
+  const metric = state.bathy.metric;
+  const thetaRad = state.bathy.rotation3D * Math.PI / 180;
+  const tiltRad  = state.bathy.meshTilt   * Math.PI / 180;
+  const cs = params.cellSize;
+
+  // Exagération verticale relative à la taille de l'étang — sans ça, un relief de quelques
+  // dizaines de cm serait invisible face à une étendue de plusieurs dizaines de mètres.
+  const bbox = getPondBbox(pond);
+  const horizontalSpan = Math.max(bbox.maxX - bbox.minX, bbox.maxY - bbox.minY) || 1;
+  const heightScale = range > 0 ? (horizontalSpan * 0.22) / range : 1;
+
+  let minCol = Infinity, maxCol = -Infinity, minRow = Infinity, maxRow = -Infinity;
+  const grid = new Map();
+  state.cells.forEach((c, i) => {
+    grid.set(c.col + ',' + c.row, values[i]);
+    minCol = Math.min(minCol, c.col); maxCol = Math.max(maxCol, c.col);
+    minRow = Math.min(minRow, c.row); maxRow = Math.max(maxRow, c.row);
+  });
+  if (!isFinite(minCol)) return;
+
+  // Décimation si la grille est très dense, pour rester fluide pendant la rotation/le zoom —
+  // un triangle par case n'est pas nécessaire pour lire le relief global.
+  const spanCols = maxCol - minCol + 1, spanRows = maxRow - minRow + 1;
+  const stride = Math.max(1, Math.ceil(Math.sqrt((spanCols * spanRows) / 3000)));
+  const sampleCols = []; for (let c = minCol; c <= maxCol; c += stride) sampleCols.push(c);
+  const sampleRows = []; for (let r = minRow; r <= maxRow; r += stride) sampleRows.push(r);
+
+  function project(col, row, val) {
+    const wx = col * cs, wy = row * cs;
+    const rx = wx * Math.cos(thetaRad) - wy * Math.sin(thetaRad);
+    const ry = wx * Math.sin(thetaRad) + wy * Math.cos(thetaRad);
+    const z  = -val * heightScale; // plus profond → vers le bas, comme un vrai creux
+    return {
+      x: rx,
+      y: ry * Math.sin(tiltRad) - z * Math.cos(tiltRad),
+      depth: ry * Math.cos(tiltRad) + z * Math.sin(tiltRad), // pour le tri peintre
+      rx, ry, z,
+    };
+  }
+
+  // Deux triangles par quad de 4 cases voisines — seulement si les 4 coins ont une valeur (un
+  // trou dans la sélection/le relevé laisse un vrai trou dans le maillage, pas une valeur inventée).
+  const tris = [];
+  for (let ci = 0; ci < sampleCols.length - 1; ci++) {
+    const c0 = sampleCols[ci], c1 = sampleCols[ci + 1];
+    for (let ri = 0; ri < sampleRows.length - 1; ri++) {
+      const r0 = sampleRows[ri], r1 = sampleRows[ri + 1];
+      const v00 = grid.get(c0 + ',' + r0), v10 = grid.get(c1 + ',' + r0);
+      const v01 = grid.get(c0 + ',' + r1), v11 = grid.get(c1 + ',' + r1);
+      if (v00 == null || v10 == null || v01 == null || v11 == null) continue;
+      const p00 = project(c0, r0, v00), p10 = project(c1, r0, v10);
+      const p01 = project(c0, r1, v01), p11 = project(c1, r1, v11);
+      tris.push({ a: p00, b: p10, c: p01, val: (v00 + v10 + v01) / 3 });
+      tris.push({ a: p10, b: p11, c: p01, val: (v10 + v11 + v01) / 3 });
+    }
+  }
+  if (!tris.length) return;
+
+  // Éclairage : normale par triangle (produit vectoriel de deux arêtes en repère "caméra",
+  // c'est-à-dire après rotation d'azimut mais avant inclinaison), produit scalaire avec la
+  // lumière fixe → plus la pente fait face à la lumière, plus la facette est claire.
+  for (const t of tris) {
+    const e1x = t.b.rx - t.a.rx, e1y = t.b.ry - t.a.ry, e1z = t.b.z - t.a.z;
+    const e2x = t.c.rx - t.a.rx, e2y = t.c.ry - t.a.ry, e2z = t.c.z - t.a.z;
+    let nx = e1y * e2z - e1z * e2y;
+    let ny = e1z * e2x - e1x * e2z;
+    let nz = e1x * e2y - e1y * e2x;
+    const nLen = Math.hypot(nx, ny, nz) || 1;
+    nx /= nLen; ny /= nLen; nz /= nLen;
+    let dot = nx * BATHY_MESH_LIGHT.x + ny * BATHY_MESH_LIGHT.y + nz * BATHY_MESH_LIGHT.z;
+    if (dot < 0) dot = -dot; // pas de "face arrière" visible sur un maillage de terrain
+    t.shade = Math.max(0.35, Math.min(1, dot));
+    t.screenDepth = (t.a.depth + t.b.depth + t.c.depth) / 3;
+  }
+  tris.sort((p, q) => p.screenDepth - q.screenDepth); // peintre : loin → près
+
+  // Ajustement à l'échelle du canevas (min/max calculés à la main, pas par spread — jusqu'à
+  // ~18 000 points pour une grosse grille, l'opérateur spread s'y risquerait inutilement).
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const t of tris) {
+    for (const p of [t.a, t.b, t.c]) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+  const fitScale = Math.min((W * 0.88) / spanX, (H * 0.82) / spanY);
+  const offX = W / 2 - ((minX + maxX) / 2) * fitScale;
+  const offY = H / 2 - ((minY + maxY) / 2) * fitScale;
+
+  const frac = v => Math.max(0, Math.min(1, (v - min) / range));
+  for (const t of tris) {
+    const shaded = rgbCss(rgbShade(bathyColorRGB(metric, frac(t.val)), t.shade));
+    ctx.fillStyle = shaded;
+    ctx.strokeStyle = shaded; // masque les fines coutures d'antialiasing entre triangles voisins
+    ctx.lineWidth = 0.75;
+    ctx.beginPath();
+    ctx.moveTo(t.a.x * fitScale + offX, t.a.y * fitScale + offY);
+    ctx.lineTo(t.b.x * fitScale + offX, t.b.y * fitScale + offY);
+    ctx.lineTo(t.c.x * fitScale + offX, t.c.y * fitScale + offY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
 }
 
 // Légende graduée — repères de profondeur alignés sur le dégradé (pas juste min/max aux deux
