@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v62</span>
+        <span class="logo-version" id="appVersion">v63</span>
       </div>
     </div>
     <div class="header-status">
@@ -231,6 +231,16 @@
                 <div class="view-toggle-group">
                   <button class="view-toggle-btn active" id="btnSchemaViewDash" onclick="toggleSatelliteViewDash(false)">📐 Schéma</button>
                   <button class="view-toggle-btn" id="btnSatViewDash" onclick="toggleSatelliteViewDash(true)">🛰 Satellite</button>
+                  <button class="view-toggle-btn" id="btnDash3D" onclick="toggleDash3D()" title="Vue 3D en direct : la vase mesurée et le robot qui plonge, mis à jour au fil du curage">⛰ 3D</button>
+                </div>
+              </div>
+              <div class="toolbar-group toolbar-group-labeled" id="dash3DControlsGroup" style="display:none">
+                <span class="toolbar-group-label">Inclinaison / Angle</span>
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                  <input type="range" min="5" max="80" value="28" id="dash3DTiltSlider" oninput="setDash3DTilt(this.value)" style="width:80px">
+                  <span class="bathy-rotation-val" id="dash3DTiltVal">28°</span>
+                  <input type="range" min="0" max="359" value="45" id="dash3DRotationSlider" oninput="setDash3DRotation(this.value)" style="width:80px">
+                  <span class="bathy-rotation-val" id="dash3DRotationVal">45°</span>
                 </div>
               </div>
               <div class="toolbar-group toolbar-group-labeled" id="dashMapStyleGroup" style="display:none">
