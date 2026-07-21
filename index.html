@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v63</span>
+        <span class="logo-version" id="appVersion">v64</span>
       </div>
     </div>
     <div class="header-status">
@@ -241,6 +241,20 @@
                   <span class="bathy-rotation-val" id="dash3DTiltVal">28°</span>
                   <input type="range" min="0" max="359" value="45" id="dash3DRotationSlider" oninput="setDash3DRotation(this.value)" style="width:80px">
                   <span class="bathy-rotation-val" id="dash3DRotationVal">45°</span>
+                </div>
+                <div class="bathy-palette-group" id="dash3DPaletteGroup">
+                  <button class="bathy-palette-btn active" data-palette="classic" onclick="setBathyPalette('classic')" title="Palette classique (bleu / brun)">
+                    <span class="bathy-palette-swatch" id="dash3DPaletteSwatchClassic"></span>
+                    Classique
+                  </button>
+                  <button class="bathy-palette-btn" data-palette="rainbow" onclick="setBathyPalette('rainbow')" title="Palette bathymétrique (arc-en-ciel)">
+                    <span class="bathy-palette-swatch" id="dash3DPaletteSwatchRainbow"></span>
+                    Arc-en-ciel
+                  </button>
+                  <button class="bathy-palette-btn" data-palette="viridis" onclick="setBathyPalette('viridis')" title="Palette Viridis">
+                    <span class="bathy-palette-swatch" id="dash3DPaletteSwatchViridis"></span>
+                    Viridis
+                  </button>
                 </div>
               </div>
               <div class="toolbar-group toolbar-group-labeled" id="dashMapStyleGroup" style="display:none">

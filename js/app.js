@@ -2628,6 +2628,7 @@ function setBathyPalette(palette) {
   renderBathyCanvas();
   updateBathyLegend();
   if (_leafletMapBathy) _updateBathyCellStyles();
+  if (state.dash3D.active) renderDash3D();
 }
 
 // Aperçus de couleurs des 3 boutons de palette (voir index.html) — construits une fois au
@@ -2636,17 +2637,17 @@ function setBathyPalette(palette) {
 // quoi ressemblait réellement chaque palette avant de la choisir.
 function initBathyPaletteButtons() {
   const stopsToGradient = stops => `linear-gradient(90deg, ${stops.map(([f, c]) => `${c} ${f * 100}%`).join(', ')})`;
-  const rainbow = document.getElementById('bathyPaletteSwatchRainbow');
-  if (rainbow) rainbow.style.background = stopsToGradient(BATHY_PALETTES.rainbow.stops);
-  const viridis = document.getElementById('bathyPaletteSwatchViridis');
-  if (viridis) viridis.style.background = stopsToGradient(BATHY_PALETTES.viridis.stops);
+  const waterC = f => rgbCss(bathyColorRGBForScale(BATHY_HSL_SCALES.water, f));
+  const mudC   = f => rgbCss(bathyColorRGBForScale(BATHY_HSL_SCALES.mud, f));
   // "Classique" module la teinte par métrique (bleu pour l'eau, brun pour la vase) plutôt qu'une
   // seule échelle fixe — l'aperçu montre donc les deux còte à còte, fidèle au nom "bleu / brun".
-  const classic = document.getElementById('bathyPaletteSwatchClassic');
-  if (classic) {
-    const waterC = f => rgbCss(bathyColorRGBForScale(BATHY_HSL_SCALES.water, f));
-    const mudC   = f => rgbCss(bathyColorRGBForScale(BATHY_HSL_SCALES.mud, f));
-    classic.style.background = `linear-gradient(90deg, ${waterC(0)} 0%, ${waterC(1)} 46%, ${mudC(0)} 54%, ${mudC(1)} 100%)`;
+  for (const prefix of ['bathyPaletteSwatch', 'dash3DPaletteSwatch']) {
+    const rainbow = document.getElementById(prefix + 'Rainbow');
+    if (rainbow) rainbow.style.background = stopsToGradient(BATHY_PALETTES.rainbow.stops);
+    const viridis = document.getElementById(prefix + 'Viridis');
+    if (viridis) viridis.style.background = stopsToGradient(BATHY_PALETTES.viridis.stops);
+    const classic = document.getElementById(prefix + 'Classic');
+    if (classic) classic.style.background = `linear-gradient(90deg, ${waterC(0)} 0%, ${waterC(1)} 46%, ${mudC(0)} 54%, ${mudC(1)} 100%)`;
   }
 }
 function bathyColorRGBForScale(s, frac) {
@@ -3180,6 +3181,20 @@ function bathyMeshProjectXY(col, row, val, thetaRad, tiltRad, heightScale, cs) {
   return { x: rx, y: ry * Math.sin(tiltRad) - z * Math.cos(tiltRad), rx, ry, z };
 }
 
+// Position (val, dans le même repère décalé par totalMin que projectVal) de la surface de vase —
+// juste au-dessus du socle, à une distance du socle proportionnelle à l'épaisseur de vase
+// (mud/total), avec une exagération modérée pour rester perceptible même quand elle est fine
+// comparée à la hauteur d'eau au-dessus. Partagée entre renderBathy3DMeshStacked (le maillage
+// lui-même) et drawDashRobot3D (pour que le robot pénètre visuellement la vase exactement là où
+// sa surface est réellement dessinée, pas une approximation indépendante).
+const MUD_LAYER_EXAGGERATION = 1.6;
+function bathyMudTopVal(water, mud, totalMin) {
+  const total = water + mud;
+  if (total <= 0) return totalMin;
+  const mudFraction = Math.min(1, (mud / total) * MUD_LAYER_EXAGGERATION);
+  return totalMin + (total - totalMin) * (1 - mudFraction);
+}
+
 // "Profondeur totale" pour le maillage : le fond dur (relief coloré par la vase — pour qu'elle
 // reste bien visible et perceptible, comme demandé) est dessiné sous un plafond d'eau plat et
 // semi-transparent, façon vraie photo de fond marin peu profond où l'on voit le relief à
@@ -3256,21 +3271,10 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
       floorTris.push({ a: b00, b: b10, c: b01 });
       floorTris.push({ a: b10, b: b11, c: b01 });
 
-      // La surface de vase se situe juste au-dessus du socle, à une distance du socle
-      // proportionnelle à l'épaisseur de vase (mud/total) — l'eau occupe la part dominante du
-      // haut (water/total, souvent la plus grande partie de la colonne), la vase la fine part du
-      // bas juste avant le socle. Une exagération modérée (MUD_LAYER_EXAGGERATION) élargit cet
-      // écart pour que l'épaisseur de vase reste perceptible à l'oeil même quand elle est fine
-      // comparée à la hauteur d'eau au-dessus — mais reste douce : un étang réel avec ~2m d'eau
-      // pour ~30cm de vase (vase ≈ 13 % du total) doit rester majoritairement lu comme "de
-      // l'eau", pas comme moitié vase moitié eau.
-      const MUD_LAYER_EXAGGERATION = 1.6;
-      const mudTopVal = (w, m) => {
-        const total = w + m;
-        if (total <= 0) return totalMin;
-        const mudFraction = Math.min(1, (m / total) * MUD_LAYER_EXAGGERATION);
-        return totalMin + (total - totalMin) * (1 - mudFraction);
-      };
+      // La surface de vase — voir bathyMudTopVal — se situe juste au-dessus du socle, à une
+      // distance proportionnelle à l'épaisseur de vase (mud/total), avec une exagération
+      // modérée pour rester perceptible même quand elle est fine comparée à la hauteur d'eau.
+      const mudTopVal = (w, m) => bathyMudTopVal(w, m, totalMin);
       const t00 = projectVal(c0, r0, mudTopVal(w00, m00)), t10 = projectVal(c1, r0, mudTopVal(w10, m10));
       const t01 = projectVal(c0, r1, mudTopVal(w01, m01)), t11 = projectVal(c1, r1, mudTopVal(w11, m11));
       mudTopTris.push({ a: t00, b: t10, c: t01, val: (m00 + m10 + m01) / 3 });
@@ -3592,31 +3596,27 @@ function setDash3DTilt(deg) {
 // Profondeur de vase par case pour la vue 3D en direct — préfère le relevé "en cours" pendant un
 // chantier actif (la vase y disparaît en direct au fil du curage), sinon le dernier relevé
 // "avant travaux" connu, sinon le tout dernier relevé disponible, sinon aucune donnée.
-function computeDashLiveMudValues() {
+// "Référence" = le relevé le plus récent EXCLUANT le suivi en direct courant (même principe que
+// getCellBathyBaseline) : pendant un chantier, c'est le dernier "avant travaux" ; une fois le
+// chantier terminé (_liveSurveyId réinitialisé par finalizeLiveBathySurveyIfActive, qui met aussi
+// à jour la date), c'est justement le relevé "après travaux" qui vient d'être finalisé. Fusionne
+// case traitée cette session (valeur en direct) avec le reste (valeur de référence inchangée) —
+// sinon le relevé "en direct", vide à sa création, effacerait tout le relief le temps du chantier.
+function computeDashLiveRawReadings() {
   const pond = state.pond;
   if (!pond?.bathySurveys?.length) return null;
-  // Le relevé "en direct" démarre entièrement vide (toutes lectures nulles) et ne se remplit que
-  // case par case au fil du curage — le prendre seul écraserait tout le relief le temps du
-  // chantier (rien à afficher tant qu'aucune case n'est encore terminée) au lieu de montrer la
-  // vase disparaître PROGRESSIVEMENT. On fusionne donc : la valeur "en direct" si cette case a
-  // déjà été traitée cette session, sinon la valeur de référence (dernier "avant travaux" connu).
-  // "Référence" = le relevé le plus récent EXCLUANT le suivi en direct courant (même principe que
-  // getCellBathyBaseline) : pendant un chantier, c'est le dernier "avant travaux" ; une fois le
-  // chantier terminé (_liveSurveyId réinitialisé par finalizeLiveBathySurveyIfActive, qui met
-  // aussi à jour la date), c'est justement le relevé "après travaux" qui vient d'être finalisé —
-  // sans ça, l'affichage retombait sur l'ancien "avant" une fois le suivi en direct clôturé.
   const liveSurvey = pond.bathySurveys.find(s => s.id === state.bathy._liveSurveyId);
   const others = pond.bathySurveys.filter(s => s.id !== state.bathy._liveSurveyId);
   const baseSurvey = others.length ? others.reduce((a, b) => (b.date > a.date ? b : a)) : null;
   if (!liveSurvey && !baseSurvey) return null;
-  return state.cells.map((c, i) => {
-    const liveR = liveSurvey?.readings[i];
-    if (liveR) return liveR.mud;
-    const baseR = baseSurvey?.readings[i];
-    return baseR ? baseR.mud : null;
-  });
+  return state.cells.map((c, i) => liveSurvey?.readings[i] || baseSurvey?.readings[i] || null);
 }
 
+// Vue 3D du tableau de bord — réutilise directement renderBathy3DMeshStacked (socle + vase +
+// eau, fond satellite qui s'estompe avec l'inclinaison, palette courante) : même rendu que
+// l'onglet Bathymétrie en "Profondeur totale", pas une réimplémentation séparée. state.bathy._
+// meshLayout (posé par cette fonction) donne ensuite le repère exact (totalMin compris) pour
+// placer le robot au bon niveau, y compris à l'intérieur de la vase.
 function renderDash3D() {
   const canvas = document.getElementById('dashPondCanvas');
   const wrap   = document.getElementById('dashCanvasWrap');
@@ -3639,91 +3639,18 @@ function renderDash3D() {
   const tiltRad  = state.bathy.tilt3D     * Math.PI / 180;
   const cs = params.cellSize;
   const bbox = getPondBbox(pond);
-  const values = computeDashLiveMudValues();
+  const raw = computeDashLiveRawReadings();
 
-  if (!values) { renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox); return; }
-
-  let minCol = Infinity, maxCol = -Infinity, minRow = Infinity, maxRow = -Infinity;
-  const grid = new Map();
-  const defined = [];
-  state.cells.forEach((c, i) => {
-    grid.set(c.col + ',' + c.row, values[i]);
-    if (values[i] == null) return;
-    defined.push(values[i]);
-    minCol = Math.min(minCol, c.col); maxCol = Math.max(maxCol, c.col);
-    minRow = Math.min(minRow, c.row); maxRow = Math.max(maxRow, c.row);
-  });
-  if (!isFinite(minCol) || !defined.length) { renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox); return; }
-
-  const min = Math.min(...defined), max = Math.max(...defined);
-  const range = Math.max(0.01, max - min);
-  const horizontalSpan = Math.max((maxCol - minCol) * cs, (maxRow - minRow) * cs) || 1;
-  const heightScale = (horizontalSpan * 0.22) / range;
-
-  // Décimation plus agressive qu'en Bathymétrie (2000 vs 3000 cellules cibles) — ce rendu tourne
-  // en tâche de fond du tableau de bord, pas en vue plein écran dédiée.
-  const spanCols = maxCol - minCol + 1, spanRows = maxRow - minRow + 1;
-  const stride = Math.max(1, Math.ceil(Math.sqrt((spanCols * spanRows) / 2000)));
-  const sampleCols = []; for (let c = minCol; c <= maxCol; c += stride) sampleCols.push(c);
-  const sampleRows = []; for (let r = minRow; r <= maxRow; r += stride) sampleRows.push(r);
-
-  function project(col, row, val) {
-    const p = bathyMeshProjectXY(col, row, val, thetaRad, tiltRad, heightScale, cs);
-    return { x: p.x, y: p.y, depth: p.ry * Math.cos(tiltRad) + p.z * Math.sin(tiltRad), rx: p.rx, ry: p.ry, z: p.z };
+  if (!raw || !raw.some(Boolean)) {
+    renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox);
+    return;
   }
 
-  const tris = [];
-  for (let ci = 0; ci < sampleCols.length - 1; ci++) {
-    const c0 = sampleCols[ci], c1 = sampleCols[ci + 1];
-    for (let ri = 0; ri < sampleRows.length - 1; ri++) {
-      const r0 = sampleRows[ri], r1 = sampleRows[ri + 1];
-      const v00 = grid.get(c0 + ',' + r0), v10 = grid.get(c1 + ',' + r0);
-      const v01 = grid.get(c0 + ',' + r1), v11 = grid.get(c1 + ',' + r1);
-      if (v00 == null || v10 == null || v01 == null || v11 == null) continue;
-      const p00 = project(c0, r0, v00), p10 = project(c1, r0, v10);
-      const p01 = project(c0, r1, v01), p11 = project(c1, r1, v11);
-      tris.push({ a: p00, b: p10, c: p01, val: (v00 + v10 + v01) / 3 });
-      tris.push({ a: p10, b: p11, c: p01, val: (v10 + v11 + v01) / 3 });
-    }
+  renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs);
+  const layout = state.bathy._meshLayout;
+  if (layout) {
+    drawDashRobot3D(ctx, thetaRad, tiltRad, layout.heightScale, cs, bbox, layout.fitScale, layout.offX, layout.offY, layout.totalMin ?? 0, raw);
   }
-  if (!tris.length) { renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox); return; }
-
-  for (const t of tris) {
-    const e1x = t.b.rx - t.a.rx, e1y = t.b.ry - t.a.ry, e1z = t.b.z - t.a.z;
-    const e2x = t.c.rx - t.a.rx, e2y = t.c.ry - t.a.ry, e2z = t.c.z - t.a.z;
-    let nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
-    const nLen = Math.hypot(nx, ny, nz) || 1;
-    nx /= nLen; ny /= nLen; nz /= nLen;
-    let dot = nx * BATHY_MESH_LIGHT.x + ny * BATHY_MESH_LIGHT.y + nz * BATHY_MESH_LIGHT.z;
-    if (dot < 0) dot = -dot;
-    t.shade = Math.max(0.4, Math.min(1, dot));
-    t.screenDepth = (t.a.depth + t.b.depth + t.c.depth) / 3;
-  }
-  tris.sort((p, q) => p.screenDepth - q.screenDepth);
-
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const t of tris) for (const p of [t.a, t.b, t.c]) {
-    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
-  }
-  const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
-  const fitScale = Math.min((W * 0.86) / spanX, (H * 0.78) / spanY);
-  const offX = W / 2 - ((minX + maxX) / 2) * fitScale;
-  const offY = H / 2 - ((minY + maxY) / 2) * fitScale + 10;
-
-  for (const t of tris) {
-    const frac = Math.max(0, Math.min(1, (t.val - min) / range));
-    const rgb = bathyColorRGBForScale(BATHY_HSL_SCALES.mud, frac);
-    ctx.fillStyle = rgbCss(rgbShade(rgb, t.shade));
-    ctx.beginPath();
-    ctx.moveTo(t.a.x * fitScale + offX, t.a.y * fitScale + offY);
-    ctx.lineTo(t.b.x * fitScale + offX, t.b.y * fitScale + offY);
-    ctx.lineTo(t.c.x * fitScale + offX, t.c.y * fitScale + offY);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale, offX, offY);
 }
 
 // Repli quand aucun relevé bathymétrique n'est disponible : juste le contour de l'étang à plat,
@@ -3745,46 +3672,86 @@ function renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox) {
   ctx.beginPath();
   pts.forEach((p, i) => { const x = p.x * fitScale + offX, y = p.y * fitScale + offY; i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
   ctx.closePath(); ctx.fill(); ctx.stroke();
-  drawDashRobot3D(ctx, thetaRad, tiltRad, 1, cs, bbox, fitScale, offX, offY);
+  drawDashRobot3D(ctx, thetaRad, tiltRad, 1, cs, bbox, fitScale, offX, offY, 0, null);
 }
 
-// Modélise le robot en 3D : coque à la surface + pompe qui descend/remonte en direct, projetée
-// avec exactement la même transformation que le maillage (même repère, même échelle) pour rester
-// visuellement cohérente avec le relief affiché.
-function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale, offX, offY) {
+// Projette les 4 coins d'une petite plateforme carrée (le robot, vu en 3D) centrée sur (colF,rowF)
+// à la profondeur "val" — le carré apparaît comme un parallélogramme correctement incliné/pivoté
+// selon l'angle de vue courant, exactement comme n'importe quelle face du maillage du terrain.
+function projectDashRobotSquare(colF, rowF, val, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY) {
+  const half = 0.55; // demi-largeur en "cases" (~0.55×cellSize de côté)
+  return [[-half, -half], [half, -half], [half, half], [-half, half]].map(([dc, dr]) => {
+    const p = bathyMeshProjectXY(colF + dc, rowF + dr, val, thetaRad, tiltRad, heightScale, cs);
+    return { x: p.x * fitScale + offX, y: p.y * fitScale + offY };
+  });
+}
+
+// Modélise le robot en 3D : plateforme carrée à la surface de l'eau + pompe qui descend/remonte
+// en direct, projetée dans le MÊME repère (val - totalMin) que le maillage à 3 couches — la pompe
+// pénètre donc visuellement la vase exactement au niveau où sa surface est réellement dessinée
+// (bathyMudTopVal), pas une approximation indépendante : sous la profondeur d'eau réelle de cette
+// case, on interpole entre la surface de vase (affichée, donc exagérée) et le socle selon la
+// fraction de vase déjà traversée.
+function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale, offX, offY, totalMin, raw) {
   const robot = state.robot;
   if (!Number.isFinite(robot.x) || !Number.isFinite(robot.y)) return;
   const colF = (robot.x - bbox.minX) / cs - 0.5;
   const rowF = (robot.y - bbox.minY) / cs - 0.5;
 
-  const pSurface = bathyMeshProjectXY(colF, rowF, 0, thetaRad, tiltRad, heightScale, cs);
-  const sx = pSurface.x * fitScale + offX, sy = pSurface.y * fitScale + offY;
+  let waterHere = params.waterDepth, mudHere = params.mudDepth;
+  if (raw) {
+    const nearestCol = Math.round(colF), nearestRow = Math.round(rowF);
+    for (let i = 0; i < state.cells.length; i++) {
+      const c = state.cells[i];
+      if (c.col === nearestCol && c.row === nearestRow && raw[i]) { waterHere = raw[i].water; mudHere = raw[i].mud; break; }
+    }
+  }
+
+  function screenAt(val) {
+    const p = bathyMeshProjectXY(colF, rowF, val - totalMin, thetaRad, tiltRad, heightScale, cs);
+    return { x: p.x * fitScale + offX, y: p.y * fitScale + offY };
+  }
+
+  const platform = projectDashRobotSquare(colF, rowF, totalMin - totalMin, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY);
+  const center = screenAt(totalMin);
 
   ctx.save();
   ctx.fillStyle = '#0ea5e9';
   ctx.strokeStyle = '#e0f2fe';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.arc(sx, sy, 9, 0, Math.PI * 2);
+  platform.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.closePath();
   ctx.fill(); ctx.stroke();
 
   const pumpDepth = Number.isFinite(robot.pumpDepth) ? robot.pumpDepth : 0;
   if (pumpDepth > 0.02) {
-    const pPump = bathyMeshProjectXY(colF, rowF, pumpDepth, thetaRad, tiltRad, heightScale, cs);
-    const px = pPump.x * fitScale + offX, py = pPump.y * fitScale + offY;
+    let pumpVal;
+    if (pumpDepth <= waterHere) {
+      pumpVal = pumpDepth; // encore en pleine eau, au-dessus de la vase
+    } else {
+      const total = waterHere + mudHere;
+      const intoMudFrac = mudHere > 0 ? Math.min(1, (pumpDepth - waterHere) / mudHere) : 1;
+      const mudTop = bathyMudTopVal(waterHere, mudHere, 0);
+      pumpVal = mudTop + intoMudFrac * (total - mudTop);
+    }
+    const pPump = screenAt(pumpVal);
 
     ctx.strokeStyle = 'rgba(125,211,252,0.85)';
     ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(px, py); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(center.x, center.y); ctx.lineTo(pPump.x, pPump.y); ctx.stroke();
 
     const pumping = robot.pumpState === 'pumping';
+    const inMud = pumpDepth > waterHere;
+    ctx.globalAlpha = inMud ? 0.75 : 1; // légèrement estompé une fois dans la vase, comme immergé dedans
     ctx.fillStyle   = pumping ? '#10b981' : '#2563eb';
     ctx.strokeStyle = pumping ? '#6ee7b7' : '#93c5fd';
     if (pumping) { ctx.shadowColor = '#34d399'; ctx.shadowBlur = 10; }
     ctx.beginPath();
-    ctx.roundRect(px - 5, py - 6, 10, 12, 3);
+    ctx.roundRect(pPump.x - 5, pPump.y - 6, 10, 12, 3);
     ctx.fill(); ctx.stroke();
     ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
   }
   ctx.restore();
 }
