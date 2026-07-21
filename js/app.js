@@ -3696,16 +3696,6 @@ function renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox) {
   drawDashRobot3D(ctx, thetaRad, tiltRad, 1, cs, bbox, fitScale, offX, offY, 0, null);
 }
 
-// Projette les 4 coins d'un quadrilatère (offsets en "cases" par rapport à colF,rowF) à la
-// profondeur "val" — apparaît comme un parallélogramme correctement incliné/pivoté selon l'angle
-// de vue courant, exactement comme n'importe quelle face du maillage du terrain.
-function projectDashRobotQuad(colF, rowF, corners, val, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY) {
-  return corners.map(([dc, dr]) => {
-    const p = bathyMeshProjectXY(colF + dc, rowF + dr, val, thetaRad, tiltRad, heightScale, cs);
-    return { x: p.x * fitScale + offX, y: p.y * fitScale + offY };
-  });
-}
-
 // Offsets (en "cases") des flotteurs individuels de la plateforme réelle du robot — plusieurs
 // pontons rectangulaires séparés par un fin espace (photo fournie par le client : plateforme
 // modulaire, pas un simple carré plein) — 2 rangées de 3 flotteurs.
@@ -3751,13 +3741,27 @@ function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale
 
   const center = screenAt(totalMin);
 
-  // Toutes les tailles/épaisseurs du robot sont dérivées de sa taille RÉELLE à l'écran une fois
-  // projetée (platformPxHalf), pas de constantes en pixels bruts — sinon, en dézoomant (le robot
-  // occupe alors une toute petite portion du canevas), des éléments à taille fixe comme la pompe
-  // finissaient par paraître PLUS GROS que le robot entier, incohérent avec l'échelle du reste de
-  // la scène 3D. `lw()` fixe juste un plancher de 1px pour rester visible même très dézoomé.
-  const edgePt = projectDashRobotQuad(colF, rowF, [[0.55, 0]], 0, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY)[0];
-  const platformPxHalf = Math.max(4, Math.hypot(edgePt.x - center.x, edgePt.y - center.y));
+  // L'icône du robot (flotteurs/mât/pompe) est dessinée comme un repère orienté par la rotation
+  // (thetaRad), mais PAS déformé par l'inclinaison (tiltRad) comme une vraie face du maillage.
+  // Une plateforme est plate (mêmes 4 coins à la même hauteur) : projetée avec la formule exacte
+  // du relief, elle s'écrase en une ligne quasi invisible à faible inclinaison (vue proche du
+  // côté) — correct pour le relief (qui a un vrai volume pour compenser), mais ça faisait
+  // disparaître le robot lui-même tout en laissant le mât/la pompe (mesurés sur un seul coin,
+  // donc pas forcément écrasés pareil selon la rotation) à leur taille normale : robot illisible,
+  // pompe qui semblait flotter toute seule bien plus grosse que le reste. `tiltSquash` (plancher
+  // 0.55, au lieu de sin(tiltRad) qui peut descendre à ~0.09) garde un soupçon de perspective sans
+  // jamais faire disparaître le robot. `platformPxHalf` dérive de cs*fitScale (taille d'une case à
+  // l'écran), une mesure stable qui ne dépend pas de l'inclinaison — donc mât/pompe restent
+  // proportionnés à une plateforme qui, elle, ne disparaît plus.
+  const cellPx = cs * fitScale;
+  const platformPxHalf = Math.max(4, cellPx * 0.55);
+  const tiltSquash = 0.55 + 0.45 * Math.sin(tiltRad);
+  function robotOffset(dc, dr) {
+    const wx = dc * cs, wy = dr * cs;
+    const rx = wx * Math.cos(thetaRad) - wy * Math.sin(thetaRad);
+    const ry = wx * Math.sin(thetaRad) + wy * Math.cos(thetaRad);
+    return { x: center.x + rx * fitScale, y: center.y + ry * fitScale * tiltSquash };
+  }
   const lw = f => Math.max(1, platformPxHalf * f);
 
   ctx.save();
@@ -3768,7 +3772,7 @@ function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale
   ctx.strokeStyle = '#94a3b8';
   ctx.lineWidth = lw(0.05);
   for (const corners of DASH_ROBOT_PONTOONS) {
-    const pontoon = projectDashRobotQuad(colF, rowF, corners, 0, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY);
+    const pontoon = corners.map(([dc, dr]) => robotOffset(dc, dr));
     ctx.beginPath();
     pontoon.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
     ctx.closePath();
