@@ -2322,7 +2322,7 @@ function _handleBathy3DClick(clientX, clientY, canvas) {
   if (idx != null) showBathyCellInfo(idx); else closeBathyCellInfo();
 }
 
-function _zoomBathy3DAt(px, py, canvas, factor) {
+function _zoomBathy3DAt(px, py, canvas, factor, renderFn = renderBathyCanvas) {
   const b = state.bathy;
   const oldZoom = b.zoom3D;
   const newZoom = Math.max(BATHY_ZOOM_MIN, Math.min(BATHY_ZOOM_MAX, oldZoom * factor));
@@ -2333,7 +2333,7 @@ function _zoomBathy3DAt(px, py, canvas, factor) {
   b.pan3D.x = px - W / 2 - wx * newZoom;
   b.pan3D.y = py - H / 2 - wy * newZoom;
   b.zoom3D = newZoom;
-  renderBathyCanvas();
+  renderFn();
 }
 
 let _bathy3DDrag  = null; // glisser souris
@@ -3567,9 +3567,12 @@ function toggleDash3D() {
     setText('dash3DRotationVal', Math.round(state.bathy.rotation3D) + '°');
     const tiltEl = document.getElementById('dash3DTiltSlider'); if (tiltEl) tiltEl.value = state.bathy.tilt3D;
     const rotEl  = document.getElementById('dash3DRotationSlider'); if (rotEl) rotEl.value = state.bathy.rotation3D;
+    if (canvas) canvas.style.cursor = 'grab';
     state.dash3D._lastRenderAt = 0; // force un rendu immédiat plutôt que d'attendre le throttle
     renderDash3D();
   } else {
+    if (canvas) canvas.style.cursor = '';
+    closeDashCellInfo();
     // Restaure proprement l'affichage 2D précédent (Schéma ou Satellite) — réutilise la logique
     // déjà en place plutôt que de la dupliquer.
     toggleSatelliteViewDash(_satModeDash);
@@ -3641,15 +3644,33 @@ function renderDash3D() {
   const bbox = getPondBbox(pond);
   const raw = computeDashLiveRawReadings();
 
+  // Zoom/pan utilisateur — même transform et mêmes valeurs partagées (state.bathy.zoom3D/pan3D)
+  // que l'onglet Bathymétrie (voir renderBathyCanvas) : zoomer/déplacer la vue 3D depuis l'un des
+  // deux onglets se retrouve dans l'autre, comme une seule et même caméra 3D.
+  const { zoom3D, pan3D } = state.bathy;
+  ctx.save();
+  ctx.translate(W / 2 + pan3D.x, H / 2 + pan3D.y);
+  ctx.scale(zoom3D, zoom3D);
+  ctx.translate(-W / 2, -H / 2);
+  state.bathy._floorTilesDrawn = 0;
+
   if (!raw || !raw.some(Boolean)) {
     renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox);
-    return;
+  } else {
+    renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs);
+    const layout = state.bathy._meshLayout;
+    if (layout) {
+      drawDashRobot3D(ctx, thetaRad, tiltRad, layout.heightScale, cs, bbox, layout.fitScale, layout.offX, layout.offY, layout.totalMin ?? 0, raw);
+    }
   }
+  ctx.restore();
 
-  renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs);
-  const layout = state.bathy._meshLayout;
-  if (layout) {
-    drawDashRobot3D(ctx, thetaRad, tiltRad, layout.heightScale, cs, bbox, layout.fitScale, layout.offX, layout.offY, layout.totalMin ?? 0, raw);
+  // Voile d'assombrissement du fond satellite hors de la transform zoom/pan (espace identité),
+  // pour toujours couvrir tout le canevas physique quel que soit le niveau de zoom/pan courant —
+  // même raisonnement que renderBathyCanvas.
+  if (state.bathy._floorTilesDrawn) {
+    ctx.fillStyle = 'rgba(8,12,20,0.32)';
+    ctx.fillRect(0, 0, W, H);
   }
 }
 
@@ -3675,23 +3696,39 @@ function renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox) {
   drawDashRobot3D(ctx, thetaRad, tiltRad, 1, cs, bbox, fitScale, offX, offY, 0, null);
 }
 
-// Projette les 4 coins d'une petite plateforme carrée (le robot, vu en 3D) centrée sur (colF,rowF)
-// à la profondeur "val" — le carré apparaît comme un parallélogramme correctement incliné/pivoté
-// selon l'angle de vue courant, exactement comme n'importe quelle face du maillage du terrain.
-function projectDashRobotSquare(colF, rowF, val, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY) {
-  const half = 0.55; // demi-largeur en "cases" (~0.55×cellSize de côté)
-  return [[-half, -half], [half, -half], [half, half], [-half, half]].map(([dc, dr]) => {
+// Projette les 4 coins d'un quadrilatère (offsets en "cases" par rapport à colF,rowF) à la
+// profondeur "val" — apparaît comme un parallélogramme correctement incliné/pivoté selon l'angle
+// de vue courant, exactement comme n'importe quelle face du maillage du terrain.
+function projectDashRobotQuad(colF, rowF, corners, val, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY) {
+  return corners.map(([dc, dr]) => {
     const p = bathyMeshProjectXY(colF + dc, rowF + dr, val, thetaRad, tiltRad, heightScale, cs);
     return { x: p.x * fitScale + offX, y: p.y * fitScale + offY };
   });
 }
 
-// Modélise le robot en 3D : plateforme carrée à la surface de l'eau + pompe qui descend/remonte
-// en direct, projetée dans le MÊME repère (val - totalMin) que le maillage à 3 couches — la pompe
-// pénètre donc visuellement la vase exactement au niveau où sa surface est réellement dessinée
-// (bathyMudTopVal), pas une approximation indépendante : sous la profondeur d'eau réelle de cette
-// case, on interpole entre la surface de vase (affichée, donc exagérée) et le socle selon la
-// fraction de vase déjà traversée.
+// Offsets (en "cases") des flotteurs individuels de la plateforme réelle du robot — plusieurs
+// pontons rectangulaires séparés par un fin espace (photo fournie par le client : plateforme
+// modulaire, pas un simple carré plein) — 2 rangées de 3 flotteurs.
+const DASH_ROBOT_PONTOONS = (() => {
+  const half = 0.55, gap = 0.06, cols = 3, rows = 2;
+  const cellW = (2 * half - gap * (cols - 1)) / cols;
+  const cellH = (2 * half - gap * (rows - 1)) / rows;
+  const out = [];
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const dcMin = -half + i * (cellW + gap), drMin = -half + j * (cellH + gap);
+      out.push([[dcMin, drMin], [dcMin + cellW, drMin], [dcMin + cellW, drMin + cellH], [dcMin, drMin + cellH]]);
+    }
+  }
+  return out;
+})();
+
+// Modélise le robot en 3D à la surface de l'eau (plateforme modulaire à flotteurs + mât/antenne,
+// d'après la photo du robot réel) + pompe qui descend/remonte en direct, projetée dans le MÊME
+// repère (val - totalMin) que le maillage à 3 couches — la pompe pénètre donc visuellement la
+// vase exactement au niveau où sa surface est réellement dessinée (bathyMudTopVal), pas une
+// approximation indépendante : sous la profondeur d'eau réelle de cette case, on interpole entre
+// la surface de vase (affichée, donc exagérée) et le socle selon la fraction de vase déjà traversée.
 function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale, offX, offY, totalMin, raw) {
   const robot = state.robot;
   if (!Number.isFinite(robot.x) || !Number.isFinite(robot.y)) return;
@@ -3712,27 +3749,62 @@ function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale
     return { x: p.x * fitScale + offX, y: p.y * fitScale + offY };
   }
 
-  const platform = projectDashRobotSquare(colF, rowF, totalMin - totalMin, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY);
   const center = screenAt(totalMin);
 
   ctx.save();
-  ctx.fillStyle = '#0ea5e9';
-  ctx.strokeStyle = '#e0f2fe';
-  ctx.lineWidth = 1.5;
+
+  // Plateforme modulaire (flotteurs sombres séparés, comme sur la photo du robot réel), pas un
+  // simple carré plein.
+  ctx.fillStyle = '#1e293b';
+  ctx.strokeStyle = '#64748b';
+  ctx.lineWidth = 1.2;
+  for (const corners of DASH_ROBOT_PONTOONS) {
+    const pontoon = projectDashRobotQuad(colF, rowF, corners, 0, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY);
+    ctx.beginPath();
+    pontoon.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }
+
+  // Mât central (boîtier électronique + antenne GPS, comme sur la photo) — trait simple en
+  // espace écran plutôt qu'une vraie extrusion 3D : juste un repère schématique, pas une pièce
+  // du relief à projeter avec la même précision que le maillage.
+  const edgePt = projectDashRobotQuad(colF, rowF, [[0.55, 0]], 0, thetaRad, tiltRad, heightScale, cs, fitScale, offX, offY)[0];
+  const platformPxHalf = Math.max(6, Math.hypot(edgePt.x - center.x, edgePt.y - center.y));
+  const mastH = platformPxHalf * 1.3;
+  const mastTop = { x: center.x, y: center.y - mastH };
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(center.x, center.y); ctx.lineTo(mastTop.x, mastTop.y); ctx.stroke();
+  // Antenne GPS (fine tige qui dépasse du boîtier).
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(mastTop.x, mastTop.y); ctx.lineTo(mastTop.x, mastTop.y - mastH * 0.35); ctx.stroke();
+  // Boîtier électronique + écran.
+  ctx.fillStyle = '#0f172a';
+  ctx.strokeStyle = '#cbd5e1';
+  ctx.lineWidth = 1;
+  const boxW = platformPxHalf * 0.7, boxH = platformPxHalf * 0.5;
   ctx.beginPath();
-  platform.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
-  ctx.closePath();
+  ctx.roundRect(mastTop.x - boxW / 2, mastTop.y - boxH * 0.3, boxW, boxH, 2);
   ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#22c55e';
+  ctx.beginPath(); ctx.arc(mastTop.x, mastTop.y - boxH * 0.05, 1.6, 0, Math.PI * 2); ctx.fill();
 
   const pumpDepth = Number.isFinite(robot.pumpDepth) ? robot.pumpDepth : 0;
   if (pumpDepth > 0.02) {
+    // Repère commun avec le maillage (val - totalMin, voir renderBathy3DMeshStacked) : le socle
+    // de CETTE case est à "total", la surface de vase à bathyMudTopVal(...,totalMin) — passer 0
+    // au lieu de totalMin décalait tout le trajet de la pompe d'un offset fixe (l'écart entre le
+    // fond de cette case et la case la moins profonde de tout l'étang), l'empêchant de sembler
+    // atteindre le vrai fond. La portion "encore en pleine eau" est elle aussi interpolée vers ce
+    // même repère (proportionnellement, pas en mètres bruts) pour rester continue à la jonction.
+    const total = waterHere + mudHere;
+    const mudTop = bathyMudTopVal(waterHere, mudHere, totalMin);
     let pumpVal;
     if (pumpDepth <= waterHere) {
-      pumpVal = pumpDepth; // encore en pleine eau, au-dessus de la vase
+      pumpVal = waterHere > 0 ? totalMin + (pumpDepth / waterHere) * (mudTop - totalMin) : totalMin;
     } else {
-      const total = waterHere + mudHere;
       const intoMudFrac = mudHere > 0 ? Math.min(1, (pumpDepth - waterHere) / mudHere) : 1;
-      const mudTop = bathyMudTopVal(waterHere, mudHere, 0);
       pumpVal = mudTop + intoMudFrac * (total - mudTop);
     }
     const pPump = screenAt(pumpVal);
@@ -3754,6 +3826,172 @@ function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale
     ctx.globalAlpha = 1;
   }
   ctx.restore();
+}
+
+// Hit-test au clic sur la vue 3D du tableau de bord — même principe que _bathyHitTest3DMesh,
+// mais sur les valeurs LIVE (computeDashLiveRawReadings), pas sur le relevé sélectionné dans
+// l'onglet Bathymétrie : on veut voir la donnée qui a servi à ce même rendu.
+function _dash3DHitTest(px, py) {
+  const L = state.bathy._meshLayout;
+  if (!L || !state.pond) return null;
+  const raw = computeDashLiveRawReadings();
+  if (!raw) return null;
+  const thetaRad = state.bathy.rotation3D * Math.PI / 180;
+  const tiltRad  = state.bathy.tilt3D     * Math.PI / 180;
+  const cs = params.cellSize;
+  const valOffset = L.totalMin != null ? L.totalMin : 0;
+  let best = null, bestDist = Infinity;
+  state.cells.forEach((c, i) => {
+    if (!raw[i]) return;
+    const total = raw[i].water + raw[i].mud;
+    const p = bathyMeshProjectXY(c.col, c.row, total - valOffset, thetaRad, tiltRad, L.heightScale, cs);
+    const x = p.x * L.fitScale + L.offX, y = p.y * L.fitScale + L.offY;
+    const d = Math.hypot(x - px, y - py);
+    if (d < bestDist) { bestDist = d; best = i; }
+  });
+  const thresh = Math.max(8, cs * L.fitScale * 0.7);
+  return bestDist <= thresh ? best : null;
+}
+
+function dash3DCellInfoHTML(idx) {
+  const cell = state.cells[idx];
+  const pond = state.pond;
+  if (!cell || !pond) return '';
+  const fmt = v => v.toFixed(2) + ' m';
+  let html = `<div class="bathy-cell-info-coords">Case (col ${cell.col}, ligne ${cell.row})</div>`;
+
+  const raw = computeDashLiveRawReadings();
+  const current = raw ? raw[idx] : null;
+  if (current) {
+    html += `<div class="bathy-cell-info-row"><span>💧 Eau</span><b>${fmt(current.water)}</b></div>`;
+    html += `<div class="bathy-cell-info-row"><span>🟤 Vase</span><b>${fmt(current.mud)}</b></div>`;
+    html += `<div class="bathy-cell-info-row"><span>Profondeur totale</span><b>${fmt(current.water + current.mud)}</b></div>`;
+  } else {
+    html += `<div class="bathy-cell-info-empty">Aucun relevé pour cette case.</div>`;
+  }
+
+  const before = latestBathySurvey(pond, 'before');
+  const rb = before?.readings[idx];
+  if (rb && current) {
+    const diffMud = Math.round(rb.mud * 100) / 100 - Math.round(current.mud * 100) / 100;
+    if (Math.abs(diffMud) > 0.001) {
+      const sign = diffMud >= 0 ? '−' : '+';
+      html += `<div class="bathy-cell-info-sep"></div>`;
+      html += `<div class="bathy-cell-info-row bathy-cell-info-diff"><span>Vase retirée (ce chantier)</span><b>${sign}${Math.abs(diffMud).toFixed(2)} m</b></div>`;
+    }
+  }
+  if (cell.completed) html += `<div class="bathy-cell-info-row"><span>✅ Case nettoyée</span></div>`;
+  return html;
+}
+function showDashCellInfo(idx) {
+  const card = document.getElementById('dashCellInfo');
+  const body = document.getElementById('dashCellInfoBody');
+  if (!card || !body) return;
+  body.innerHTML = dash3DCellInfoHTML(idx);
+  card.style.display = 'block';
+}
+function closeDashCellInfo() {
+  const card = document.getElementById('dashCellInfo');
+  if (card) card.style.display = 'none';
+}
+
+// Point d'entrée commun clic (souris/tactile) sur la vue 3D du tableau de bord — voir
+// _handleBathy3DClick, même principe.
+function _handleDash3DClick(clientX, clientY, canvas) {
+  if (!state.pond) return;
+  const rect = canvas.getBoundingClientRect();
+  const raw = { x: (clientX - rect.left) * (canvas.width / rect.width), y: (clientY - rect.top) * (canvas.height / rect.height) };
+  const local = _bathy3DScreenToLocal(raw.x, raw.y, canvas);
+  const idx = _dash3DHitTest(local.x, local.y);
+  if (idx != null) showDashCellInfo(idx); else closeDashCellInfo();
+}
+
+// Zoom/pan/tap souris + tactile sur la vue 3D du tableau de bord — même mécanique que
+// _initBathy3DPanZoomEvents, sur state.bathy.zoom3D/pan3D (partagé avec l'onglet Bathymétrie :
+// une seule caméra 3D) mais gérée par state.dash3D.active plutôt que state.bathy.mode. Les rendus
+// passent par renderDash3D() (donc restent soumis à son throttle) pour ne pas réintroduire le
+// ralentissement déjà corrigé pendant qu'une simulation tourne en parallèle.
+let _dash3DDrag = null;
+let _dash3DTouch = null;
+function _initDash3DPanZoomEvents() {
+  const canvas = document.getElementById('dashPondCanvas');
+  if (!canvas) return;
+
+  canvas.addEventListener('wheel', e => {
+    if (!state.dash3D.active) return;
+    e.preventDefault();
+    const p = _bathyCanvasPoint(e, canvas);
+    _zoomBathy3DAt(p.x, p.y, canvas, e.deltaY < 0 ? 1.12 : 1 / 1.12, renderDash3D);
+  }, { passive: false });
+
+  canvas.addEventListener('mousedown', e => {
+    if (!state.dash3D.active || e.button !== 0) return;
+    _dash3DDrag = { startX: e.clientX, startY: e.clientY, panX: state.bathy.pan3D.x, panY: state.bathy.pan3D.y };
+    canvas.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!_dash3DDrag) return;
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
+    state.bathy.pan3D.x = _dash3DDrag.panX + (e.clientX - _dash3DDrag.startX) * sx;
+    state.bathy.pan3D.y = _dash3DDrag.panY + (e.clientY - _dash3DDrag.startY) * sy;
+    renderDash3D();
+  });
+  window.addEventListener('mouseup', e => {
+    if (_dash3DDrag) {
+      const moved = Math.hypot(e.clientX - _dash3DDrag.startX, e.clientY - _dash3DDrag.startY);
+      _dash3DDrag = null;
+      canvas.style.cursor = state.dash3D.active ? 'grab' : '';
+      if (moved < 6 && state.dash3D.active) _handleDash3DClick(e.clientX, e.clientY, canvas);
+    }
+  });
+
+  canvas.addEventListener('touchstart', e => {
+    if (!state.dash3D.active) return;
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      _dash3DTouch = { mode: 'pan', x: t.clientX, y: t.clientY, panX: state.bathy.pan3D.x, panY: state.bathy.pan3D.y };
+    } else if (e.touches.length === 2) {
+      const [a, b] = e.touches;
+      _dash3DTouch = {
+        mode: 'pinch',
+        dist: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY),
+        zoom: state.bathy.zoom3D,
+        angle: Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180 / Math.PI,
+        rotation: state.bathy.rotation3D,
+      };
+    }
+  }, { passive: true });
+
+  canvas.addEventListener('touchmove', e => {
+    if (!state.dash3D.active || !_dash3DTouch) return;
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
+    if (_dash3DTouch.mode === 'pan' && e.touches.length === 1) {
+      const t = e.touches[0];
+      state.bathy.pan3D.x = _dash3DTouch.panX + (t.clientX - _dash3DTouch.x) * sx;
+      state.bathy.pan3D.y = _dash3DTouch.panY + (t.clientY - _dash3DTouch.y) * sy;
+      renderDash3D();
+    } else if (_dash3DTouch.mode === 'pinch' && e.touches.length === 2) {
+      const [a, b] = e.touches;
+      const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+      state.bathy.zoom3D = Math.max(BATHY_ZOOM_MIN, Math.min(BATHY_ZOOM_MAX, _dash3DTouch.zoom * (dist / _dash3DTouch.dist)));
+      const angle = Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180 / Math.PI;
+      let rotation = (_dash3DTouch.rotation + (angle - _dash3DTouch.angle)) % 360;
+      if (rotation < 0) rotation += 360;
+      setDash3DRotation(rotation);
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', e => {
+    if (_dash3DTouch && _dash3DTouch.mode === 'pan' && e.changedTouches.length) {
+      const t = e.changedTouches[0];
+      const moved = Math.hypot(t.clientX - _dash3DTouch.x, t.clientY - _dash3DTouch.y);
+      if (moved < 8) _handleDash3DClick(t.clientX, t.clientY, canvas);
+    }
+    _dash3DTouch = null;
+  });
 }
 
 // Légende graduée — repères de profondeur alignés sur le dégradé (pas juste min/max aux deux
@@ -6929,6 +7167,7 @@ function init() {
   initCanvasEvents();
   _initBathyCanvasSelectionEvents();
   _initBathy3DPanZoomEvents();
+  _initDash3DPanZoomEvents();
   initBathyPaletteButtons();
 
   updatePondsList();

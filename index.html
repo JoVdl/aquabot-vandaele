@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v64</span>
+        <span class="logo-version" id="appVersion">v65</span>
       </div>
     </div>
     <div class="header-status">
@@ -90,6 +90,10 @@
           <div class="canvas-wrap" id="dashCanvasWrap">
             <canvas id="dashPondCanvas"></canvas>
             <div id="leaflet-container-dash"></div>
+            <div class="bathy-cell-info" id="dashCellInfo" style="display:none">
+              <button class="bathy-cell-info-close" onclick="closeDashCellInfo()" title="Fermer">✕</button>
+              <div id="dashCellInfoBody"></div>
+            </div>
             <div class="canvas-empty-state" id="dashCanvasEmptyState">
               <div class="empty-icon">
                 <svg viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="28" stroke="#0ea5e9" stroke-width="2" opacity="0.3"/><path d="M16 40 Q24 28 32 36 Q40 44 48 28" stroke="#0ea5e9" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M24 20 L32 12 L40 20 M32 12 L32 32" stroke="#0ea5e9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
