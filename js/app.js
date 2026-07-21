@@ -124,6 +124,29 @@ function decodeSelection(encoded, total) {
   return new Set(encoded.idx || []);
 }
 
+// Compacte le tableau de lectures d'un relevé bathymétrique ({water,mud}|null par case) en deux
+// tableaux plats d'entiers centimétriques (sentinelle -1 = pas de donnée pour cette case) : un
+// objet JSON par case ({"water":2.36,"mud":0.15}) pèse environ 3x plus, dans le flux stocké, que
+// deux entiers — avec plusieurs relevés sur un étang réel de plusieurs milliers de cases, cette
+// seule différence suffisait à dépasser la limite de 1 Mo par document Firestore (même limite déjà
+// rencontrée pour la sélection de cases, voir encodeSelection ci-dessus). Le centimètre est une
+// précision largement suffisante pour une sonde de profondeur simulée.
+function encodeBathyReadings(readings) {
+  const w = [], m = [];
+  for (const r of (readings || [])) {
+    if (r) { w.push(Math.round(r.water * 100)); m.push(Math.round(r.mud * 100)); }
+    else   { w.push(-1); m.push(-1); }
+  }
+  return { w, m };
+}
+// Accepte aussi l'ancien format (tableau brut de {water,mud}|null, pré-compaction) tel quel.
+function decodeBathyReadings(encoded) {
+  if (Array.isArray(encoded)) return encoded;
+  if (!encoded || !encoded.w) return [];
+  const { w, m } = encoded;
+  return w.map((wCm, i) => (wCm < 0 ? null : { water: round3(wCm / 100), mud: round3(m[i] / 100) }));
+}
+
 // Convert a local pond object → Firestore document (no cells, compact selections)
 function pondToFirestore(pond) {
   return {
@@ -135,7 +158,7 @@ function pondToFirestore(pond) {
     bbox:     pond.bbox,
     hoseAnchor: pond.hoseAnchor || null,
     depositZone: pond.depositZone || null,
-    bathySurveys: pond.bathySurveys || [],
+    bathySurveys: (pond.bathySurveys || []).map(s => ({ ...s, readings: encodeBathyReadings(s.readings) })),
     lastUsed:   pond.lastUsed   || Date.now(),
     lastResetAt: pond.lastResetAt || 0,
     work: {
@@ -591,7 +614,7 @@ function pondFromFirestore(data) {
     ...data,
     cells,
     lastResetAt: data.lastResetAt || 0,
-    bathySurveys: data.bathySurveys || [],
+    bathySurveys: (data.bathySurveys || []).map(s => ({ ...s, readings: decodeBathyReadings(s.readings) })),
     work: data.work || { completedCells: [], volumePumped: 0, elapsedSec: 0, energyWh: 0 },
     selections: (data.selections || []).map(s => {
       const set = decodeSelection(s.selectedIndices, cells.length) || new Set();
@@ -3789,7 +3812,16 @@ function savePonds() {
         .set(pondToFirestore(pond))
         .catch(err => {
           console.warn('Cloud save error:', err.message);
-          showToast(`Échec de l'enregistrement de « ${pond.name} » — ${err.message}`, 'error');
+          // "Document ... exceeds the maximum allowed size" (limite Firestore de 1 Mo/document) :
+          // survient quand trop de relevés bathymétriques (avec leurs lectures par case)
+          // s'accumulent sur un même étang — message générique peu actionnable sinon, alors qu'un
+          // geste simple (supprimer d'anciens relevés, bouton ✕ dans l'historique) résout le
+          // problème immédiatement, sans attendre un correctif.
+          const tooLarge = /exceeds the maximum allowed size/i.test(err.message);
+          const msg = tooLarge
+            ? `« ${pond.name} » n'a pas pu être enregistré : trop de relevés bathymétriques accumulés pour cet étang. Supprimez d'anciens relevés (✕ dans l'historique, onglet Bathymétrie) pour libérer de la place.`
+            : `Échec de l'enregistrement de « ${pond.name} » — ${err.message}`;
+          showToast(msg, 'error');
         });
     }
   } else {
