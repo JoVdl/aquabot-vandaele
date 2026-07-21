@@ -124,27 +124,51 @@ function decodeSelection(encoded, total) {
   return new Set(encoded.idx || []);
 }
 
-// Compacte le tableau de lectures d'un relevé bathymétrique ({water,mud}|null par case) en deux
-// tableaux plats d'entiers centimétriques (sentinelle -1 = pas de donnée pour cette case) : un
-// objet JSON par case ({"water":2.36,"mud":0.15}) pèse environ 3x plus, dans le flux stocké, que
-// deux entiers — avec plusieurs relevés sur un étang réel de plusieurs milliers de cases, cette
-// seule différence suffisait à dépasser la limite de 1 Mo par document Firestore (même limite déjà
+// Compacte le tableau de lectures d'un relevé bathymétrique ({water,mud}|null par case) en un
+// buffer binaire (2 octets par valeur, en centimètres, sentinelle 0xFFFF = pas de donnée pour
+// cette case), encodé en base64 pour le transport JSON — un objet JSON par case
+// ({"water":2.36,"mud":0.15}) pèse environ 5x plus, dans le flux stocké, qu'une paire d'entiers
+// binaires : avec plusieurs relevés sur un étang réel de plusieurs milliers de cases, cette seule
+// différence suffisait à dépasser la limite de 1 Mo par document Firestore (même limite déjà
 // rencontrée pour la sélection de cases, voir encodeSelection ci-dessus). Le centimètre est une
 // précision largement suffisante pour une sonde de profondeur simulée.
+const BATHY_NULL_CM = 0xFFFF;
 function encodeBathyReadings(readings) {
-  const w = [], m = [];
-  for (const r of (readings || [])) {
-    if (r) { w.push(Math.round(r.water * 100)); m.push(Math.round(r.mud * 100)); }
-    else   { w.push(-1); m.push(-1); }
+  const list = readings || [];
+  const n = list.length;
+  const buf = new Uint16Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    const r = list[i];
+    if (r) { buf[i * 2] = Math.round(r.water * 100); buf[i * 2 + 1] = Math.round(r.mud * 100); }
+    else   { buf[i * 2] = BATHY_NULL_CM; buf[i * 2 + 1] = BATHY_NULL_CM; }
   }
-  return { w, m };
+  const bytes = new Uint8Array(buf.buffer);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return { n, b64: btoa(bin) };
 }
-// Accepte aussi l'ancien format (tableau brut de {water,mud}|null, pré-compaction) tel quel.
+// Accepte aussi les anciens formats (tableau brut {water,mud}|null pré-compaction, ou paire de
+// tableaux JSON {w,m} de la compaction précédente) pour ne pas casser les relevés déjà enregistrés.
 function decodeBathyReadings(encoded) {
   if (Array.isArray(encoded)) return encoded;
-  if (!encoded || !encoded.w) return [];
-  const { w, m } = encoded;
-  return w.map((wCm, i) => (wCm < 0 ? null : { water: round3(wCm / 100), mud: round3(m[i] / 100) }));
+  if (!encoded) return [];
+  if (encoded.b64) {
+    const bin = atob(encoded.b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const buf = new Uint16Array(bytes.buffer);
+    const out = new Array(encoded.n);
+    for (let i = 0; i < encoded.n; i++) {
+      const wCm = buf[i * 2], mCm = buf[i * 2 + 1];
+      out[i] = wCm === BATHY_NULL_CM ? null : { water: round3(wCm / 100), mud: round3(mCm / 100) };
+    }
+    return out;
+  }
+  if (encoded.w) {
+    const { w, m } = encoded;
+    return w.map((wCm, i) => (wCm < 0 ? null : { water: round3(wCm / 100), mud: round3(m[i] / 100) }));
+  }
+  return [];
 }
 
 // Convert a local pond object → Firestore document (no cells, compact selections)
@@ -1800,6 +1824,47 @@ function persistPondSurveys() {
   const idx = state.ponds.findIndex(p => p.id === state.pond.id);
   if (idx !== -1) state.ponds[idx] = state.pond;
   savePonds();
+  // Avertit tôt (avant même que Firestore ne rejette l'écriture) si l'historique des relevés
+  // bathymétriques approche la limite de 1 Mo/document — l'utilisateur peut alors nettoyer
+  // immédiatement via cleanupOldBathySurveys() au lieu de découvrir l'échec après coup.
+  if (USE_CLOUD && estimateBathyPayloadBytes(state.pond) > BATHY_PAYLOAD_SAFE_BYTES) {
+    showToast('Historique des relevés bathymétriques proche de la limite d’enregistrement cloud — cliquez sur "🧹 Réduire l’historique" pour supprimer les plus anciens.', 'error');
+  }
+}
+
+// Taille (en octets) du document Firestore compacté que produirait cet étang — sert à prévenir
+// l'utilisateur AVANT l'échec Firestore ("exceeds the maximum allowed size"), voir persistPondSurveys.
+function estimateBathyPayloadBytes(pond) {
+  try { return JSON.stringify(pondToFirestore(pond)).length; } catch { return 0; }
+}
+const BATHY_PAYLOAD_SAFE_BYTES = 900000; // marge sous la limite Firestore de 1 048 576 octets
+
+// Supprime les relevés bathymétriques les plus anciens (par date) jusqu'à repasser sous un budget
+// sûr — jamais silencieusement : liste toujours ce qui sera supprimé et demande confirmation.
+// Utile quand l'historique accumulé (avant/contrôle/après, y compris les relevés générés
+// rapidement) fait dépasser la limite Firestore malgré la compaction (voir encodeBathyReadings).
+function cleanupOldBathySurveys() {
+  const pond = state.pond;
+  if (!pond?.bathySurveys?.length) { showToast('Aucun relevé à nettoyer', ''); return; }
+  const sorted = [...pond.bathySurveys].sort((a, b) => a.date - b.date);
+  const toDelete = [];
+  let remaining = sorted;
+  while (remaining.length > 1 && estimateBathyPayloadBytes({ ...pond, bathySurveys: remaining }) > BATHY_PAYLOAD_SAFE_BYTES) {
+    toDelete.push(remaining[0]);
+    remaining = remaining.slice(1);
+  }
+  if (!toDelete.length) { showToast('Les relevés actuels tiennent déjà sous la limite d’enregistrement cloud', 'success'); return; }
+  const list = toDelete.map(s => `• ${s.label}`).join('\n');
+  if (!confirm(`Supprimer ${toDelete.length} relevé(s) — le(s) plus ancien(s) — pour repasser sous la limite d'enregistrement cloud (1 Mo) ?\n\n${list}\n\nCeci ne peut pas être annulé.`)) return;
+  const toDeleteIds = new Set(toDelete.map(s => s.id));
+  pond.bathySurveys = pond.bathySurveys.filter(s => !toDeleteIds.has(s.id));
+  const b = state.bathy;
+  if (toDeleteIds.has(b.selectedSurveyId)) b.selectedSurveyId = null;
+  if (toDeleteIds.has(b.compareBeforeId))  b.compareBeforeId  = null;
+  if (toDeleteIds.has(b.compareAfterId))   b.compareAfterId   = null;
+  persistPondSurveys();
+  renderBathyTab();
+  showToast(`${toDelete.length} ancien(s) relevé(s) supprimé(s) — enregistrement cloud à nouveau possible`, 'success');
 }
 
 // Énergie estimée pour un relevé de N cases — même modèle physique que computeCellCycleEnergyWh

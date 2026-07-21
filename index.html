@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v55</span>
+        <span class="logo-version" id="appVersion">v56</span>
       </div>
     </div>
     <div class="header-status">
@@ -753,7 +753,10 @@
           </div>
 
           <div class="card">
-            <div class="card-header">Historique des relevés</div>
+            <div class="card-header">
+              <span>Historique des relevés</span>
+              <button class="btn btn-secondary btn-sm" onclick="cleanupOldBathySurveys()" title="Supprime les relevés les plus anciens jusqu'à repasser sous la limite d'enregistrement cloud (1 Mo/document) — utile si l'enregistrement échoue à cause d'un historique trop volumineux.">🧹 Réduire l'historique</button>
+            </div>
             <div id="bathyHistoryList" class="bathy-history-list sel-history-list">
               <div class="sel-empty">Aucun relevé enregistré</div>
             </div>
