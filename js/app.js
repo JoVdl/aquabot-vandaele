@@ -1843,7 +1843,10 @@ function setBathy3DStyle(style) {
   renderBathyCanvas();
 }
 function setBathy3DTilt(deg) {
-  state.bathy.tilt3D = parseFloat(deg) || 0;
+  // En dessous d'environ 20°, le plan de sol (satellite ou grille) se compresse tellement à
+  // l'écran qu'il ne reste presque plus de place utile sur le canevas pour un étang large —
+  // l'angle devient trop rasant pour rester lisible, quel que soit le relief affiché dessus.
+  state.bathy.tilt3D = Math.max(20, Math.min(80, parseFloat(deg) || 20));
   setText('bathyTiltVal', Math.round(state.bathy.tilt3D) + '°');
   renderBathyCanvas();
 }
@@ -2788,20 +2791,25 @@ function renderBathy3DMesh(ctx, W, H, values, min, range) {
   const tiltRad  = state.bathy.tilt3D     * Math.PI / 180;
   const cs = params.cellSize;
 
-  // Exagération verticale relative à la taille de l'étang — sans ça, un relief de quelques
-  // dizaines de cm serait invisible face à une étendue de plusieurs dizaines de mètres.
-  const bbox = getPondBbox(pond);
-  const horizontalSpan = Math.max(bbox.maxX - bbox.minX, bbox.maxY - bbox.minY) || 1;
-  const heightScale = range > 0 ? (horizontalSpan * 0.22) / range : 1;
-
+  // Emprise des SEULES cases avec une donnée (pas tout l'étang) — l'exagération verticale et
+  // la décimation doivent correspondre à ce qui est réellement dessiné. Se baser sur l'étang
+  // entier ici produisait un relief démesurément exagéré dès qu'un petit relevé ne couvre
+  // qu'une fraction d'un grand étang (un pic minuscule traité comme s'il occupait tout
+  // l'étang), qui devenait visuellement incohérent avec le fond satellite (voir
+  // renderBathyMeshSatelliteFloor, lui bien calé sur l'emprise réelle) — surtout marqué à
+  // faible inclinaison, où le plancher se compresse mais pas ce relief surexagéré.
   let minCol = Infinity, maxCol = -Infinity, minRow = Infinity, maxRow = -Infinity;
   const grid = new Map();
   state.cells.forEach((c, i) => {
     grid.set(c.col + ',' + c.row, values[i]);
+    if (values[i] == null) return;
     minCol = Math.min(minCol, c.col); maxCol = Math.max(maxCol, c.col);
     minRow = Math.min(minRow, c.row); maxRow = Math.max(maxRow, c.row);
   });
   if (!isFinite(minCol)) return;
+
+  const horizontalSpan = Math.max((maxCol - minCol) * cs, (maxRow - minRow) * cs) || 1;
+  const heightScale = range > 0 ? (horizontalSpan * 0.22) / range : 1;
 
   // Décimation si la grille est très dense, pour rester fluide pendant la rotation/le zoom —
   // un triangle par case n'est pas nécessaire pour lire le relief global.
