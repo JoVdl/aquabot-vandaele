@@ -1884,12 +1884,22 @@ function setBathyLiveDuringWork(checked) {
 // du robot, sans attendre un relevé bathymétrique séparé après coup.
 function startLiveBathySurveyIfEnabled() {
   if (!state.bathy.liveDuringWork || !state.pond) { state.bathy._liveSurveyId = null; return; }
+  // Parti d'une COPIE du relevé le plus récent existant, pas d'un tableau vide : sur un petit
+  // chantier ne couvrant qu'une poignée de cases, un relevé vide ne contenait ensuite que ces
+  // quelques cases — tout le reste de l'étang restait à null, et l'aperçu bathymétrique (qui
+  // affiche le DERNIER relevé) se retrouvait quasi vide dès la création de ce relevé "en direct",
+  // avant même la moindre case nettoyée. En partant d'une copie complète, puis en n'écrasant que
+  // les cases réellement nettoyées au fil du travail (voir _recordLiveBathyReading), ce relevé
+  // reste toujours complet, dès sa création.
+  const latest = state.pond.bathySurveys?.length
+    ? state.pond.bathySurveys.reduce((a, b) => (b.date > a.date ? b : a))
+    : null;
   const survey = {
     id: Date.now().toString(),
     type: 'live',
     label: bathyTypeLabel('live'),
     date: Date.now(),
-    readings: new Array(state.cells.length).fill(null),
+    readings: state.cells.map((c, i) => (latest?.readings[i] ? { ...latest.readings[i] } : null)),
   };
   if (!state.pond.bathySurveys) state.pond.bathySurveys = [];
   state.pond.bathySurveys.push(survey);
