@@ -2686,7 +2686,7 @@ function renderBathy3DStacked(ctx, W, H, raw, theta, maxH, tiltDeg = BATHY_COLUM
   // seulement sa propre épaisseur), et le voile d'eau translucide vient juste se superposer par
   // dessus sur la partie eau. Sans cette pleine hauteur en dessous, il n'y aurait rien à voir
   // en transparence : juste le fond du canevas.
-  const WATER_ALPHA = 0.25;
+  const WATER_ALPHA = 0.14;
   for (const p of pts) {
     if (!p.r) continue;
     const total = p.r.water + p.r.mud;
@@ -2927,18 +2927,22 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
     ctx.closePath(); ctx.fill(); ctx.stroke();
   }
 
-  const WATER_ALPHA = 0.32;
+  // Beaucoup plus transparente que le fond, et un ombrage aplati (pas la pleine variation de
+  // pente comme la vase) : une eau plate qui bouge peu de teinte facette à facette lit comme
+  // une nappe d'eau lisse plutôt que comme un maillage texturé — les coutures ne sont pas
+  // renforcées par un trait (pas de stroke), pour éviter l'effet grille/quadrillage.
+  const WATER_ALPHA = 0.16;
   const waterFrac = v => Math.max(0, Math.min(1, (v - wMin) / wRange));
   const prevAlpha = ctx.globalAlpha;
   ctx.globalAlpha = prevAlpha * WATER_ALPHA;
   for (const t of waterTris) {
-    const shaded = rgbCss(rgbShade(bathyColorRGB('water', waterFrac(t.val)), t.shade));
-    ctx.fillStyle = shaded; ctx.strokeStyle = shaded; ctx.lineWidth = 0.75;
+    const flatShade = 0.8 + t.shade * 0.2;
+    ctx.fillStyle = rgbCss(rgbShade(bathyColorRGB('water', waterFrac(t.val)), flatShade));
     ctx.beginPath();
     ctx.moveTo(t.a.x * fitScale + offX, t.a.y * fitScale + offY);
     ctx.lineTo(t.b.x * fitScale + offX, t.b.y * fitScale + offY);
     ctx.lineTo(t.c.x * fitScale + offX, t.c.y * fitScale + offY);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.closePath(); ctx.fill();
   }
   ctx.globalAlpha = prevAlpha;
 }
