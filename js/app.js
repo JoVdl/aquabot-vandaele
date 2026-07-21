@@ -1062,6 +1062,11 @@ const state = {
     style3D: 'mesh', tilt3D: 28, // 'columns' | 'mesh' — tilt3D partagé par les deux styles
     selectedSurveyId: null, compareBeforeId: null, compareAfterId: null,
     _lastMin: null, _lastMax: null,
+    // Suivi bathymétrique en direct pendant le curage — voir startSimulation()/simulationTick().
+    // Case cochée par l'utilisateur AVANT de cliquer "Démarrer" (pas persisté d'une session à
+    // l'autre, c'est un réglage "pour le prochain chantier", pas une préférence durable).
+    liveDuringWork: false,
+    _liveSurveyId: null,
   },
 };
 
@@ -1078,6 +1083,13 @@ let params = {
   pumpDescentSpeed: 0.05, pumpAscentSpeed: 0.08,
   pumpFlow: 500, robotSpeed: 0.20, cellSize: 0.4,
   workMode: 'mini-cycles',   // standard | mini-cycles | double-pass | intensive
+  // Objectif de curage — voir getCellBathyBaseline()/simulationTick : si un relevé bathymétrique
+  // existe pour une case, le robot cible désormais sa profondeur RÉELLEMENT mesurée plutôt que la
+  // profondeur globale uniforme ci-dessus (waterDepth/mudDepth, qui restent le repli pour les
+  // cases sans donnée). 'integral' = retire toute la vase mesurée ; 'partiel' = n'en laisse que
+  // curageResidualMud (m) d'épaisseur (ex. curage "à -20cm").
+  curageMode: 'integral',    // integral | partiel
+  curageResidualMud: 0.05,
   wifiType: 'ap', wifiSSID: 'WETAP-ESP8266',
   wifiPassword: '507317123456789', wifiIP: '192.168.42.1',
   elecTariff: 0.20,   // €/kWh — tarif estimé, modifiable dans l'onglet Énergie
@@ -1805,11 +1817,88 @@ function latestBathySurvey(pond, type) {
   const list = (pond?.bathySurveys || []).filter(s => s.type === type);
   return list.length ? list[list.length - 1] : null;
 }
+// Profondeur eau/vase de référence pour une case donnée, utilisée par le robot pour adapter sa
+// cible de curage à la vase réellement présente (voir simulationTick) : le relevé bathymétrique
+// le plus RÉCENT (toutes types confondus — avant/contrôle/après/en direct), s'il couvre cette
+// case ; à défaut (aucun relevé, ou case non couverte par le plus récent), repli sur la
+// profondeur globale uniforme des paramètres — comportement inchangé pour un étang sans
+// bathymétrie.
+function getCellBathyBaseline(cellIdx) {
+  // Exclut le relevé "en direct" actuellement en cours de remplissage (voir
+  // startLiveBathySurveyIfEnabled) : c'est le RÉSULTAT de ce chantier, pas une référence
+  // d'entrée — sans cette exclusion, il redeviendrait systématiquement "le plus récent" dès sa
+  // création (toutes ses lectures encore nulles), masquant le vrai dernier relevé exploitable
+  // (ex. "avant travaux") et faisant retomber chaque case sur le repli global par erreur.
+  const surveys = (state.pond?.bathySurveys || []).filter(s => s.id !== state.bathy._liveSurveyId);
+  if (surveys.length) {
+    const latest = surveys.reduce((a, b) => (b.date > a.date ? b : a));
+    const r = latest.readings[cellIdx];
+    if (r) return { water: r.water, mud: r.mud };
+  }
+  return { water: params.waterDepth, mud: params.mudDepth };
+}
+// Résultat physique du nettoyage d'une case selon l'objectif de curage courant (params.curageMode)
+// — utilisé à la fois pour fixer la profondeur cible du robot (voir simulationTick) et, si le
+// suivi bathymétrique en direct est actif, pour enregistrer une lecture réaliste après coup
+// (voir _recordLiveBathyReading). La profondeur totale (eau + vase) ne change jamais — seule sa
+// répartition eau/vase est modifiée, exactement comme pour un curage réel.
+function computeCleaningResult(baseline) {
+  const total = baseline.water + baseline.mud;
+  const MIN_MUD = 0.02;
+  let mud = params.curageMode === 'partiel'
+    // Ne peut pas laisser plus de vase qu'il n'y en avait déjà (rien à retirer dans ce cas).
+    ? Math.min(baseline.mud, params.curageResidualMud)
+    // Curage intégral : petit fond résiduel réaliste, un curage parfait à 0 n'existe pas.
+    : Math.max(MIN_MUD, round3(baseline.mud * 0.05));
+  mud = Math.min(mud, baseline.mud);
+  const water = round3(total - mud);
+  return { water, mud: round3(mud) };
+}
+
+// Coche/décoche le suivi bathymétrique en direct — pris en compte au PROCHAIN démarrage
+// (startLiveBathySurveyIfEnabled), pas rétroactivement sur un travail déjà en cours.
+function setBathyLiveDuringWork(checked) {
+  state.bathy.liveDuringWork = !!checked;
+}
+
+// Crée un nouveau relevé bathymétrique vide au tout début d'un chantier (démarrage à froid, pas
+// une reprise après pause — voir startSimulation) si l'utilisateur a coché le suivi en direct.
+// Ses lectures se remplissent case par case au fur et à mesure du travail (voir
+// _recordLiveBathyReading), pour visualiser en temps réel l'évolution de la vase et l'efficacité
+// du robot, sans attendre un relevé bathymétrique séparé après coup.
+function startLiveBathySurveyIfEnabled() {
+  if (!state.bathy.liveDuringWork || !state.pond) { state.bathy._liveSurveyId = null; return; }
+  const survey = {
+    id: Date.now().toString(),
+    type: 'live',
+    label: bathyTypeLabel('live'),
+    date: Date.now(),
+    readings: new Array(state.cells.length).fill(null),
+  };
+  if (!state.pond.bathySurveys) state.pond.bathySurveys = [];
+  state.pond.bathySurveys.push(survey);
+  state.bathy._liveSurveyId   = survey.id;
+  state.bathy.selectedSurveyId = survey.id;
+  persistPondSurveys();
+}
+
+// Enregistre le résultat du nettoyage d'une case dans le relevé en direct, s'il y en a un —
+// appelé par simulationTick() juste après qu'une case soit marquée terminée. Ne persiste pas à
+// chaque case (trop coûteux en écritures Firestore) : réutilise le même rythme que la sauvegarde
+// périodique de la progression (voir simulationTick, robot.completedCells % 10).
+function _recordLiveBathyReading(cellIdx, result) {
+  if (!state.bathy._liveSurveyId || !state.pond) return;
+  const survey = state.pond.bathySurveys?.find(s => s.id === state.bathy._liveSurveyId);
+  if (!survey) { state.bathy._liveSurveyId = null; return; }
+  survey.readings[cellIdx] = result;
+  if (state.activeTab === 'bathymetry') { renderBathyCanvas(); updateBathyLegend(); }
+}
 function bathyTypeLabel(type) {
   const d = new Date();
   const dateStr = d.toLocaleDateString('fr-FR');
   if (type === 'before') return `Avant travaux — ${dateStr}`;
   if (type === 'after')  return `Après travaux — ${dateStr}`;
+  if (type === 'live')   return `Suivi en direct — ${dateStr} ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
   return `Contrôle — ${dateStr} ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
 }
 function formatVolM3(m3) { return m3 >= 1 ? m3.toFixed(2) + ' m³' : (m3 * 1000).toFixed(0) + ' L'; }
@@ -3961,7 +4050,7 @@ function saveParameters() {
     pMiniCycles:'miniCycles', pToursRedesc:'toursRedesc', pFreqTrait:'freqTrait',
     pWaterDepth:'waterDepth', pMudDepth:'mudDepth', pPumpTime:'pumpTime',
     pPumpDescentSpeed:'pumpDescentSpeed', pPumpAscentSpeed:'pumpAscentSpeed',
-    pPumpFlow:'pumpFlow', pRobotSpeed:'robotSpeed',
+    pPumpFlow:'pumpFlow', pRobotSpeed:'robotSpeed', pCurageResidualMud:'curageResidualMud',
   };
   for (const [domId, key] of Object.entries(domMap)) {
     const el = document.getElementById(domId);
@@ -3974,8 +4063,18 @@ function saveParameters() {
   // Work mode from radio buttons
   const wmEl = document.querySelector('input[name="workMode"]:checked');
   if (wmEl) params.workMode = wmEl.value;
+  const cmEl = document.querySelector('input[name="curageMode"]:checked');
+  if (cmEl) params.curageMode = cmEl.value;
   persistParams();
   showToast('Paramètres enregistrés', 'success');
+}
+
+// Affichage immédiat (avant même de cliquer "Enregistrer") de la profondeur résiduelle de vase,
+// pertinente seulement en mode "curage à profondeur cible".
+function updateCurageModeUI() {
+  const cmEl = document.querySelector('input[name="curageMode"]:checked');
+  const row = document.getElementById('curageResidualRow');
+  if (row) row.style.display = (cmEl && cmEl.value === 'partiel') ? 'flex' : 'none';
 }
 
 function loadDefaultParameters() {
@@ -3995,7 +4094,7 @@ function syncParamsToDOM() {
     pMiniCycles:'miniCycles', pToursRedesc:'toursRedesc', pFreqTrait:'freqTrait',
     pWaterDepth:'waterDepth', pMudDepth:'mudDepth', pPumpTime:'pumpTime',
     pPumpDescentSpeed:'pumpDescentSpeed', pPumpAscentSpeed:'pumpAscentSpeed',
-    pPumpFlow:'pumpFlow', pRobotSpeed:'robotSpeed',
+    pPumpFlow:'pumpFlow', pRobotSpeed:'robotSpeed', pCurageResidualMud:'curageResidualMud',
   };
   // Ne jamais écraser un champ que l'utilisateur est en train de modifier sur CET appareil —
   // important maintenant que cette fonction peut aussi être déclenchée par un changement
@@ -4011,6 +4110,10 @@ function syncParamsToDOM() {
   }
   const wmEl = document.querySelector(`input[name="workMode"][value="${params.workMode}"]`);
   if (wmEl) wmEl.checked = true;
+  const cmEl = document.querySelector(`input[name="curageMode"][value="${params.curageMode}"]`);
+  if (cmEl) cmEl.checked = true;
+  const curageResidualRow = document.getElementById('curageResidualRow');
+  if (curageResidualRow) curageResidualRow.style.display = params.curageMode === 'partiel' ? 'flex' : 'none';
 }
 
 // Diffusion en direct des réglages (Paramètres, tarif, solaire...) à tous les appareils
@@ -4565,6 +4668,7 @@ async function startSimulation() {
     autoSaveSelectionOnStart();
     const first = state.cells[state.plannedPath[0]];
     if (first) { state.robot.x = first.cx; state.robot.y = first.cy; }
+    startLiveBathySurveyIfEnabled();
   }
   state.robot.state = 'moving';
   state.sim.running = true;
@@ -4677,10 +4781,6 @@ function simulationTick() {
 
   const robot = state.robot;
   const path  = state.plannedPath;
-  // Full target depth = water + mud (pump goes into the vase)
-  const fullDepth    = params.waterDepth + params.mudDepth;
-  // Between mini-cycles: rise back to just above the mud surface
-  const partialDepth = params.waterDepth;
   const nbCycles     = effectiveMiniCycles();
 
   if (robot.currentCellIdx >= path.length) { finishSimulation(); return; }
@@ -4714,6 +4814,13 @@ function simulationTick() {
         robot.miniCyclesDone = 0;
         robot.pumpTimer      = 0;
         robot.motors          = [0, 0, 0, 0];
+        // Cible de curage propre à cette case — figée pour toute la durée du travail dessus,
+        // dérivée du dernier relevé bathymétrique s'il y en a un (voir getCellBathyBaseline),
+        // sinon repli sur la profondeur globale uniforme des paramètres.
+        robot._cellBaseline    = getCellBathyBaseline(path[robot.currentCellIdx]);
+        robot._cellResult      = computeCleaningResult(robot._cellBaseline);
+        robot._cellFullDepth   = robot._cellResult.water; // point le plus bas atteint par la pompe
+        robot._cellPartialDepth = robot._cellBaseline.water; // remontée entre mini-cycles
       } else {
         const step = params.robotSpeed * dt;
         const ux = dx / d, uy = dy / d;
@@ -4729,6 +4836,7 @@ function simulationTick() {
     }
 
     case 'descending': {
+      const fullDepth = robot._cellFullDepth;
       robot.pumpDepth = Math.min(fullDepth, robot.pumpDepth + params.pumpDescentSpeed * dt);
       if (robot.pumpDepth >= fullDepth - 0.005) {
         robot.pumpDepth = fullDepth;
@@ -4755,6 +4863,7 @@ function simulationTick() {
     }
 
     case 'partial_ascending': {
+      const partialDepth = robot._cellPartialDepth;
       robot.pumpDepth = Math.max(partialDepth, robot.pumpDepth - params.pumpAscentSpeed * dt);
       if (robot.pumpDepth <= partialDepth + 0.005) {
         robot.pumpDepth = partialDepth;
@@ -4774,9 +4883,15 @@ function simulationTick() {
         if (!targetCell.completed) {
           targetCell.completed = true;
           robot.completedCells++;
+          if (state.bathy._liveSurveyId) {
+            _recordLiveBathyReading(path[robot.currentCellIdx], robot._cellResult);
+          }
         }
         robot.currentCellIdx++;
-        if (robot.completedCells % 10 === 0) saveWork();
+        if (robot.completedCells % 10 === 0) {
+          saveWork();
+          if (state.bathy._liveSurveyId) persistPondSurveys();
+        }
       }
       break;
     }
@@ -4983,7 +5098,7 @@ function updateUI() {
   const nc = effectiveMiniCycles();
   const statusMap = {
     idle:              ['Déplacement',        `Case ${robot.currentCellIdx + 1}/${total || '?'}`],
-    descending:        ['Descente pompe',     `Cible: ${(params.waterDepth + params.mudDepth).toFixed(2)}m — cycle ${robot.miniCyclesDone + 1}/${nc}`],
+    descending:        ['Descente pompe',     `Cible: ${(robot._cellFullDepth ?? (params.waterDepth + params.mudDepth)).toFixed(2)}m — cycle ${robot.miniCyclesDone + 1}/${nc}`],
     pumping:           ['Pompage actif',      `Cycle ${robot.miniCyclesDone + 1}/${nc} — case ${robot.currentCellIdx + 1}/${total || '?'}`],
     partial_ascending: ['Remontée partielle', `Prochain cycle ${robot.miniCyclesDone + 1}/${nc}`],
     ascending:         ['Remontée pompe',     ''],

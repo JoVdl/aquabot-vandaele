@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v56</span>
+        <span class="logo-version" id="appVersion">v57</span>
       </div>
     </div>
     <div class="header-status">
@@ -451,6 +451,30 @@
           </div>
 
           <div class="card param-card">
+            <div class="card-header">Objectif de curage</div>
+            <p class="energy-disclaimer" style="padding-top:0">Si un relevé bathymétrique existe pour l'étang, le robot cible désormais la profondeur RÉELLEMENT mesurée de chaque case au lieu d'une profondeur uniforme — les cases sans donnée retombent sur "Profondeur eau"/"Épaisseur vase à pomper" ci-dessous.</p>
+            <div class="work-mode-list">
+              <label class="work-mode-option">
+                <input type="radio" name="curageMode" value="integral" class="work-mode-radio" checked onchange="updateCurageModeUI()">
+                <div class="work-mode-content">
+                  <div class="work-mode-name">Curage intégral</div>
+                  <div class="work-mode-desc">Retire toute la vase mesurée sur chaque case, jusqu'au fond réel.</div>
+                </div>
+              </label>
+              <label class="work-mode-option">
+                <input type="radio" name="curageMode" value="partiel" class="work-mode-radio" onchange="updateCurageModeUI()">
+                <div class="work-mode-content">
+                  <div class="work-mode-name">Curage à profondeur cible</div>
+                  <div class="work-mode-desc">Laisse volontairement une épaisseur de vase résiduelle (ex. "curage à -20 cm").</div>
+                </div>
+              </label>
+            </div>
+            <div class="param-list">
+              <div class="param-row" id="curageResidualRow" style="display:none"><span class="param-lbl">Épaisseur de vase à laisser (m)</span><input type="number" step="0.01" min="0" class="param-input" id="pCurageResidualMud" value="0.05"></div>
+            </div>
+          </div>
+
+          <div class="card param-card">
             <div class="card-header">Mini-cycles de fond</div>
             <div class="param-list">
               <div class="param-row"><span class="param-lbl">Nombre de cycles</span><input type="number" class="param-input" id="pMiniCycles" value="3"></div>
@@ -462,8 +486,8 @@
           <div class="card param-card">
             <div class="card-header">Pompage &amp; déplacement</div>
             <div class="param-list">
-              <div class="param-row"><span class="param-lbl">Profondeur eau (m)</span><input type="number" step="0.1" min="0" class="param-input" id="pWaterDepth" value="2.0"></div>
-              <div class="param-row"><span class="param-lbl">Épaisseur vase à pomper (m)</span><input type="number" step="0.1" min="0" class="param-input" id="pMudDepth" value="0.30"></div>
+              <div class="param-row"><span class="param-lbl">Profondeur eau par défaut (m)</span><input type="number" step="0.1" min="0" class="param-input" id="pWaterDepth" value="2.0"></div>
+              <div class="param-row"><span class="param-lbl">Épaisseur vase par défaut (m)</span><input type="number" step="0.1" min="0" class="param-input" id="pMudDepth" value="0.30"></div>
               <div class="param-row"><span class="param-lbl">Durée pompage / case (s)</span><input type="number" min="1" class="param-input" id="pPumpTime" value="30"></div>
               <div class="param-row"><span class="param-lbl">Vitesse descente pompe (m/s)</span><input type="number" step="0.01" min="0.01" class="param-input" id="pPumpDescentSpeed" value="0.05"></div>
               <div class="param-row"><span class="param-lbl">Vitesse remontée pompe (m/s)</span><input type="number" step="0.01" min="0.01" class="param-input" id="pPumpAscentSpeed" value="0.08"></div>
@@ -629,6 +653,15 @@
               <button class="btn btn-secondary btn-sm" onclick="quickBathyAfterZone()" title="Ne retravaille que les cases déjà nettoyées par le robot (zone en cours) : retire une épaisseur de vase donnée (réduction absolue, pas un pourcentage), en laissant toujours un petit fond résiduel.">⚡ Après travaux — zone en cours</button>
               <button class="btn btn-secondary btn-sm" onclick="quickBathyAfterPond()" title="Simule l'étang ENTIÈREMENT terminé : résidu de vase variable par endroit, comme un vrai chantier fini.">⚡ Après travaux — étang complet</button>
             </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Suivi en direct pendant le curage</div>
+            <p class="energy-disclaimer" style="padding-top:6px">Le robot cible désormais la vase RÉELLEMENT mesurée (dernier relevé bathymétrique) selon l'objectif de curage choisi dans Paramètres — intégral ou à profondeur cible. Cochez cette case avant de démarrer le curage (onglet Tableau de bord) pour qu'un nouveau relevé se remplisse case par case au fil du travail, et suivre en direct l'évolution de la vase et l'efficacité du robot.</p>
+            <label class="bathy-satellite-toggle">
+              <input type="checkbox" id="bathyLiveDuringWork" onchange="setBathyLiveDuringWork(this.checked)">
+              📡 Activer le relevé bathymétrique en direct au prochain démarrage
+            </label>
           </div>
 
           <div class="card bathy-map-card">
