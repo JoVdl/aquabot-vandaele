@@ -2608,9 +2608,35 @@ function bathyMetricLabel(metric) {
 }
 function setBathyPalette(palette) {
   state.bathy.palette = palette;
+  document.querySelectorAll('.bathy-palette-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.palette === palette));
   renderBathyCanvas();
   updateBathyLegend();
   if (_leafletMapBathy) _updateBathyCellStyles();
+}
+
+// Aperçus de couleurs des 3 boutons de palette (voir index.html) — construits une fois au
+// chargement à partir de BATHY_PALETTES/BATHY_HSL_SCALES (source unique), plutôt que de dupliquer
+// les valeurs de couleur dans le HTML : un simple nom dans une liste déroulante n'indiquait pas à
+// quoi ressemblait réellement chaque palette avant de la choisir.
+function initBathyPaletteButtons() {
+  const stopsToGradient = stops => `linear-gradient(90deg, ${stops.map(([f, c]) => `${c} ${f * 100}%`).join(', ')})`;
+  const rainbow = document.getElementById('bathyPaletteSwatchRainbow');
+  if (rainbow) rainbow.style.background = stopsToGradient(BATHY_PALETTES.rainbow.stops);
+  const viridis = document.getElementById('bathyPaletteSwatchViridis');
+  if (viridis) viridis.style.background = stopsToGradient(BATHY_PALETTES.viridis.stops);
+  // "Classique" module la teinte par métrique (bleu pour l'eau, brun pour la vase) plutôt qu'une
+  // seule échelle fixe — l'aperçu montre donc les deux còte à còte, fidèle au nom "bleu / brun".
+  const classic = document.getElementById('bathyPaletteSwatchClassic');
+  if (classic) {
+    const waterC = f => rgbCss(bathyColorRGBForScale(BATHY_HSL_SCALES.water, f));
+    const mudC   = f => rgbCss(bathyColorRGBForScale(BATHY_HSL_SCALES.mud, f));
+    classic.style.background = `linear-gradient(90deg, ${waterC(0)} 0%, ${waterC(1)} 46%, ${mudC(0)} 54%, ${mudC(1)} 100%)`;
+  }
+}
+function bathyColorRGBForScale(s, frac) {
+  const h = s.h0 + (s.h1 - s.h0) * frac;
+  const l = (s.lMin + (s.lMax - s.lMin) * frac) / 100;
+  return hslToRgb(h, s.s / 100, l);
 }
 
 // ── Rendu canevas (2D à plat ou 3D isométrique — pas de WebGL, juste un canevas 2D extrudé) ─
@@ -6575,6 +6601,7 @@ function init() {
   initCanvasEvents();
   _initBathyCanvasSelectionEvents();
   _initBathy3DPanZoomEvents();
+  initBathyPaletteButtons();
 
   updatePondsList();
   updateUI();

@@ -996,6 +996,19 @@ svg { display: block; }
 .map-style-btn.active { background: rgba(16,185,129,0.2); color: var(--success); box-shadow: 0 1px 4px rgba(16,185,129,0.2); }
 .map-style-btn:hover:not(.active) { color: var(--text-1); background: var(--border); }
 
+/* Sélecteur de palette bathymétrique — un aperçu de couleurs réelles plutôt qu'un simple nom
+   dans une liste déroulante, pour voir immédiatement l'effet avant de choisir. */
+.bathy-palette-group { display: flex; gap: 6px; flex-wrap: wrap; }
+.bathy-palette-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px 5px 6px; border: 1px solid var(--border); background: var(--bg-card-2);
+  border-radius: var(--radius-sm); font-size: 11px; font-weight: 600;
+  color: var(--text-2); cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.bathy-palette-btn.active { border-color: var(--accent); color: var(--text-1); background: var(--bg-card); box-shadow: 0 0 0 1px var(--accent); }
+.bathy-palette-btn:hover:not(.active) { color: var(--text-1); border-color: var(--text-3); }
+.bathy-palette-swatch { width: 28px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.15); flex-shrink: 0; }
+
 /* Custom Leaflet markers */
 .robot-marker-leaf {
   width: 16px; height: 16px;

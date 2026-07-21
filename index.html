@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v57</span>
+        <span class="logo-version" id="appVersion">v58</span>
       </div>
     </div>
     <div class="header-status">
@@ -698,11 +698,20 @@
               <select class="param-select" id="bathyAfterSelect" onchange="setBathyCompare('after', this.value)"></select>
             </div>
             <div class="bathy-controls-row">
-              <select class="param-select" id="bathyPaletteSelect" onchange="setBathyPalette(this.value)">
-                <option value="classic">Palette classique (bleu / brun)</option>
-                <option value="rainbow">Palette bathymétrique (arc-en-ciel)</option>
-                <option value="viridis">Palette Viridis</option>
-              </select>
+              <div class="bathy-palette-group" id="bathyPaletteGroup">
+                <button class="bathy-palette-btn active" data-palette="classic" onclick="setBathyPalette('classic')" title="Palette classique (bleu / brun)">
+                  <span class="bathy-palette-swatch" id="bathyPaletteSwatchClassic"></span>
+                  Classique
+                </button>
+                <button class="bathy-palette-btn" data-palette="rainbow" onclick="setBathyPalette('rainbow')" title="Palette bathymétrique (arc-en-ciel)">
+                  <span class="bathy-palette-swatch" id="bathyPaletteSwatchRainbow"></span>
+                  Arc-en-ciel
+                </button>
+                <button class="bathy-palette-btn" data-palette="viridis" onclick="setBathyPalette('viridis')" title="Palette Viridis">
+                  <span class="bathy-palette-swatch" id="bathyPaletteSwatchViridis"></span>
+                  Viridis
+                </button>
+              </div>
             </div>
             <div class="bathy-controls-row bathy-rotation-row" id="bathy3DStyleRow" style="display:flex">
               <span class="bathy-rotation-lbl">Style</span>
