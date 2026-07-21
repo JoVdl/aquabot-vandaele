@@ -1615,38 +1615,57 @@ function bathyTerrainNoise(x, y, seed) {
        + Math.sin(x * 0.35 - y * 0.28 + p * 5.3) * 0.25
        + Math.sin(x * 0.8  + y * 0.55 + p * 2.2) * 0.15;
 }
-// Seule la composante basse fréquence de bathyTerrainNoise (la forme générale du bassin, sans
-// les bosses locales) — utilisée pour le niveau d'eau "auto-nivelé" par la vase, voir
-// generateBathyBaseReading ci-dessous.
-function bathyTerrainNoiseLowFreq(x, y, seed) {
-  const p = (seed % 997) * 0.01;
-  return Math.sin(x * 0.18 + p * 3.1) * Math.cos(y * 0.14 + p * 1.7);
-}
 function pondBathySeed(pond) { return hashStr(pond?.id || '0'); }
 
 function round3(v) { return Math.round(v * 1000) / 1000; }
 
-// La vase se dépose plutôt dans les creux et nivelle sa propre surface, même quand le fond réel
-// (le socle) a des irrégularités locales — plutôt que deux bruits d'eau/vase indépendants (comme
-// avant), on génère : (1) un fond réel bruité (bosses locales incluses) qui varie comme
-// n'importe quelle topographie, et (2) un niveau d'eau bien plus lisse (seulement la composante
-// basse fréquence du même bruit, sans les bosses). La vase comble alors l'écart entre les deux —
-// épaisse dans les creux profonds du fond réel, fine/minimale sur les hauts-fonds — au lieu
-// d'être une variable indépendante sans lien avec la profondeur.
-function generateBathyBaseReading(cell, seed) {
+// Fond réel bruité (bosses/creux locaux) — indépendant de la répartition eau/vase, voir
+// generateBathyBaseReading et computeBathyFloodLevel ci-dessous.
+function bathyTerrainTotalDepth(cell, seed) {
   const nFloor  = bathyTerrainNoise(cell.cx, cell.cy, seed + 11);
-  const nLevel  = bathyTerrainNoiseLowFreq(cell.cx, cell.cy, seed + 11);
-  const jitterF = (pseudoRandom01(cell.col, cell.row, seed + 5)  - 0.5) * 0.05;
-  const jitterW = (pseudoRandom01(cell.col, cell.row, seed + 91) - 0.5) * 0.05;
-
+  const jitterF = (pseudoRandom01(cell.col, cell.row, seed + 5) - 0.5) * 0.05;
   const nominalTotal = params.waterDepth + params.mudDepth;
-  const totalDepth = Math.max(0.25, nominalTotal + nFloor * nominalTotal * 0.3 + jitterF);
-  const waterLevel = Math.max(0.15, params.waterDepth + nLevel * params.waterDepth * 0.15 + jitterW);
-
-  const MIN_MUD = 0.02;
-  const mud   = Math.max(MIN_MUD, totalDepth - waterLevel);
-  const water = totalDepth - mud;
+  return Math.max(0.25, nominalTotal + nFloor * nominalTotal * 0.3 + jitterF);
+}
+// La vase ne suit PAS les aspérités du fond avec une épaisseur constante : elle comble d'abord les
+// creux les plus profonds du fond réel, jusqu'à un niveau commun (mudLevel, une profondeur depuis
+// la surface) — sur les hauts-fonds où le fond réel est moins profond que ce niveau, il n'y a pas
+// de vase (roche à nu) et le fond réel affleure directement. La surface de la vase (donc la
+// profondeur d'eau) est ainsi plate là où il y a de la vase, et ne suit le fond réel que là où
+// celui-ci dépasse le niveau — cohérent avec la façon dont un sédiment se dépose et se stabilise
+// dans un bassin irrégulier, plutôt qu'une couche d'épaisseur uniforme plaquée sur le relief.
+function bathySplitAtLevel(total, level) {
+  const MIN_MUD = 0.02, MIN_WATER = 0.05;
+  let water = Math.min(total, level);
+  let mud = total - water;
+  if (mud < MIN_MUD) { mud = MIN_MUD; water = total - mud; }
+  if (water < MIN_WATER) { water = MIN_WATER; mud = total - water; }
   return { water: round3(water), mud: round3(mud) };
+}
+// Recherche par bissection du niveau de nivellement (mudLevel) tel que la vase moyenne obtenue en
+// comblant chaque profondeur totale jusqu'à ce niveau corresponde à targetMeanMud — la fonction
+// (niveau → vase moyenne) est strictement décroissante, donc la bissection converge toujours.
+function computeBathyFloodLevel(totals, targetMeanMud) {
+  const valid = totals.filter(t => t != null);
+  if (!valid.length) return 0;
+  const minTotal = Math.min(...valid), maxTotal = Math.max(...valid);
+  let lo = minTotal - (maxTotal - minTotal) - Math.max(targetMeanMud, 1) * 4 - 1;
+  let hi = maxTotal;
+  const meanMudForLevel = L => valid.reduce((s, t) => s + Math.max(0, t - L), 0) / valid.length;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (meanMudForLevel(mid) > targetMeanMud) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+// mudLevel est précalculé une fois par relevé (voir startBathySurvey) sur l'ensemble des cases
+// balayées, pour que la vase moyenne simulée corresponde à params.mudDepth. Repli sans mudLevel
+// (appel isolé, hors balayage) : niveau naïf donnant une vase proche de params.mudDepth sans forme
+// de nivellement.
+function generateBathyBaseReading(cell, seed, mudLevel) {
+  const totalDepth = bathyTerrainTotalDepth(cell, seed);
+  const level = mudLevel != null ? mudLevel : totalDepth - params.mudDepth;
+  return bathySplitAtLevel(totalDepth, level);
 }
 // Relevé "après travaux" : cases traitées → résidu de vase faible (3-9%), profondeur d'eau
 // augmentée d'autant (la vase retirée devient de l'eau) ; cases non traitées → inchangées.
@@ -1717,6 +1736,12 @@ function startBathySurvey(type) {
   b.pendingType     = type;
   b.pendingReadings = new Array(state.cells.length).fill(null);
   b.markerIdx       = order[0];
+  // Niveau de nivellement de la vase calculé une seule fois pour tout le relevé (voir
+  // bathySplitAtLevel) — pas par case, sinon chaque case choisirait sa propre vase locale au lieu
+  // de partager un même niveau commun sur l'ensemble du balayage.
+  const seedForLevel = pondBathySeed(state.pond);
+  const totalsForLevel = order.map(i => bathyTerrainTotalDepth(state.cells[i], seedForLevel));
+  b.mudLevel = computeBathyFloodLevel(totalsForLevel, params.mudDepth);
 
   const progEl = document.getElementById('bathyScanProgress');
   if (progEl) progEl.style.display = 'flex';
@@ -1740,10 +1765,10 @@ function bathyScanTick() {
   let reading;
   if (b.pendingType === 'after') {
     const before = latestBathySurvey(state.pond, 'before');
-    const beforeReading = (before && before.readings[idx]) || generateBathyBaseReading(cell, seed);
+    const beforeReading = (before && before.readings[idx]) || generateBathyBaseReading(cell, seed, b.mudLevel);
     reading = generateBathyAfterReading(beforeReading, cell, !!cell.completed, seed);
   } else {
-    reading = generateBathyBaseReading(cell, seed);
+    reading = generateBathyBaseReading(cell, seed, b.mudLevel);
   }
   b.pendingReadings[idx] = reading;
   b.markerIdx = idx;
@@ -1818,51 +1843,15 @@ function deleteBathySurvey(id) {
 }
 
 // Recalcule la répartition eau/vase d'un relevé DÉJÀ enregistré, sans nouveau scan : la
-// profondeur totale (eau+vase) de chaque case reste inchangée (c'est la mesure), seule la façon
-// dont elle se répartit entre eau et vase est ajustée pour que la vase se concentre dans les
-// creux du fond réel et que son sommet (donc la profondeur d'eau) reste relativement lisse d'une
-// case à l'autre — cohérent avec la façon dont la vase se dépose et se nivelle réellement, même
-// sur un fond irrégulier (voir aussi generateBathyBaseReading, qui applique le même principe aux
-// prochains relevés simulés).
+// profondeur totale (eau+vase) de chaque case reste inchangée (c'est la mesure, le fond réel).
+// Seule la façon dont elle se répartit entre eau et vase est recalculée : la vase comble d'abord
+// les creux les plus profonds du fond réel jusqu'à un niveau commun (voir bathySplitAtLevel et
+// computeBathyFloodLevel) — pas une épaisseur constante plaquée sur le relief. Sur les hauts-fonds
+// (fond réel moins profond que ce niveau), il n'y a pas de vase et le fond affleure directement.
 function relevelBathySurveyReadings(readings, targetMeanMud) {
-  const cells = state.cells;
-  const byColRow = new Map();
-  cells.forEach((c, i) => byColRow.set(c.col + ',' + c.row, i));
-  const totals = readings.map(r => r ? r.water + r.mud : null);
-
-  const RADIUS = 3; // rayon de lissage, en cases
-  const smoothed = cells.map((c, i) => {
-    if (totals[i] == null) return null;
-    let sum = 0, count = 0;
-    for (let dc = -RADIUS; dc <= RADIUS; dc++) {
-      for (let dr = -RADIUS; dr <= RADIUS; dr++) {
-        const j = byColRow.get((c.col + dc) + ',' + (c.row + dr));
-        if (j != null && totals[j] != null) { sum += totals[j]; count++; }
-      }
-    }
-    return count ? sum / count : totals[i];
-  });
-
-  // Écart entre le fond réel de chaque case et la tendance lissée du voisinage : positif dans
-  // un creux local (plus profond que ses voisins), négatif sur un haut-fond — c'est cette forme
-  // de variation qui module l'épaisseur de vase. Par construction, sa moyenne sur tout le relevé
-  // tend vers 0 (un lissage local ne fait que retirer la tendance moyenne) : la soustraire telle
-  // quelle (comme avant) ramenait donc la vase quasiment à 0 partout au lieu de varier AUTOUR de
-  // la moyenne visée par l'utilisateur — d'où le recentrage explicite sur targetMeanMud ci-dessous.
-  const residuals = totals.map((t, i) => t == null ? null : t - smoothed[i]);
-  const validResiduals = residuals.filter(r => r != null);
-  const meanResidual = validResiduals.length ? validResiduals.reduce((a, b) => a + b, 0) / validResiduals.length : 0;
-
-  const MIN_MUD = 0.02;
-  const MIN_WATER = 0.05;
-  return readings.map((r, i) => {
-    if (!r) return null;
-    const total = totals[i];
-    const rawMud = targetMeanMud + (residuals[i] - meanResidual);
-    const mud = Math.min(Math.max(rawMud, MIN_MUD), Math.max(MIN_MUD, total - MIN_WATER));
-    const water = total - mud;
-    return { water: round3(water), mud: round3(mud) };
-  });
+  const totals = readings.map(r => r ? round3(r.water + r.mud) : null);
+  const level = computeBathyFloodLevel(totals, targetMeanMud);
+  return readings.map((r, i) => r ? bathySplitAtLevel(totals[i], level) : null);
 }
 function relevelCurrentBathySurvey() {
   const pond = state.pond;
@@ -1874,7 +1863,7 @@ function relevelCurrentBathySurvey() {
   const currentMuds = survey.readings.filter(Boolean).map(r => r.mud);
   const currentAvgMud = currentMuds.length ? currentMuds.reduce((a, b) => a + b, 0) / currentMuds.length : 0.5;
   const input = prompt(
-    `Profondeur moyenne de vase visée pour ce relevé (en m) ?\n\nLa profondeur totale (eau + vase) de chaque case reste inchangée (c'est la mesure) — seule la répartition eau/vase est recalculée autour de cette moyenne, avec plus de vase dans les creux du fond et moins sur les hauts-fonds.`,
+    `Profondeur moyenne de vase visée pour ce relevé (en m) ?\n\nLa profondeur totale (eau + vase) de chaque case reste inchangée (c'est la mesure du fond réel) — la vase comble d'abord les creux les plus profonds jusqu'à un niveau commun, laissant les hauts-fonds à nu, plutôt qu'une épaisseur constante partout.`,
     currentAvgMud.toFixed(2)
   );
   if (input == null) return;

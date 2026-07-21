@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v52</span>
+        <span class="logo-version" id="appVersion">v53</span>
       </div>
     </div>
     <div class="header-status">
@@ -652,7 +652,7 @@
                 <option value="diff">Différence — vase retirée</option>
               </select>
               <select class="param-select" id="bathySurveySelect" onchange="setBathySurvey(this.value)"></select>
-              <button class="btn btn-secondary btn-sm" onclick="relevelCurrentBathySurvey()" title="Recalcule la répartition eau/vase du relevé affiché : la profondeur totale mesurée par case ne change pas, seule la part vase/eau est ajustée pour que la vase se concentre dans les creux et se nivelle — sans refaire de scan.">🌊 Relisser la vase</button>
+              <button class="btn btn-secondary btn-sm" onclick="relevelCurrentBathySurvey()" title="Recalcule la répartition eau/vase du relevé affiché : la profondeur totale mesurée par case ne change pas, mais la vase comble d'abord les creux les plus profonds jusqu'à un niveau commun (hauts-fonds à nu) — sans refaire de scan.">🌊 Relisser la vase</button>
             </div>
             <div class="bathy-controls-row bathy-diff-row" id="bathyDiffRow" style="display:none">
               <select class="param-select" id="bathyBeforeSelect" onchange="setBathyCompare('before', this.value)"></select>
