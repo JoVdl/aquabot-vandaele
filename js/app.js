@@ -2195,7 +2195,16 @@ function ensureBathy3DTiles() {
 // Mètres locaux → point écran isométrique — même transform linéaire que les colonnes (col,row
 // = mètres/cellSize ; ça reste valable pour des points hors grille comme les coins de tuiles).
 function bathyWorldToIso(wx, wy, thetaDeg, tileW, tileH, offX, offY) {
-  const p = bathyIsoPoint(wx / params.cellSize, wy / params.cellSize, thetaDeg, tileW, tileH);
+  // Les colonnes utilisent cell.col/row, pas des mètres bruts divisés par cellSize — et
+  // generateGrid() calcule cx = bbox.minX + col*cellSize + cellSize/2 (voir plus haut), donc
+  // col = (cx - bbox.minX)/cellSize - 0.5. Sans ce même décalage ici, le plancher satellite et
+  // les colonnes mesurées étaient chacun dans un repère différent (décalage constant visible à
+  // l'écran, la vase et l'eau du fond satellite ne coïncidaient jamais avec les colonnes).
+  const bbox = getPondBbox(state.pond);
+  const cs = params.cellSize;
+  const colEquiv = (wx - bbox.minX) / cs - 0.5;
+  const rowEquiv = (wy - bbox.minY) / cs - 0.5;
+  const p = bathyIsoPoint(colEquiv, rowEquiv, thetaDeg, tileW, tileH);
   return { x: p.ix + offX, y: p.iy + offY };
 }
 
