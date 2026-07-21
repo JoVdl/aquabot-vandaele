@@ -3660,6 +3660,7 @@ function renderDash3D() {
     renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs);
     const layout = state.bathy._meshLayout;
     if (layout) {
+      drawDashCompletedCellMarkers(ctx, thetaRad, tiltRad, cs, raw, layout);
       drawDashRobot3D(ctx, thetaRad, tiltRad, layout.heightScale, cs, bbox, layout.fitScale, layout.offX, layout.offY, layout.totalMin ?? 0, raw);
     }
   }
@@ -3694,6 +3695,41 @@ function renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox) {
   pts.forEach((p, i) => { const x = p.x * fitScale + offX, y = p.y * fitScale + offY; i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
   ctx.closePath(); ctx.fill(); ctx.stroke();
   drawDashRobot3D(ctx, thetaRad, tiltRad, 1, cs, bbox, fitScale, offX, offY, 0, null);
+}
+
+// renderBathy3DMeshStacked ne triangule le relief que sur une grille échantillonnée à intervalle
+// régulier (state.bathy._meshLayout.stride, voir cette fonction), pas case par case — sinon,
+// retrianguler tout le maillage à chaque case nettoyée sur un grand étang réintroduirait le
+// ralentissement déjà corrigé cette session. Conséquence : une case qui ne tombe pas exactement
+// sur ce point échantillonné n'apparaît jamais dans le relief affiché, même quand sa donnée réelle
+// (vase réduite) est bien à jour — le relief à cet endroit reflète alors la case échantillonnée
+// voisine, pas encore nettoyée, donnant l'impression trompeuse qu'une case nettoyée garde encore
+// toute sa vase. Ce repère, dessiné case par case pour les seules cases terminées (un sous-
+// ensemble borné et peu coûteux, pas tout le maillage), corrige ça avec la VRAIE valeur de CETTE
+// case, à sa position projetée exacte, dans la même teinte que le maillage utiliserait s'il
+// l'avait échantillonnée.
+function drawDashCompletedCellMarkers(ctx, thetaRad, tiltRad, cs, raw, layout) {
+  const { heightScale, fitScale, offX, offY, totalMin } = layout;
+  let mMin = Infinity, mMax = -Infinity;
+  for (const r of raw) { if (r) { if (r.mud < mMin) mMin = r.mud; if (r.mud > mMax) mMax = r.mud; } }
+  const mRange = (mMax - mMin) || 1;
+  const half = cs * fitScale * 0.55;
+  ctx.save();
+  for (let i = 0; i < state.cells.length; i++) {
+    const cell = state.cells[i];
+    const r = raw[i];
+    if (!cell.completed || !r) continue;
+    const mudTop = bathyMudTopVal(r.water, r.mud, totalMin);
+    const p = bathyMeshProjectXY(cell.col, cell.row, mudTop - totalMin, thetaRad, tiltRad, heightScale, cs);
+    const x = p.x * fitScale + offX, y = p.y * fitScale + offY;
+    const frac = Math.max(0, Math.min(1, (r.mud - mMin) / mRange));
+    ctx.fillStyle = rgbCss(rgbShade(bathyColorRGB('mud', frac), 0.85));
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(1.5, half), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 // Offsets (en "cases") des flotteurs individuels de la plateforme réelle du robot — plusieurs
