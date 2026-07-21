@@ -1842,13 +1842,26 @@ function setBathy3DStyle(style) {
   if (disclaimer) disclaimer.style.display = style === 'mesh' ? 'block' : 'none';
   renderBathyCanvas();
 }
+// Bornes du curseur d'inclinaison, partagées avec bathyMapAlphaForTilt ci-dessous.
+const BATHY_TILT_MIN = 5, BATHY_TILT_MAX = 80;
 function setBathy3DTilt(deg) {
-  // En dessous d'environ 20°, le plan de sol (satellite ou grille) se compresse tellement à
-  // l'écran qu'il ne reste presque plus de place utile sur le canevas pour un étang large —
-  // l'angle devient trop rasant pour rester lisible, quel que soit le relief affiché dessus.
-  state.bathy.tilt3D = Math.max(20, Math.min(80, parseFloat(deg) || 20));
+  // Descendre jusqu'à une quasi vue latérale (coupe du relief) reste utile — le fond satellite
+  // s'estompe désormais automatiquement à faible inclinaison (voir bathyMapAlphaForTilt), donc
+  // ça ne laisse plus un grand vide gris disgracieux comme quand la carte restait pleinement
+  // opaque à un angle aussi rasant.
+  state.bathy.tilt3D = Math.max(BATHY_TILT_MIN, Math.min(BATHY_TILT_MAX, parseFloat(deg) || BATHY_TILT_MIN));
   setText('bathyTiltVal', Math.round(state.bathy.tilt3D) + '°');
   renderBathyCanvas();
+}
+
+// Le fond satellite s'estompe progressivement aux faibles inclinaisons (vue de relief
+// spectaculaire, quasi latérale, où la carte plaquée à plat gênerait plus qu'elle n'aiderait) et
+// reste bien visible aux fortes inclinaisons (vue plus "de dessus", où elle sert surtout de
+// repère d'orientation réelle) — même comportement pour les styles Colonnes et Surface lisse.
+const BATHY_MAP_ALPHA_AT_MIN_TILT = 0.12, BATHY_MAP_ALPHA_AT_MAX_TILT = 0.95;
+function bathyMapAlphaForTilt(tiltDeg) {
+  const t = Math.max(0, Math.min(1, (tiltDeg - BATHY_TILT_MIN) / (BATHY_TILT_MAX - BATHY_TILT_MIN)));
+  return BATHY_MAP_ALPHA_AT_MIN_TILT + t * (BATHY_MAP_ALPHA_AT_MAX_TILT - BATHY_MAP_ALPHA_AT_MIN_TILT);
 }
 
 // ── Zoom / pan / rotation à la souris et au doigt sur la vue 3D isométrique ────────────────
@@ -2552,6 +2565,7 @@ function renderBathy3DSatelliteFloor(ctx, thetaDeg, tileW, tileH, offX, offY, ti
   const origin = pond.origin;
   const size = 256;
   let drawn = 0;
+  const mapAlpha = bathyMapAlphaForTilt(tiltDeg);
 
   for (const tile of _bathy3DTileList) {
     if (!tile.loaded || tile.failed) continue;
@@ -2574,6 +2588,7 @@ function renderBathy3DSatelliteFloor(ctx, thetaDeg, tileW, tileH, offX, offY, ti
     const a = (P10.x - P00.x) / size, b = (P10.y - P00.y) / size;
     const c = (P01.x - P00.x) / size, d = (P01.y - P00.y) / size;
     ctx.save();
+    ctx.globalAlpha = mapAlpha;
     ctx.transform(a, b, c, d, P00.x, P00.y);
     ctx.drawImage(tile.img, 0, 0, size, size);
     ctx.restore();
@@ -2730,6 +2745,7 @@ function renderBathyMeshSatelliteFloor(ctx, project, fitScale, offX, offY) {
   const cs = params.cellSize;
   const size = 256;
   let drawn = 0;
+  const mapAlpha = bathyMapAlphaForTilt(state.bathy.tilt3D);
 
   // Même conversion mètres→col/row que bathyWorldToIso, mais projetée via la fonction du
   // maillage (val=0 : le plan de sol correspond à une profondeur nulle) plutôt que via
@@ -2757,6 +2773,7 @@ function renderBathyMeshSatelliteFloor(ctx, project, fitScale, offX, offY) {
     const a = (P10.x - P00.x) / size, b = (P10.y - P00.y) / size;
     const c = (P01.x - P00.x) / size, d = (P01.y - P00.y) / size;
     ctx.save();
+    ctx.globalAlpha = mapAlpha;
     ctx.transform(a, b, c, d, P00.x, P00.y);
     ctx.drawImage(tile.img, 0, 0, size, size);
     ctx.restore();
