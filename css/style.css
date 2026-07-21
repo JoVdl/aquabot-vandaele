@@ -864,6 +864,8 @@ svg { display: block; }
   content: ''; display: block; width: 1px; height: 4px; background: var(--text-3);
   margin: 0 auto 2px;
 }
+.bathy-legend-sub { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+.bathy-legend-sub .bathy-legend-bar { height: 10px; }
 
 /* ============================================================
    PONDS TAB

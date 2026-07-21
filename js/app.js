@@ -2876,10 +2876,18 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
       floorTris.push({ a: b00, b: b10, c: b01 });
       floorTris.push({ a: b10, b: b11, c: b01 });
 
-      // val de la surface de vase = totalMin + (fraction mud/total du chemin vers le socle).
+      // La surface de vase se situe juste au-dessus du socle, à une distance du socle
+      // proportionnelle à l'épaisseur de vase (mud/total) — l'eau occupe la part dominante du
+      // haut (water/total, souvent la plus grande partie de la colonne), la vase la fine part du
+      // bas juste avant le socle. Une exagération (MUD_LAYER_EXAGGERATION) élargit
+      // artificiellement cet écart pour que l'épaisseur de vase reste perceptible à l'oeil même
+      // quand elle est fine comparée à la hauteur d'eau au-dessus.
+      const MUD_LAYER_EXAGGERATION = 3;
       const mudTopVal = (w, m) => {
         const total = w + m;
-        return totalMin + (total > 0 ? (total - totalMin) * (m / total) : 0);
+        if (total <= 0) return totalMin;
+        const mudFraction = Math.min(1, (m / total) * MUD_LAYER_EXAGGERATION);
+        return totalMin + (total - totalMin) * (1 - mudFraction);
       };
       const t00 = projectVal(c0, r0, mudTopVal(w00, m00)), t10 = projectVal(c1, r0, mudTopVal(w10, m10));
       const t01 = projectVal(c0, r1, mudTopVal(w01, m01)), t11 = projectVal(c1, r1, mudTopVal(w11, m11));
@@ -2974,7 +2982,7 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
   drawLayer({ fill: floorTris.map(t => ({ ...t, color: rgbCss(rgbShade(BATHY_FLOOR_RGB, t.shade)) })) }, 1, true);
 
   const mudFrac = v => Math.max(0, Math.min(1, (v - mMin) / mRange));
-  const MUD_TOP_ALPHA = 0.6;
+  const MUD_TOP_ALPHA = 0.78;
   drawLayer({ fill: mudTopTris.map(t => ({ ...t, color: rgbCss(rgbShade(bathyColorRGB('mud', mudFrac(t.val)), t.shade)) })) }, MUD_TOP_ALPHA, true);
 
   // Beaucoup plus transparente que la vase, et un ombrage aplati (pas la pleine variation de
@@ -3134,6 +3142,20 @@ function renderBathy3DMesh(ctx, W, H, values, min, range) {
 // Légende graduée — repères de profondeur alignés sur le dégradé (pas juste min/max aux deux
 // bouts) pour qu'on puisse lire directement quelle teinte correspond à quelle profondeur,
 // comme sur les cartes bathymétriques classiques.
+function _bathyLegendTicksHTML(min, max, unit) {
+  const steps = 5;
+  const range = max - min;
+  let html = '';
+  for (let i = 0; i <= steps; i++) {
+    const frac  = i / steps;
+    const val   = min + range * frac;
+    const align = i === 0 ? '0%' : i === steps ? '-100%' : '-50%';
+    const label = i === steps ? `${val.toFixed(2)} ${unit}` : val.toFixed(2);
+    html += `<span class="bathy-legend-tick" style="left:${(frac * 100).toFixed(2)}%;transform:translateX(${align})">${label}</span>`;
+  }
+  return html;
+}
+
 function updateBathyLegend() {
   const bar = document.getElementById('bathyLegendBar');
   const ticksEl = document.getElementById('bathyLegendTicks');
@@ -3145,20 +3167,37 @@ function updateBathyLegend() {
 
   const { _lastMin: min, _lastMax: max } = state.bathy;
   const unit = bathyMetricUnit(metric);
-  if (!ticksEl) return;
-  if (min == null || max == null) { ticksEl.innerHTML = ''; return; }
+  if (ticksEl) ticksEl.innerHTML = (min == null || max == null) ? '' : _bathyLegendTicksHTML(min, max, unit);
 
-  const steps = 5;
-  const range = max - min;
-  let html = '';
-  for (let i = 0; i <= steps; i++) {
-    const frac  = i / steps;
-    const val   = min + range * frac;
-    const align = i === 0 ? '0%' : i === steps ? '-100%' : '-50%';
-    const label = i === steps ? `${val.toFixed(2)} ${unit}` : val.toFixed(2);
-    html += `<span class="bathy-legend-tick" style="left:${(frac * 100).toFixed(2)}%;transform:translateX(${align})">${label}</span>`;
+  // En "profondeur totale", la vase et l'eau sont fondues dans une seule valeur combinée —
+  // on ajoute donc leurs propres graduations (comme sur les Colonnes/Surface lisse qui montrent
+  // les deux couches séparément) pour pouvoir lire directement quelle teinte correspond à
+  // quelle profondeur de vase ou d'eau, pas seulement au total.
+  const mudWrap = document.getElementById('bathyLegendMudWrap');
+  const waterWrap = document.getElementById('bathyLegendWaterWrap');
+  if (mudWrap && waterWrap) {
+    const raw = metric === 'total' ? computeBathyRawReadings() : null;
+    if (raw) {
+      const waterVals = [], mudVals = [];
+      raw.forEach(r => { if (r) { waterVals.push(r.water); mudVals.push(r.mud); } });
+      if (waterVals.length) {
+        const mMin = Math.min(...mudVals), mMax = Math.max(...mudVals);
+        const wMin = Math.min(...waterVals), wMax = Math.max(...waterVals);
+        document.getElementById('bathyLegendMudBar').style.background = bathyLegendGradientCSS('mud');
+        document.getElementById('bathyLegendMudTicks').innerHTML = _bathyLegendTicksHTML(mMin, mMax, 'm');
+        document.getElementById('bathyLegendWaterBar').style.background = bathyLegendGradientCSS('water');
+        document.getElementById('bathyLegendWaterTicks').innerHTML = _bathyLegendTicksHTML(wMin, wMax, 'm');
+        mudWrap.style.display = 'block';
+        waterWrap.style.display = 'block';
+      } else {
+        mudWrap.style.display = 'none';
+        waterWrap.style.display = 'none';
+      }
+    } else {
+      mudWrap.style.display = 'none';
+      waterWrap.style.display = 'none';
+    }
   }
-  ticksEl.innerHTML = html;
 }
 
 // ── Vue satellite/plan réelle (Leaflet) — même style de fond que le tableau de bord,
