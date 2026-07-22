@@ -5845,19 +5845,47 @@ function updateButtonStates() {
 function handleStart()  { startSimulation().catch(e => { console.error('handleStart:', e); showToast('Erreur au démarrage : ' + e.message, 'error'); }); }
 function handlePause()  { pauseSimulation().catch(e => { console.error('handlePause:', e); showToast('Erreur : ' + e.message, 'error'); }); }
 function handleStop()   { stopSimulation().catch(e => { console.error('handleStop:', e); showToast('Erreur : ' + e.message, 'error'); }); }
+// Le slider de vitesse déclenche "oninput" en continu pendant le glisser (potentiellement des
+// dizaines d'événements par seconde) — sans throttle, chaque événement partait aussitôt vers
+// Firestore (saveSimState() = document complet, ou _sendRemoteSpeedChange() = update + relances),
+// ce qui pouvait mettre en file bien plus d'écritures que le SDK n'en accepte en attente et
+// déclencher "Write stream exhausted maximum allowed queued writes".
+//
+// Front montant + descendant (pas un simple debounce à retardement) : le TOUT PREMIER changement
+// d'une rafale part immédiatement — indispensable pour _sendRemoteSpeedChange, dont la protection
+// anti-écho (_pendingSpeedRequest, voir plus bas) doit gagner la course contre la prochaine
+// réécriture périodique du pilote (~200ms, voir SIM_SAVE_INTERVAL_MS) ; un simple debounce
+// retardait ce premier envoi et faisait perdre cette course. Les changements suivants pendant la
+// fenêtre de throttle sont juste mémorisés (state.sim.speed et l'affichage restent instantanés),
+// et un seul envoi final part à la fin de la fenêtre s'il y a eu du mouvement depuis — donc au
+// plus 2 écritures réseau par fenêtre de SPEED_SAVE_THROTTLE_MS, quelle que soit la vitesse du
+// glisser.
+const SPEED_SAVE_THROTTLE_MS = 200;
+let _speedSaveThrottleTimer = null;
+let _speedSaveThrottlePending = false;
 function handleSpeedChange(v) {
   state.sim.speed = parseFloat(v);
   setText('speedValue', v + '×');
-  if (state.sim.running) {
-    // Cet appareil pilote réellement : sa sauvegarde complète et périodique reflète l'état
-    // exact, vitesse incluse — pas besoin d'un envoi séparé.
-    saveSimState();
-  } else if (USE_CLOUD && state.pond) {
-    // Simple vue : n'envoyer QUE le changement de vitesse, jamais un document complet depuis
-    // des valeurs suivies (qui écraserait l'état précis de l'appareil qui pilote réellement,
-    // et pourrait même usurper sa revendication de pilotage via le champ driverId).
-    _sendRemoteSpeedChange(state.sim.speed);
-  }
+
+  const flush = () => {
+    if (state.sim.running) {
+      // Cet appareil pilote réellement : sa sauvegarde complète et périodique reflète l'état
+      // exact, vitesse incluse — pas besoin d'un envoi séparé.
+      saveSimState();
+    } else if (USE_CLOUD && state.pond) {
+      // Simple vue : n'envoyer QUE le changement de vitesse, jamais un document complet depuis
+      // des valeurs suivies (qui écraserait l'état précis de l'appareil qui pilote réellement,
+      // et pourrait même usurper sa revendication de pilotage via le champ driverId).
+      _sendRemoteSpeedChange(state.sim.speed);
+    }
+  };
+
+  if (_speedSaveThrottleTimer) { _speedSaveThrottlePending = true; return; }
+  flush();
+  _speedSaveThrottleTimer = setTimeout(() => {
+    _speedSaveThrottleTimer = null;
+    if (_speedSaveThrottlePending) { _speedSaveThrottlePending = false; flush(); }
+  }, SPEED_SAVE_THROTTLE_MS);
 }
 
 // Le pilote réécrit tout le document toutes les ~200ms (voir simulationTick) avec sa propre
