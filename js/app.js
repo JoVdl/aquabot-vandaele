@@ -3204,6 +3204,37 @@ function bathyMeshProjectXY(col, row, val, thetaRad, tiltRad, heightScale, cs) {
   return { x: rx, y: ry * Math.sin(tiltRad) - z * Math.cos(tiltRad), rx, ry, z };
 }
 
+// Colonnes/lignes de la zone de chantier en cours (state.plannedPath), pour forcer une résolution
+// fine LOCALE dans le maillage principal sans passage superposé (voir bathyAdaptiveSampleAxis) —
+// sur un grand étang, le pas d'échantillonnage uniforme (stride > 1) saute la plupart des cases :
+// une case tout juste nettoyée par le robot ne coïncide presque jamais avec un sommet échantillonné
+// et son changement de profondeur/couleur reste invisible, même si la donnée sous-jacente est bien
+// à jour (signalé par l'utilisateur sur les deux onglets, Tableau de bord ET Bathymétrie). Renvoie
+// null si aucun chantier actif.
+function bathyJobPriorityColsRows() {
+  const path = state.plannedPath;
+  if (!path || !path.length) return null;
+  const cols = new Set(), rows = new Set();
+  for (const idx of path) {
+    const c = state.cells[idx];
+    if (!c) continue;
+    cols.add(c.col); rows.add(c.row);
+  }
+  return cols.size ? { cols, rows } : null;
+}
+
+// Axe d'échantillonnage adaptatif : le pas uniforme habituel (stride, pour rester fluide sur un
+// grand étang), complété par les colonnes/lignes exactes de la zone de chantier en cours — un seul
+// maillage continu (les quads se forment entre valeurs ADJACENTES de ce tableau, uniforme ou non),
+// donc pas de couture ni de double calcul d'échelle : juste des quads plus petits localement, là où
+// le travail est en cours, et plus grands ailleurs.
+function bathyAdaptiveSampleAxis(minV, maxV, stride, priority) {
+  const set = new Set();
+  for (let v = minV; v <= maxV; v += stride) set.add(v);
+  if (priority) for (const v of priority) if (v >= minV && v <= maxV) set.add(v);
+  return Array.from(set).sort((a, b) => a - b);
+}
+
 // Position (val, dans le même repère décalé par totalMin que projectVal) de la surface de vase —
 // juste au-dessus du socle, à une distance du socle proportionnelle à l'épaisseur de vase
 // (mud/total), avec une exagération modérée pour rester perceptible même quand elle est fine
@@ -3255,8 +3286,9 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
 
   const spanCols = maxCol - minCol + 1, spanRows = maxRow - minRow + 1;
   const stride = Math.max(1, Math.ceil(Math.sqrt((spanCols * spanRows) / 3000)));
-  const sampleCols = []; for (let c = minCol; c <= maxCol; c += stride) sampleCols.push(c);
-  const sampleRows = []; for (let r = minRow; r <= maxRow; r += stride) sampleRows.push(r);
+  const priority = bathyJobPriorityColsRows();
+  const sampleCols = bathyAdaptiveSampleAxis(minCol, maxCol, stride, priority?.cols);
+  const sampleRows = bathyAdaptiveSampleAxis(minRow, maxRow, stride, priority?.rows);
 
   // val est compté à partir de totalMin (la case la moins profonde), pas de zéro absolu — sinon
   // le fond (creusé de plusieurs mètres en valeur absolue) et le plafond d'eau (val=0 littéral)
@@ -3447,11 +3479,15 @@ function renderBathy3DMesh(ctx, W, H, values, min, range) {
   const heightScale = range > 0 ? (horizontalSpan * 0.22) / range : 1;
 
   // Décimation si la grille est très dense, pour rester fluide pendant la rotation/le zoom —
-  // un triangle par case n'est pas nécessaire pour lire le relief global.
+  // un triangle par case n'est pas nécessaire pour lire le relief global. Les colonnes/lignes de
+  // la zone de chantier en cours (voir bathyJobPriorityColsRows) sont ajoutées telles quelles à
+  // cette grille par ailleurs uniforme (voir bathyAdaptiveSampleAxis) : un seul maillage continu,
+  // localement plus fin là où le robot travaille, sans passage superposé ni couture.
   const spanCols = maxCol - minCol + 1, spanRows = maxRow - minRow + 1;
   const stride = Math.max(1, Math.ceil(Math.sqrt((spanCols * spanRows) / 3000)));
-  const sampleCols = []; for (let c = minCol; c <= maxCol; c += stride) sampleCols.push(c);
-  const sampleRows = []; for (let r = minRow; r <= maxRow; r += stride) sampleRows.push(r);
+  const priority = bathyJobPriorityColsRows();
+  const sampleCols = bathyAdaptiveSampleAxis(minCol, maxCol, stride, priority?.cols);
+  const sampleRows = bathyAdaptiveSampleAxis(minRow, maxRow, stride, priority?.rows);
 
   function project(col, row, val) {
     const p = bathyMeshProjectXY(col, row, val, thetaRad, tiltRad, heightScale, cs);
