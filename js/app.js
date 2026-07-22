@@ -5618,11 +5618,20 @@ function updateUI() {
   const pace = state.sim.paceSecPerCell;
   const remainingSec = (pace != null && total > done) ? pace * (total - done) : null;
   setText('dashTimeElapsed',   formatTime(robot.elapsedSec));
-  setText('dashTimeRemaining', remainingSec != null ? formatTime(remainingSec) : '—');
+
+  // "Restant"/"Fin estimée" doivent répondre à la vitesse de simulation courante, pas juste
+  // décompter des secondes "robot" à l'identique quelle que soit la vitesse affichée : remainingSec
+  // est en secondes simulées (le rythme réel du travail, indépendant de la vitesse d'affichage —
+  // voir le calcul de "pace" ci-dessus). En x200, ce même travail restant défile 200 fois plus
+  // vite à l'écran ; sans diviser par la vitesse courante, "Restant" affichait toujours plusieurs
+  // jours même en accéléré, alors que l'utilisateur regarde le chantier se terminer en quelques
+  // minutes réelles. En mode Robot réel, state.sim.speed reste à 1 — aucun changement là-bas.
+  const realRemainingSec = remainingSec != null ? remainingSec / (state.sim.speed || 1) : null;
+  setText('dashTimeRemaining', realRemainingSec != null ? formatTime(realRemainingSec) : '—');
 
   // Fin estimée — date/heure absolue, pas juste une durée (visible dès que "Restant" l'est)
-  setText('dashETA', remainingSec != null
-    ? new Date(Date.now() + remainingSec * 1000).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  setText('dashETA', realRemainingSec != null
+    ? new Date(Date.now() + realRemainingSec * 1000).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     : '—');
 
   // Selection/path volumes — pompé et total affichés dans la même unité pour rester cohérents
