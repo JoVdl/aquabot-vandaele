@@ -1015,7 +1015,7 @@ const state = {
   plannedPath: [],
   // Vue 3D en direct du tableau de bord — voir renderDash3D(). Partage rotation3D/tilt3D avec
   // l'onglet Bathymétrie (même scène 3D du fond de l'étang), pas de duplication de ces réglages.
-  dash3D: { active: false, _lastRenderAt: 0 },
+  dash3D: { active: false, _lastRenderAt: 0, recentCells: [] },
   robot: {
     x: 0, y: 0,
     pumpDepth: 0,
@@ -1922,11 +1922,26 @@ function startLiveBathySurveyIfEnabled() {
 // appelé par simulationTick() juste après qu'une case soit marquée terminée. Ne persiste pas à
 // chaque case (trop coûteux en écritures Firestore) : réutilise le même rythme que la sauvegarde
 // périodique de la progression (voir simulationTick, robot.completedCells % 10).
+// Nombre de cases gardées dans le "sillage" récent affiché sur la vue 3D du tableau de bord (voir
+// drawDashRecentCellHighlight) — volontairement PETIT et borné : marquer TOUTES les cases jamais
+// terminées (comme un essai précédent) fait grossir la zone mise en avant sans limite au fil du
+// chantier, jusqu'à couvrir une bonne partie de l'étang avec des hauteurs à résolution brute à
+// côté d'un maillage grossier lissé — ça donnait un amas visuellement incohérent. En ne gardant
+// qu'un petit nombre des DERNIÈRES cases, la zone mise en avant reste localisée autour du robot en
+// train de travailler, et les cases plus anciennes en "sortent" au fur et à mesure qu'il avance.
+const DASH3D_RECENT_CELLS_MAX = 24;
+
 function _recordLiveBathyReading(cellIdx, result) {
   if (!state.bathy._liveSurveyId || !state.pond) return;
   const survey = state.pond.bathySurveys?.find(s => s.id === state.bathy._liveSurveyId);
   if (!survey) { state.bathy._liveSurveyId = null; return; }
   survey.readings[cellIdx] = result;
+  const cell = state.cells[cellIdx];
+  if (cell) {
+    const trail = state.dash3D.recentCells;
+    trail.push({ idx: cellIdx, col: cell.col, row: cell.row });
+    if (trail.length > DASH3D_RECENT_CELLS_MAX) trail.shift();
+  }
   if (state.activeTab === 'bathymetry') { renderBathyCanvas(); updateBathyLegend(); }
 }
 function bathyTypeLabel(type) {
@@ -3673,6 +3688,7 @@ function renderDash3D() {
     renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs);
     const layout = state.bathy._meshLayout;
     if (layout) {
+      drawDashRecentCellHighlight(ctx, thetaRad, tiltRad, cs, raw, layout);
       drawDashRobot3D(ctx, thetaRad, tiltRad, layout.heightScale, cs, bbox, layout.fitScale, layout.offX, layout.offY, layout.totalMin ?? 0, raw);
     }
   }
@@ -3707,6 +3723,49 @@ function renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox) {
   pts.forEach((p, i) => { const x = p.x * fitScale + offX, y = p.y * fitScale + offY; i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
   ctx.closePath(); ctx.fill(); ctx.stroke();
   drawDashRobot3D(ctx, thetaRad, tiltRad, 1, cs, bbox, fitScale, offX, offY, 0, null);
+}
+
+// Sillage récent — les DERNIÈRES cases nettoyées (state.dash3D.recentCells, borné à
+// DASH3D_RECENT_CELLS_MAX — voir _recordLiveBathyReading), affichées avec leur vraie profondeur de
+// vase à jour, pour un retour visuel immédiat exactement là où le robot vient de passer. Un
+// quadrilatère projeté (mêmes rotation/inclinaison que le maillage), pas un cercle en espace écran
+// plat — voir l'historique de ce fichier pour pourquoi. Volontairement limité à un petit nombre de
+// cases (pas toutes les cases jamais terminées) : le maillage grossier (renderBathy3DMeshStacked)
+// est lissé par construction (échantillonné à intervalle régulier, pour rester performant), alors
+// que la vraie profondeur de CETTE case juste nettoyée peut être très différente de sa voisine pas
+// encore traitée — une case isolée à côté du maillage lissé se voit très bien, mais marquer TOUTES
+// les cases terminées d'un chantier fait vite grossir cette zone à résolution brute jusqu'à
+// couvrir une bonne partie de l'étang, en rupture visuelle avec le lissage du reste — d'où le
+// choix de ne garder qu'un petit sillage borné plutôt que tout l'historique.
+function drawDashRecentCellHighlight(ctx, thetaRad, tiltRad, cs, raw, layout) {
+  const trail = state.dash3D.recentCells;
+  if (!trail || !trail.length) return;
+  const { heightScale, fitScale, offX, offY, totalMin } = layout;
+  let mMin = Infinity, mMax = -Infinity;
+  for (const r of raw) { if (r) { if (r.mud < mMin) mMin = r.mud; if (r.mud > mMax) mMax = r.mud; } }
+  const mRange = (mMax - mMin) || 1;
+  const half = 0.5;
+  ctx.save();
+  trail.forEach((entry, i) => {
+    const r = raw[entry.idx];
+    if (!r) return;
+    const val = bathyMudTopVal(r.water, r.mud, totalMin) - totalMin;
+    const corners = [[-half, -half], [half, -half], [half, half], [-half, half]].map(([dc, dr]) => {
+      const p = bathyMeshProjectXY(entry.col + dc, entry.row + dr, val, thetaRad, tiltRad, heightScale, cs);
+      return { x: p.x * fitScale + offX, y: p.y * fitScale + offY };
+    });
+    const frac = Math.max(0, Math.min(1, (r.mud - mMin) / mRange));
+    // S'estompe pour les cases les plus anciennes du sillage (i=0 = la plus ancienne) — une
+    // transition douce plutôt qu'une case qui disparaît d'un coup en sortant du sillage.
+    const age = i / trail.length;
+    ctx.globalAlpha = 0.78 * (0.4 + 0.6 * age);
+    ctx.fillStyle = rgbCss(rgbShade(bathyColorRGB('mud', frac), 0.85));
+    ctx.beginPath();
+    corners.forEach((p, j) => (j === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fill();
+  });
+  ctx.restore();
 }
 
 // Offsets (en "cases") des flotteurs individuels de la plateforme réelle du robot — plusieurs
@@ -5330,10 +5389,8 @@ async function stopSimulation() {
   _stopLocally();
 }
 
-let _tickLogCount = 0;
 function simulationTick() {
   if (!state.sim.running) return;
-  if (_tickLogCount < 5) { console.log('[tick]', ++_tickLogCount, 'cellIdx=', state.robot.currentCellIdx, '/', state.plannedPath.length, 'pumpState=', state.robot.pumpState); }
   const now   = performance.now();
   const rawDt = (now - state.sim.lastTick) / 1000;
   state.sim.lastTick = now;
