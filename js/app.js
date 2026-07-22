@@ -217,8 +217,11 @@ function saveSimState() {
   window.db.collection('aquabot_sim').doc(state.pond.id).set({
     robotState:     state.robot.state,
     simRunning:     state.sim.running,
-    x:              state.robot.x,
-    y:              state.robot.y,
+    // Number.isFinite (pas juste state.robot.x tel quel) : une position corrompue (NaN) ne doit
+    // jamais être écrite ici, sous peine de "recontaminer" tous les autres appareils qui suivent
+    // ce document au prochain snapshot (voir finiteOr côté lecture, plus bas dans le fichier).
+    x:              Number.isFinite(state.robot.x) ? state.robot.x : 0,
+    y:              Number.isFinite(state.robot.y) ? state.robot.y : 0,
     currentCellIdx: state.robot.currentCellIdx,
     pumpState:      state.robot.pumpState,
     pumpDepth:      state.robot.pumpDepth,
@@ -345,8 +348,8 @@ function subscribeSimState(pondId) {
       state.robot.elapsedSec     = sim.elapsedSec + (sim.simRunning ? offlineSec : 0);
       state.robot.volumePumped   = sim.volumePumped || 0;
       state.robot.energyWh       = sim.energyWh || 0;
-      state.robot.x              = sim.x ?? state.robot.x;
-      state.robot.y              = sim.y ?? state.robot.y;
+      state.robot.x              = finiteOr(sim.x, state.robot.x);
+      state.robot.y              = finiteOr(sim.y, state.robot.y);
       state.robot.pumpDepth      = sim.pumpDepth  ?? 0;
       state.robot.pumpState      = sim.simRunning ? (sim.pumpState || 'idle') : 'idle';
       state.robot.pumpTimer      = sim.pumpTimer  ?? 0;
@@ -478,8 +481,8 @@ function _resumeSimFromCloud(sim) {
   state.robot.completedCells = completedSet.size;
 
   // Restaurer la position et l'état du robot
-  state.robot.x              = sim.x ?? state.robot.x;
-  state.robot.y              = sim.y ?? state.robot.y;
+  state.robot.x              = finiteOr(sim.x, state.robot.x);
+  state.robot.y              = finiteOr(sim.y, state.robot.y);
   state.robot.currentCellIdx = sim.currentCellIdx || 0;
   state.robot.pumpState      = sim.pumpState      || 'idle';
   state.robot.pumpDepth      = sim.pumpDepth      ?? 0;
@@ -587,9 +590,10 @@ function subscribeRobotTelemetry(pondId) {
       if (!doc.exists) return;
       const t = doc.data();
 
-      // Position robot depuis GPS réel
-      state.robot.x         = t.x          ?? state.robot.x;
-      state.robot.y         = t.y          ?? state.robot.y;
+      // Position robot depuis GPS réel — un fix invalide (pas de RTK, cold start sur un nouvel
+      // étang) ne doit jamais remplacer la dernière position connue par du NaN (voir finiteOr).
+      state.robot.x         = finiteOr(t.x, state.robot.x);
+      state.robot.y         = finiteOr(t.y, state.robot.y);
       state.robot.state     = t.robotState ?? 'stopped';
       state.robot.pumpState = t.pumpState  ?? 'idle';
       state.robot.pumpDepth = t.pumpDepth  ?? 0;
@@ -6456,8 +6460,23 @@ function isValidOrigin(o) {
   return !!o && typeof o.lat === 'number' && typeof o.lng === 'number' && !Number.isNaN(o.lat) && !Number.isNaN(o.lng);
 }
 
+// Comme `value ?? fallback`, mais rejette aussi NaN (pas seulement null/undefined) — utilisé pour
+// la position robot reçue de Firestore (télémétrie GPS réelle, snapshot de simulation, reprise
+// après déconnexion) : une lecture GPS invalide (pas de fix RTK, etc.) ou une valeur déjà corrompue
+// dans le document ne doit jamais remplacer la dernière position connue par du NaN, qui se
+// propagerait ensuite indéfiniment (poison silencieux : `NaN ?? x` vaut NaN, pas x).
+function finiteOr(value, fallback) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
 function metersToLatLng(x, y) {
   if (!isValidOrigin(state.pond?.origin)) return null;
+  // x/y invalides (position robot pas encore connue — nouvel étang, premier fix GPS pas encore
+  // reçu, etc.) doivent aussi être rejetés ici, pas seulement l'origine : sinon un lat/lng NaN
+  // ressort quand même de cette fonction (objet non-null, donc pas filtré par les `if (!ll)
+  // return`/`.filter(Boolean)` de ses appelants) et fait planter Leaflet plus loin
+  // (setLatLngs → "Invalid LatLng object: (NaN, NaN)").
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   const { lat: lat0, lng: lng0 } = state.pond.origin;
   return {
     lat: lat0 + y / 110540,
