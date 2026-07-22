@@ -3720,26 +3720,32 @@ function renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox) {
 // toute sa vase. Ce repère, dessiné case par case pour les seules cases terminées (un sous-
 // ensemble borné et peu coûteux, pas tout le maillage), corrige ça avec la VRAIE valeur de CETTE
 // case, à sa position projetée exacte, dans la même teinte que le maillage utiliserait s'il
-// l'avait échantillonnée.
+// l'avait échantillonnée. Chaque case est un petit quadrilatère PROJETÉ (mêmes rotation/
+// inclinaison que le reste de la scène), pas un cercle en espace écran plat — un cercle ne suit
+// pas la perspective 3D et, sur une zone de nombreuses cases terminées, ça donnait un amas de
+// points ronds flottant visiblement au-dessus du relief, déconnecté de son inclinaison réelle.
 function drawDashCompletedCellMarkers(ctx, thetaRad, tiltRad, cs, raw, layout) {
   const { heightScale, fitScale, offX, offY, totalMin } = layout;
   let mMin = Infinity, mMax = -Infinity;
   for (const r of raw) { if (r) { if (r.mud < mMin) mMin = r.mud; if (r.mud > mMax) mMax = r.mud; } }
   const mRange = (mMax - mMin) || 1;
-  const half = cs * fitScale * 0.55;
+  const half = 0.5; // pleine case (pas de marge), pour que les cases adjacentes se rejoignent
   ctx.save();
   for (let i = 0; i < state.cells.length; i++) {
     const cell = state.cells[i];
     const r = raw[i];
     if (!cell.completed || !r) continue;
-    const mudTop = bathyMudTopVal(r.water, r.mud, totalMin);
-    const p = bathyMeshProjectXY(cell.col, cell.row, mudTop - totalMin, thetaRad, tiltRad, heightScale, cs);
-    const x = p.x * fitScale + offX, y = p.y * fitScale + offY;
+    const val = bathyMudTopVal(r.water, r.mud, totalMin) - totalMin;
+    const corners = [[-half, -half], [half, -half], [half, half], [-half, half]].map(([dc, dr]) => {
+      const p = bathyMeshProjectXY(cell.col + dc, cell.row + dr, val, thetaRad, tiltRad, heightScale, cs);
+      return { x: p.x * fitScale + offX, y: p.y * fitScale + offY };
+    });
     const frac = Math.max(0, Math.min(1, (r.mud - mMin) / mRange));
     ctx.fillStyle = rgbCss(rgbShade(bathyColorRGB('mud', frac), 0.85));
-    ctx.globalAlpha = 0.85;
+    ctx.globalAlpha = 0.78; // même transparence que la couche de vase du maillage (MUD_TOP_ALPHA)
     ctx.beginPath();
-    ctx.arc(x, y, Math.max(1.5, half), 0, Math.PI * 2);
+    corners.forEach((p, j) => (j === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
     ctx.fill();
   }
   ctx.restore();
