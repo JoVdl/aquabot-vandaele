@@ -3342,39 +3342,49 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs, sharedR
 
   // Ajustement à l'échelle : les trois maillages (socle + vase + eau) et, si le fond satellite
   // est actif, l'emprise réelle de l'étang — voir renderBathy3DMesh pour le raisonnement complet.
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const tris of [floorTris, mudTopTris, waterTris]) {
-    for (const t of tris) {
-      for (const p of [t.a, t.b, t.c]) {
+  // fitScale/offX/offY sont repris de sharedRange s'il est fourni, EXACTEMENT comme les échelles
+  // de couleur/hauteur plus haut : sans ça, un second passage limité à une petite zone (span
+  // beaucoup plus réduit) se voit attribuer un cadrage/zoom totalement différent du premier —
+  // la zone de chantier flotte alors visuellement à une position et une échelle qui n'ont rien à
+  // voir avec l'étang entier en dessous, au lieu de s'y encastrer exactement.
+  let fitScale, offX, offY;
+  if (sharedRange && sharedRange.fitScale != null) {
+    fitScale = sharedRange.fitScale; offX = sharedRange.offX; offY = sharedRange.offY;
+  } else {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const tris of [floorTris, mudTopTris, waterTris]) {
+      for (const t of tris) {
+        for (const p of [t.a, t.b, t.c]) {
+          if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+        }
+      }
+    }
+    if (state.bathy.show3DMap && isValidOrigin(pond.origin)) {
+      const pbbox = getPondBbox(pond);
+      const corners = [
+        [pbbox.minX, pbbox.minY], [pbbox.maxX, pbbox.minY],
+        [pbbox.minX, pbbox.maxY], [pbbox.maxX, pbbox.maxY],
+      ];
+      for (const [wx, wy] of corners) {
+        const colEquiv = (wx - pbbox.minX) / cs - 0.5;
+        const rowEquiv = (wy - pbbox.minY) / cs - 0.5;
+        const p = projectVal(colEquiv, rowEquiv, totalMin); // même référence que le plafond d'eau
         if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
         if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
       }
     }
+    const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+    fitScale = Math.min((W * 0.88) / spanX, (H * 0.82) / spanY);
+    offX = W / 2 - ((minX + maxX) / 2) * fitScale;
+    offY = H / 2 - ((minY + maxY) / 2) * fitScale;
   }
-  if (state.bathy.show3DMap && isValidOrigin(pond.origin)) {
-    const pbbox = getPondBbox(pond);
-    const corners = [
-      [pbbox.minX, pbbox.minY], [pbbox.maxX, pbbox.minY],
-      [pbbox.minX, pbbox.maxY], [pbbox.maxX, pbbox.maxY],
-    ];
-    for (const [wx, wy] of corners) {
-      const colEquiv = (wx - pbbox.minX) / cs - 0.5;
-      const rowEquiv = (wy - pbbox.minY) / cs - 0.5;
-      const p = projectVal(colEquiv, rowEquiv, totalMin); // même référence que le plafond d'eau
-      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
-    }
-  }
-  const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
-  const fitScale = Math.min((W * 0.88) / spanX, (H * 0.82) / spanY);
-  const offX = W / 2 - ((minX + maxX) / 2) * fitScale;
-  const offY = H / 2 - ((minY + maxY) / 2) * fitScale;
 
   // totalMin mis en cache pour le hit-test au clic (_bathyHitTest3DMesh) — le rendu du socle
   // utilise (val - totalMin), pas val brut ; sans ce décalage aussi côté hit-test, le clic
   // visait une position complètement différente de ce qui est réellement affiché ici. Les autres
-  // échelles (wMin/wRange/mMin/mRange/totalRange) sont exposées ici aussi pour qu'un second appel
-  // (voir paramètre sharedRange plus haut) puisse les réutiliser telles quelles.
+  // échelles (wMin/wRange/mMin/mRange/totalRange/fitScale/offX/offY) sont exposées ici aussi pour
+  // qu'un second appel (voir paramètre sharedRange plus haut) puisse les réutiliser telles quelles.
   state.bathy._meshLayout = { heightScale, fitScale, offX, offY, totalMin, wMin, wRange, mMin, mRange, totalRange };
 
   // Le plancher satellite se cale lui aussi sur le plafond d'eau (val=0 demandé par
@@ -3698,6 +3708,7 @@ function renderDash3DBackdropCached(W, H, raw, thetaRad, tiltRad, cs) {
   const range = L ? {
     wMin: L.wMin, wRange: L.wRange, mMin: L.mMin, mRange: L.mRange,
     totalMin: L.totalMin, totalRange: L.totalRange, heightScale: L.heightScale,
+    fitScale: L.fitScale, offX: L.offX, offY: L.offY,
   } : null;
   const next = { key, at: now, canvas: bgCanvas, floorTilesDrawn: state.bathy._floorTilesDrawn, range };
   state.dash3D._bg = next;
