@@ -3221,14 +3221,26 @@ function bathyMudTopVal(water, mud, totalMin) {
 // travers l'eau turquoise. Même principe physique que renderBathy3DStacked pour les Colonnes
 // (la surface de l'eau est globalement de niveau, seul le fond dur varie d'une case à l'autre),
 // porté au style Surface lisse.
-function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
+// sharedRange (optionnel) : {wMin,wRange,mMin,mRange,totalMin,totalRange,heightScale} déjà
+// calculé par un appel précédent, à réutiliser tel quel plutôt que de recalculer ces échelles à
+// partir de "raw" — indispensable quand on dessine un second maillage plus fin PAR-DESSUS un
+// premier (voir renderDash3D, tableau de bord : étang entier en grossier, puis chantier en cours
+// en fin par-dessus) : sans ça, chaque passage normalise ses couleurs/hauteurs sur son PROPRE
+// minimum/maximum local — une même profondeur de vase ressort alors dans deux teintes/hauteurs
+// différentes selon le passage, et le second maillage se voit comme une pièce rapportée
+// incohérente plutôt que de s'intégrer au premier (signalé par l'utilisateur : "surcouche" qui ne
+// s'intègre pas comme dans l'onglet Bathymétrie, où un seul passage garde une seule échelle).
+function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs, sharedRange) {
   const pond = state.pond;
   const waterVals = [], mudVals = [], totalVals = [];
   raw.forEach(r => { if (r) { waterVals.push(r.water); mudVals.push(r.mud); totalVals.push(r.water + r.mud); } });
   if (!totalVals.length) return;
-  const wMin = Math.min(...waterVals), wRange = (Math.max(...waterVals) - wMin) || 1;
-  const mMin = Math.min(...mudVals),   mRange = (Math.max(...mudVals)   - mMin) || 1;
-  const totalMin = Math.min(...totalVals), totalRange = (Math.max(...totalVals) - totalMin) || 1;
+  const wMin = sharedRange ? sharedRange.wMin : Math.min(...waterVals);
+  const wRange = sharedRange ? sharedRange.wRange : (Math.max(...waterVals) - wMin) || 1;
+  const mMin = sharedRange ? sharedRange.mMin : Math.min(...mudVals);
+  const mRange = sharedRange ? sharedRange.mRange : (Math.max(...mudVals) - mMin) || 1;
+  const totalMin = sharedRange ? sharedRange.totalMin : Math.min(...totalVals);
+  const totalRange = sharedRange ? sharedRange.totalRange : (Math.max(...totalVals) - totalMin) || 1;
 
   // Emprise des seules cases relevées (pas tout l'étang) — voir renderBathy3DMesh pour le
   // raisonnement complet ; même souci ici pour l'exagération verticale et la décimation.
@@ -3244,8 +3256,10 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
   });
   if (!isFinite(minCol)) return;
 
+  // heightScale aussi repris de sharedRange s'il est fourni : sinon, un second passage limité à
+  // une petite zone (span horizontal plus réduit) exagérerait le relief différemment du premier.
   const horizontalSpan = Math.max((maxCol - minCol) * cs, (maxRow - minRow) * cs) || 1;
-  const heightScale = totalRange > 0 ? (horizontalSpan * 0.22) / totalRange : 1;
+  const heightScale = sharedRange ? sharedRange.heightScale : (totalRange > 0 ? (horizontalSpan * 0.22) / totalRange : 1);
 
   const spanCols = maxCol - minCol + 1, spanRows = maxRow - minRow + 1;
   const stride = Math.max(1, Math.ceil(Math.sqrt((spanCols * spanRows) / 3000)));
@@ -3358,8 +3372,10 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
 
   // totalMin mis en cache pour le hit-test au clic (_bathyHitTest3DMesh) — le rendu du socle
   // utilise (val - totalMin), pas val brut ; sans ce décalage aussi côté hit-test, le clic
-  // visait une position complètement différente de ce qui est réellement affiché ici.
-  state.bathy._meshLayout = { heightScale, fitScale, offX, offY, totalMin };
+  // visait une position complètement différente de ce qui est réellement affiché ici. Les autres
+  // échelles (wMin/wRange/mMin/mRange/totalRange) sont exposées ici aussi pour qu'un second appel
+  // (voir paramètre sharedRange plus haut) puisse les réutiliser telles quelles.
+  state.bathy._meshLayout = { heightScale, fitScale, offX, offY, totalMin, wMin, wRange, mMin, mRange, totalRange };
 
   // Le plancher satellite se cale lui aussi sur le plafond d'eau (val=0 demandé par
   // renderBathyMeshSatelliteFloor → correspond ici à totalMin, pas à zéro absolu).
@@ -3678,7 +3694,12 @@ function renderDash3DBackdropCached(W, H, raw, thetaRad, tiltRad, cs) {
   bctx.clearRect(0, 0, W, H);
   state.bathy._floorTilesDrawn = 0;
   renderBathy3DMeshStacked(bctx, W, H, raw, thetaRad, tiltRad, cs);
-  const next = { key, at: now, canvas: bgCanvas, floorTilesDrawn: state.bathy._floorTilesDrawn };
+  const L = state.bathy._meshLayout;
+  const range = L ? {
+    wMin: L.wMin, wRange: L.wRange, mMin: L.mMin, mRange: L.mRange,
+    totalMin: L.totalMin, totalRange: L.totalRange, heightScale: L.heightScale,
+  } : null;
+  const next = { key, at: now, canvas: bgCanvas, floorTilesDrawn: state.bathy._floorTilesDrawn, range };
   state.dash3D._bg = next;
   return next;
 }
@@ -3740,7 +3761,7 @@ function renderDash3D() {
     // d'échelle des deux passages), avec beaucoup plus de détail là où le robot travaille
     // réellement ; ne coûte que quelques ms puisque limité à l'emprise du chantier.
     const jobRaw = computeDashJobScopedRawReadings(raw);
-    if (jobRaw) renderBathy3DMeshStacked(ctx, W, H, jobRaw, thetaRad, tiltRad, cs);
+    if (jobRaw) renderBathy3DMeshStacked(ctx, W, H, jobRaw, thetaRad, tiltRad, cs, bg.range);
     // Le fond mis en cache peut avoir dessiné des tuiles satellite sans que ce tick-ci ne les
     // redessine (cache HIT) — le voile d'assombrissement plus bas doit quand même s'appliquer.
     state.bathy._floorTilesDrawn = state.bathy._floorTilesDrawn || bg.floorTilesDrawn;
