@@ -5279,8 +5279,16 @@ function updateGpsDisplay() {
 // ============================================================
 async function startSimulation() {
   if (!state.pond) { showToast('Sélectionnez un étang d\'abord', 'error'); return; }
+  // Ne recalcule le chemin QUE pour un vrai nouveau départ (état "stopped" — que ce soit après un
+  // Arrêt explicite ou une fin de chantier naturelle), jamais pour une reprise après pause (état
+  // "paused", voir pauseSimulation qui rappelle startSimulation pour "Reprendre"). Se baser sur
+  // "plannedPath vide" plutôt que sur cet état laissait passer un cas : finishSimulation() (fin
+  // naturelle d'un chantier) ne vide jamais plannedPath contrairement à un Arrêt explicite — donc
+  // après un chantier terminé, sélectionner une NOUVELLE zone puis "Démarrer" réutilisait l'ANCIEN
+  // chemin (toujours non vide) au lieu de recalculer depuis la nouvelle sélection.
+  const isResume = state.robot.state === 'paused';
   if (state.robotMode === 'real') {
-    if (!state.plannedPath.length) {
+    if (!isResume) {
       const path = planPath(state.cells);
       if (!path.length) { showToast('Sélectionnez des cases non terminées', 'error'); return; }
       state.plannedPath = path;
@@ -5289,7 +5297,7 @@ async function startSimulation() {
     sendRobotCommand('start');
     return;
   }
-  if (state.plannedPath.length === 0) {
+  if (!isResume) {
     const path = planPath(state.cells);
     if (!path.length) { showToast('Sélectionnez des cases non terminées', 'error'); return; }
     state.plannedPath = path;
