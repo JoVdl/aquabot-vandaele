@@ -3221,26 +3221,17 @@ function bathyMudTopVal(water, mud, totalMin) {
 // travers l'eau turquoise. Même principe physique que renderBathy3DStacked pour les Colonnes
 // (la surface de l'eau est globalement de niveau, seul le fond dur varie d'une case à l'autre),
 // porté au style Surface lisse.
-// sharedRange (optionnel) : {wMin,wRange,mMin,mRange,totalMin,totalRange,heightScale} déjà
-// calculé par un appel précédent, à réutiliser tel quel plutôt que de recalculer ces échelles à
-// partir de "raw" — indispensable quand on dessine un second maillage plus fin PAR-DESSUS un
-// premier (voir renderDash3D, tableau de bord : étang entier en grossier, puis chantier en cours
-// en fin par-dessus) : sans ça, chaque passage normalise ses couleurs/hauteurs sur son PROPRE
-// minimum/maximum local — une même profondeur de vase ressort alors dans deux teintes/hauteurs
-// différentes selon le passage, et le second maillage se voit comme une pièce rapportée
-// incohérente plutôt que de s'intégrer au premier (signalé par l'utilisateur : "surcouche" qui ne
-// s'intègre pas comme dans l'onglet Bathymétrie, où un seul passage garde une seule échelle).
-function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs, sharedRange) {
+function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs) {
   const pond = state.pond;
   const waterVals = [], mudVals = [], totalVals = [];
   raw.forEach(r => { if (r) { waterVals.push(r.water); mudVals.push(r.mud); totalVals.push(r.water + r.mud); } });
   if (!totalVals.length) return;
-  const wMin = sharedRange ? sharedRange.wMin : Math.min(...waterVals);
-  const wRange = sharedRange ? sharedRange.wRange : (Math.max(...waterVals) - wMin) || 1;
-  const mMin = sharedRange ? sharedRange.mMin : Math.min(...mudVals);
-  const mRange = sharedRange ? sharedRange.mRange : (Math.max(...mudVals) - mMin) || 1;
-  const totalMin = sharedRange ? sharedRange.totalMin : Math.min(...totalVals);
-  const totalRange = sharedRange ? sharedRange.totalRange : (Math.max(...totalVals) - totalMin) || 1;
+  const wMin = Math.min(...waterVals);
+  const wRange = (Math.max(...waterVals) - wMin) || 1;
+  const mMin = Math.min(...mudVals);
+  const mRange = (Math.max(...mudVals) - mMin) || 1;
+  const totalMin = Math.min(...totalVals);
+  const totalRange = (Math.max(...totalVals) - totalMin) || 1;
 
   // Emprise des seules cases relevées (pas tout l'étang) — voir renderBathy3DMesh pour le
   // raisonnement complet ; même souci ici pour l'exagération verticale et la décimation.
@@ -3256,10 +3247,8 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs, sharedR
   });
   if (!isFinite(minCol)) return;
 
-  // heightScale aussi repris de sharedRange s'il est fourni : sinon, un second passage limité à
-  // une petite zone (span horizontal plus réduit) exagérerait le relief différemment du premier.
   const horizontalSpan = Math.max((maxCol - minCol) * cs, (maxRow - minRow) * cs) || 1;
-  const heightScale = sharedRange ? sharedRange.heightScale : (totalRange > 0 ? (horizontalSpan * 0.22) / totalRange : 1);
+  const heightScale = totalRange > 0 ? (horizontalSpan * 0.22) / totalRange : 1;
 
   const spanCols = maxCol - minCol + 1, spanRows = maxRow - minRow + 1;
   const stride = Math.max(1, Math.ceil(Math.sqrt((spanCols * spanRows) / 3000)));
@@ -3342,49 +3331,37 @@ function renderBathy3DMeshStacked(ctx, W, H, raw, thetaRad, tiltRad, cs, sharedR
 
   // Ajustement à l'échelle : les trois maillages (socle + vase + eau) et, si le fond satellite
   // est actif, l'emprise réelle de l'étang — voir renderBathy3DMesh pour le raisonnement complet.
-  // fitScale/offX/offY sont repris de sharedRange s'il est fourni, EXACTEMENT comme les échelles
-  // de couleur/hauteur plus haut : sans ça, un second passage limité à une petite zone (span
-  // beaucoup plus réduit) se voit attribuer un cadrage/zoom totalement différent du premier —
-  // la zone de chantier flotte alors visuellement à une position et une échelle qui n'ont rien à
-  // voir avec l'étang entier en dessous, au lieu de s'y encastrer exactement.
-  let fitScale, offX, offY;
-  if (sharedRange && sharedRange.fitScale != null) {
-    fitScale = sharedRange.fitScale; offX = sharedRange.offX; offY = sharedRange.offY;
-  } else {
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const tris of [floorTris, mudTopTris, waterTris]) {
-      for (const t of tris) {
-        for (const p of [t.a, t.b, t.c]) {
-          if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-          if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
-        }
-      }
-    }
-    if (state.bathy.show3DMap && isValidOrigin(pond.origin)) {
-      const pbbox = getPondBbox(pond);
-      const corners = [
-        [pbbox.minX, pbbox.minY], [pbbox.maxX, pbbox.minY],
-        [pbbox.minX, pbbox.maxY], [pbbox.maxX, pbbox.maxY],
-      ];
-      for (const [wx, wy] of corners) {
-        const colEquiv = (wx - pbbox.minX) / cs - 0.5;
-        const rowEquiv = (wy - pbbox.minY) / cs - 0.5;
-        const p = projectVal(colEquiv, rowEquiv, totalMin); // même référence que le plafond d'eau
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const tris of [floorTris, mudTopTris, waterTris]) {
+    for (const t of tris) {
+      for (const p of [t.a, t.b, t.c]) {
         if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
         if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
       }
     }
-    const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
-    fitScale = Math.min((W * 0.88) / spanX, (H * 0.82) / spanY);
-    offX = W / 2 - ((minX + maxX) / 2) * fitScale;
-    offY = H / 2 - ((minY + maxY) / 2) * fitScale;
   }
+  if (state.bathy.show3DMap && isValidOrigin(pond.origin)) {
+    const pbbox = getPondBbox(pond);
+    const corners = [
+      [pbbox.minX, pbbox.minY], [pbbox.maxX, pbbox.minY],
+      [pbbox.minX, pbbox.maxY], [pbbox.maxX, pbbox.maxY],
+    ];
+    for (const [wx, wy] of corners) {
+      const colEquiv = (wx - pbbox.minX) / cs - 0.5;
+      const rowEquiv = (wy - pbbox.minY) / cs - 0.5;
+      const p = projectVal(colEquiv, rowEquiv, totalMin); // même référence que le plafond d'eau
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+  const fitScale = Math.min((W * 0.88) / spanX, (H * 0.82) / spanY);
+  const offX = W / 2 - ((minX + maxX) / 2) * fitScale;
+  const offY = H / 2 - ((minY + maxY) / 2) * fitScale;
 
   // totalMin mis en cache pour le hit-test au clic (_bathyHitTest3DMesh) — le rendu du socle
   // utilise (val - totalMin), pas val brut ; sans ce décalage aussi côté hit-test, le clic
-  // visait une position complètement différente de ce qui est réellement affiché ici. Les autres
-  // échelles (wMin/wRange/mMin/mRange/totalRange/fitScale/offX/offY) sont exposées ici aussi pour
-  // qu'un second appel (voir paramètre sharedRange plus haut) puisse les réutiliser telles quelles.
+  // visait une position complètement différente de ce qui est réellement affiché ici.
   state.bathy._meshLayout = { heightScale, fitScale, offX, offY, totalMin, wMin, wRange, mMin, mRange, totalRange };
 
   // Le plancher satellite se cale lui aussi sur le plafond d'eau (val=0 demandé par
@@ -3654,44 +3631,19 @@ function computeDashLiveRawReadings() {
   return latest.readings;
 }
 
-// Version de "raw" restreinte à l'emprise du chantier en cours (+ marge), pour un second passage
-// de rendu à résolution fine PAR-DESSUS le maillage grossier de l'étang entier (voir renderDash3D)
-// — renderBathy3DMeshStacked calcule son pas d'échantillonnage ("stride") à partir de l'emprise
-// des cases REÇUES, pas de l'étang entier (voir son propre calcul de spanCols/spanRows) : sur un
-// grand étang réel (des dizaines de milliers de cases), le maillage de l'étang entier reste bien
-// trop grossier pour qu'une case tout juste nettoyée y change quoi que ce soit. En ne passant que
-// l'emprise du chantier à un second appel de la même fonction, ce second maillage retrouve une
-// résolution bien plus fine (souvent une case par point échantillonné) et se dessine par-dessus,
-// donnant à la fois l'étang complet en contexte ET le détail fin là où le robot travaille. Renvoie
-// null si aucun chantier actif (le maillage grossier de l'étang entier suffit alors).
-function computeDashJobScopedRawReadings(raw) {
-  const path = state.plannedPath;
-  const jobActive = path && path.length > 0 && path.some(idx => !state.cells[idx]?.completed);
-  if (!jobActive) return null;
-
-  let minCol = Infinity, maxCol = -Infinity, minRow = Infinity, maxRow = -Infinity;
-  for (const idx of path) {
-    const c = state.cells[idx];
-    if (!c) continue;
-    if (c.col < minCol) minCol = c.col; if (c.col > maxCol) maxCol = c.col;
-    if (c.row < minRow) minRow = c.row; if (c.row > maxRow) maxRow = c.row;
-  }
-  if (!isFinite(minCol)) return null;
-  const pad = 5;
-  minCol -= pad; maxCol += pad; minRow -= pad; maxRow += pad;
-  return state.cells.map((c, i) => (c.col >= minCol && c.col <= maxCol && c.row >= minRow && c.row <= maxRow) ? raw[i] : null);
-}
-
-// Fond "étang entier" (premier passage de renderDash3D, coûteux — ~80ms mesurés sur un étang réel
-// de ~18 000 cases : même décimé, il doit encore parcourir CHAQUE case pour connaître l'emprise et
-// les valeurs) mis en cache sur un canevas hors-écran, en espace LOCAL (zoom3D=1, pan3D={0,0}) —
-// le zoom/pan utilisateur s'applique à la COMPOSITION (ctx.drawImage, à l'intérieur de la même
-// transform que le reste), pas au calcul, donc zoomer/déplacer la vue ne force jamais un recalcul.
-// Recalculé seulement quand la caméra (rotation/inclinaison), la taille du canevas, la palette ou
-// l'étang changent, ou au bout de 3s en filet de sécurité (pour refléter un changement hors de la
-// zone de chantier — un autre appareil qui travaille ailleurs, par exemple). Le second passage (le
-// chantier en cours, à résolution fine — voir renderDash3D) continue lui de se redessiner à chaque
-// tick, sans cache : limité à l'emprise du chantier, il ne coûte que quelques ms.
+// Rendu de l'étang ENTIER (une seule résolution, un seul passage — comme l'onglet Bathymétrie)
+// mis en cache sur un canevas hors-écran, en espace LOCAL (zoom3D=1, pan3D={0,0}) — le zoom/pan
+// utilisateur s'applique à la COMPOSITION (ctx.drawImage, à l'intérieur de la même transform que
+// le reste), pas au calcul, donc zoomer/déplacer la vue ne force jamais un recalcul. Recalculé
+// seulement quand la caméra (rotation/inclinaison), la taille du canevas, la palette ou l'étang
+// changent, ou au bout de 3s en filet de sécurité — pour rester "vivant" pendant un chantier sans
+// reproduire le défaut d'un second passage superposé à une résolution différente : un maillage
+// fin par-dessus un maillage grossier crée toujours une "couture" visible à la frontière (cases
+// bien plus petites/texturées d'un côté, larges facettes lisses de l'autre), même une fois la
+// couleur/hauteur/cadrage unifiés entre les deux — signalé explicitement par l'utilisateur
+// ("surcouche" visible pendant le travail, disparaissant seulement une fois la zone terminée,
+// c'est-à-dire dès que ce second passage ne se déclenchait plus). Un seul passage, une seule
+// résolution, rafraîchi périodiquement : exactement le rendu de l'onglet Bathymétrie.
 function renderDash3DBackdropCached(W, H, raw, thetaRad, tiltRad, cs) {
   const key = [state.pond?.id, W, H, thetaRad.toFixed(3), tiltRad.toFixed(3), state.bathy.palette, state.bathy.show3DMap].join('|');
   const now = performance.now();
@@ -3704,13 +3656,7 @@ function renderDash3DBackdropCached(W, H, raw, thetaRad, tiltRad, cs) {
   bctx.clearRect(0, 0, W, H);
   state.bathy._floorTilesDrawn = 0;
   renderBathy3DMeshStacked(bctx, W, H, raw, thetaRad, tiltRad, cs);
-  const L = state.bathy._meshLayout;
-  const range = L ? {
-    wMin: L.wMin, wRange: L.wRange, mMin: L.mMin, mRange: L.mRange,
-    totalMin: L.totalMin, totalRange: L.totalRange, heightScale: L.heightScale,
-    fitScale: L.fitScale, offX: L.offX, offY: L.offY,
-  } : null;
-  const next = { key, at: now, canvas: bgCanvas, floorTilesDrawn: state.bathy._floorTilesDrawn, range };
+  const next = { key, at: now, canvas: bgCanvas, floorTilesDrawn: state.bathy._floorTilesDrawn };
   state.dash3D._bg = next;
   return next;
 }
@@ -3757,24 +3703,17 @@ function renderDash3D() {
   if (!raw || !raw.some(Boolean)) {
     renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox);
   } else {
-    // Premier passage : l'étang ENTIER, à la résolution grossière habituelle — donne le contexte
-    // complet (voir demande explicite : modéliser l'étang complet quand les données existent),
-    // pas seulement la zone en cours de travail. Mis en cache (voir renderDash3DBackdropCached) :
-    // sur un grand étang réel, ce passage à lui seul coûte ~80ms (même décimé, il doit encore
-    // parcourir chaque case pour connaître l'emprise et les valeurs), bien trop pour le refaire à
-    // chaque tick throttlé (~200ms) sans remettre en cause tout le travail de cette session contre
-    // le ralentissement du navigateur.
+    // Étang entier, un seul passage à une seule résolution — mis en cache (voir
+    // renderDash3DBackdropCached) car ce passage coûte ~150-400ms sur un grand étang réel (même
+    // décimé, il doit parcourir chaque case pour connaître l'emprise et les valeurs), bien trop
+    // pour le refaire à chaque tick throttlé (~200ms). Se rafraîchit tout seul au bout de 3s pour
+    // rester "vivant" pendant un chantier, sans le défaut d'un second maillage plus fin superposé
+    // (testé en v77 : même une fois couleur/hauteur/cadrage unifiés entre les deux passages, la
+    // différence de résolution des mailles créait encore une "couture" visible à la frontière —
+    // signalé par l'utilisateur, qui disparaissait dès que ce second passage ne se déclenchait
+    // plus, une fois la zone terminée). Un seul passage, comme l'onglet Bathymétrie.
     const bg = renderDash3DBackdropCached(W, H, raw, thetaRad, tiltRad, cs);
     ctx.drawImage(bg.canvas, 0, 0);
-    // Second passage, PAR-DESSUS, TOUJOURS FRAIS (pas de cache) : le chantier en cours seul, à
-    // résolution fine (voir computeDashJobScopedRawReadings) — se dessine dans la même zone
-    // physique que le fond (même repère, même emprise réelle de l'étang incluse dans le calcul
-    // d'échelle des deux passages), avec beaucoup plus de détail là où le robot travaille
-    // réellement ; ne coûte que quelques ms puisque limité à l'emprise du chantier.
-    const jobRaw = computeDashJobScopedRawReadings(raw);
-    if (jobRaw) renderBathy3DMeshStacked(ctx, W, H, jobRaw, thetaRad, tiltRad, cs, bg.range);
-    // Le fond mis en cache peut avoir dessiné des tuiles satellite sans que ce tick-ci ne les
-    // redessine (cache HIT) — le voile d'assombrissement plus bas doit quand même s'appliquer.
     state.bathy._floorTilesDrawn = state.bathy._floorTilesDrawn || bg.floorTilesDrawn;
     const layout = state.bathy._meshLayout;
     if (layout) {
