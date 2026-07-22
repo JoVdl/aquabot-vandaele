@@ -1927,6 +1927,9 @@ function _recordLiveBathyReading(cellIdx, result) {
   const survey = state.pond.bathySurveys?.find(s => s.id === state.bathy._liveSurveyId);
   if (!survey) { state.bathy._liveSurveyId = null; return; }
   survey.readings[cellIdx] = result;
+  // Invalide le cache du fond 3D tableau de bord (voir renderDash3DBackdropCached) dès qu'une case
+  // vient d'être relevée, pour que la progression reste visible sans attendre le filet de sécurité.
+  state.bathy._liveRevision = (state.bathy._liveRevision || 0) + 1;
   if (state.activeTab === 'bathymetry') { renderBathyCanvas(); updateBathyLegend(); }
 }
 function bathyTypeLabel(type) {
@@ -3635,20 +3638,27 @@ function computeDashLiveRawReadings() {
 // mis en cache sur un canevas hors-écran, en espace LOCAL (zoom3D=1, pan3D={0,0}) — le zoom/pan
 // utilisateur s'applique à la COMPOSITION (ctx.drawImage, à l'intérieur de la même transform que
 // le reste), pas au calcul, donc zoomer/déplacer la vue ne force jamais un recalcul. Recalculé
-// seulement quand la caméra (rotation/inclinaison), la taille du canevas, la palette ou l'étang
-// changent, ou au bout de 3s en filet de sécurité — pour rester "vivant" pendant un chantier sans
-// reproduire le défaut d'un second passage superposé à une résolution différente : un maillage
-// fin par-dessus un maillage grossier crée toujours une "couture" visible à la frontière (cases
-// bien plus petites/texturées d'un côté, larges facettes lisses de l'autre), même une fois la
-// couleur/hauteur/cadrage unifiés entre les deux — signalé explicitement par l'utilisateur
-// ("surcouche" visible pendant le travail, disparaissant seulement une fois la zone terminée,
-// c'est-à-dire dès que ce second passage ne se déclenchait plus). Un seul passage, une seule
-// résolution, rafraîchi périodiquement : exactement le rendu de l'onglet Bathymétrie.
+// quand la caméra (rotation/inclinaison), la taille du canevas, la palette ou l'étang changent,
+// OU dès qu'une case vient d'être relevée pendant le travail (state.bathy._liveRevision, incrémenté
+// par _recordLiveBathyReading) — mais pas plus souvent que MIN_REFRESH_MS même si des cases se
+// terminent en continu (chantier rapide sur un grand étang) : un maillage fin superposé au maillage
+// grossier a déjà été essayé (v77) pour donner un retour instantané case par case, mais crée une
+// "couture" visible à la frontière (facettes fines et texturées d'un côté, larges facettes lisses
+// de l'autre) même une fois couleur/hauteur/cadrage unifiés — signalé explicitement par l'utilisateur.
+// Un seul passage, une seule résolution (comme l'onglet Bathymétrie), rafraîchi fréquemment plutôt
+// que superposé : la couture disparaît, la mise à jour reste visible en quelques centaines de ms.
+const DASH3D_BG_MIN_REFRESH_MS = 500;
+const DASH3D_BG_MAX_STALE_MS = 3000;
 function renderDash3DBackdropCached(W, H, raw, thetaRad, tiltRad, cs) {
   const key = [state.pond?.id, W, H, thetaRad.toFixed(3), tiltRad.toFixed(3), state.bathy.palette, state.bathy.show3DMap].join('|');
   const now = performance.now();
   const cache = state.dash3D._bg;
-  if (cache && cache.key === key && (now - cache.at) < 3000) return cache;
+  const rev = state.bathy._liveRevision || 0;
+  if (cache && cache.key === key) {
+    const age = now - cache.at;
+    const dataUnchanged = cache.rev === rev;
+    if (age < DASH3D_BG_MAX_STALE_MS && (dataUnchanged || age < DASH3D_BG_MIN_REFRESH_MS)) return cache;
+  }
   if (!state.dash3D._bgCanvas) state.dash3D._bgCanvas = document.createElement('canvas');
   const bgCanvas = state.dash3D._bgCanvas;
   bgCanvas.width = W; bgCanvas.height = H;
@@ -3656,7 +3666,7 @@ function renderDash3DBackdropCached(W, H, raw, thetaRad, tiltRad, cs) {
   bctx.clearRect(0, 0, W, H);
   state.bathy._floorTilesDrawn = 0;
   renderBathy3DMeshStacked(bctx, W, H, raw, thetaRad, tiltRad, cs);
-  const next = { key, at: now, canvas: bgCanvas, floorTilesDrawn: state.bathy._floorTilesDrawn };
+  const next = { key, at: now, rev, canvas: bgCanvas, floorTilesDrawn: state.bathy._floorTilesDrawn };
   state.dash3D._bg = next;
   return next;
 }
