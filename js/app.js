@@ -3636,11 +3636,39 @@ function setDash3DTilt(deg) {
 // UNIQUE, toujours complète (jamais de case à null), dont la date se rafraîchit à chaque chantier
 // : elle ressort donc naturellement comme "la plus récente" pendant et après un chantier suivi,
 // sans logique de fusion séparée à maintenir ici.
+//
+// Pendant un chantier actif, restreint l'emprise renvoyée à celle du chantier (+ marge), au lieu
+// de l'étang entier : renderBathy3DMeshStacked calcule son pas d'échantillonnage ("stride") à
+// partir de l'emprise des cases REÇUES ICI (voir son propre calcul de spanCols/spanRows), pas de
+// l'étang entier — sur un grand étang réel (des dizaines de milliers de cases), l'emprise complète
+// forçait un maillage très grossier, où une case tout juste nettoyée ne tombait presque jamais sur
+// un point échantillonné : son changement de profondeur/couleur restait invisible tant qu'on
+// n'avait pas terminé une bonne partie du chantier. En restreignant à l'emprise du chantier en
+// cours (généralement bien plus petite que l'étang entier), le même maillage retrouve une
+// résolution bien plus fine — souvent une case par point échantillonné — donc chaque case se met
+// à jour visuellement au fil du travail, pas seulement une fois qu'assez de cases voisines s'y
+// sont ajoutées. Une fois le chantier terminé (ou hors travail), on revient à l'étang entier.
 function computeDashLiveRawReadings() {
   const pond = state.pond;
   if (!pond?.bathySurveys?.length) return null;
   const latest = pond.bathySurveys.reduce((a, b) => (b.date > a.date ? b : a));
-  return latest.readings;
+  const raw = latest.readings;
+
+  const path = state.plannedPath;
+  const jobActive = path && path.length > 0 && path.some(idx => !state.cells[idx]?.completed);
+  if (!jobActive) return raw;
+
+  let minCol = Infinity, maxCol = -Infinity, minRow = Infinity, maxRow = -Infinity;
+  for (const idx of path) {
+    const c = state.cells[idx];
+    if (!c) continue;
+    if (c.col < minCol) minCol = c.col; if (c.col > maxCol) maxCol = c.col;
+    if (c.row < minRow) minRow = c.row; if (c.row > maxRow) maxRow = c.row;
+  }
+  if (!isFinite(minCol)) return raw;
+  const pad = 5;
+  minCol -= pad; maxCol += pad; minRow -= pad; maxRow += pad;
+  return state.cells.map((c, i) => (c.col >= minCol && c.col <= maxCol && c.row >= minRow && c.row <= maxRow) ? raw[i] : null);
 }
 
 // Vue 3D du tableau de bord — réutilise directement renderBathy3DMeshStacked (socle + vase +
