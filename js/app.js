@@ -315,6 +315,17 @@ function subscribeSimState(pondId) {
         // pilote légitime. Sans ça, revenir au premier plan sur mobile pouvait ressusciter une
         // seconde simulation en parallèle de celle qui avait pris le relai entre-temps.
         if (sim.driverId && sim.driverId !== _deviceSessionId) {
+          // Arrêt local totalement silencieux jusqu'ici (aucun toast, aucune trace console) —
+          // un chantier qui semble "s'arrêter tout seul après quelques cases, sans erreur" est
+          // impossible à diagnostiquer sans ce repère : au moins un journal explicite indique
+          // que CET onglet a cédé la main à un driverId différent (autre appareil/onglet, ou
+          // cet onglet lui-même après une reprise en arrière-plan ayant changé d'ID de session).
+          console.warn(
+            `[AquaBot] Simulation arrêtée localement : un autre pilote (${sim.driverId}) a pris ` +
+            `la main sur cet étang (cet onglet : ${_deviceSessionId}). Si ce n'est pas attendu ` +
+            `(un seul onglet/appareil normalement actif), vérifiez qu'aucun autre onglet de ` +
+            `l'application n'est resté ouvert sur ce même étang.`
+          );
           state.sim.running = false;
           clearInterval(state.sim.intervalId);
           state.sim.intervalId = null;
@@ -5617,6 +5628,11 @@ function simulationTick() {
 }
 
 function finishSimulation() {
+  // Diagnostic explicite : "le robot s'arrête après quelques cases sans erreur" est sinon
+  // impossible à distinguer entre "le parcours planifié était réellement court" (repli légitime)
+  // et une fin prématurée causée ailleurs — ce journal donne directement la taille du parcours et
+  // le nombre de cases traitées à l'instant de l'arrêt.
+  console.info(`[AquaBot] Chantier terminé — parcours de ${state.plannedPath.length} case(s), ${state.robot.currentCellIdx} traitée(s).`);
   state.sim.running = false;
   clearInterval(state.sim.intervalId);
   state.sim.intervalId = null;
