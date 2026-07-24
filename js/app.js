@@ -1666,9 +1666,20 @@ function resetWork(pondId) {
   pond.lastResetAt = Date.now();
   pond.lastUsed    = Date.now();
 
+  // Le relevé "en direct" (type 'live') suit la progression du curage case par case — un RAZ du
+  // curage doit donc aussi le faire repartir de zéro, sinon il continue d'afficher (et de
+  // réutiliser, voir startLiveBathySurveyIfEnabled) l'état d'AVANT le RAZ au prochain chantier. Les
+  // relevés manuels ('before'/'after'/'control', déclenchés exprès par l'utilisateur — ex. "Avant
+  // travaux") ne sont volontairement PAS concernés : c'est justement ce qu'on veut garder pour ne
+  // pas avoir à refaire un relevé complet.
+  if (pond.bathySurveys?.length) {
+    pond.bathySurveys = pond.bathySurveys.filter(s => s.type !== 'live');
+  }
+
   if (state.pond?.id === pondId) {
     state.pond.lastResetAt = pond.lastResetAt;
     state.pond.work        = pond.work;
+    state.pond.bathySurveys = pond.bathySurveys;
     state.cells.forEach(c => { c.completed = false; });
     state.robot.completedCells = 0;
     state.robot.volumePumped   = 0;
@@ -1677,9 +1688,14 @@ function resetWork(pondId) {
     state.sim.sessionEnergyBaselineWh   = 0;
     state.sim.sessionElapsedBaselineSec = 0;
     state.plannedPath = [];
+    state.bathy._liveSurveyId = null;
+    if (!state.pond.bathySurveys.some(s => s.id === state.bathy.selectedSurveyId)) {
+      state.bathy.selectedSurveyId = null;
+    }
     renderAllPondCanvases();
     updateUI();
     updateButtonStates();
+    if (state.activeTab === 'bathymetry') renderBathyTab();
   }
 
   // Persiste la progression dans aquabot_ponds
