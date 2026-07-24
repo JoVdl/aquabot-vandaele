@@ -1528,6 +1528,21 @@ function loadPond(pond) {
   state.robot.energyWh       = pond.work.energyWh      || 0;
   state.robot.elapsedSec     = pond.work.elapsedSec    || 0;
   state.plannedPath = [];
+  // Repli local avant que subscribeSimState()/checkAndResumeSim() (plus bas) ne restaurent
+  // l'état RÉEL de CET étang depuis Firestore, si un vrai chantier y est en cours/en pause —
+  // sans ce repli, un robot.state resté "paused"/"moving" au moment de quitter l'étang PRÉCÉDENT
+  // (ex. job mis en pause puis abandonné sans Stop explicite) survit au changement d'étang :
+  // startSimulation() sur ce nouvel étang le lirait comme `isResume === true` et réutiliserait
+  // tel quel l'ANCIEN plannedPath (celui de l'étang précédent, sans rapport avec celui-ci) au lieu
+  // d'en recalculer un nouveau — le robot "termine" alors silencieusement après seulement les
+  // quelques cases de cet ancien parcours, sans la moindre erreur.
+  if (state.sim.intervalId) { clearInterval(state.sim.intervalId); state.sim.intervalId = null; }
+  state.sim.running          = false;
+  state.robot.state          = 'stopped';
+  state.robot.currentCellIdx = 0;
+  state.robot.pumpState      = 'idle';
+  state.robot.pumpDepth      = 0;
+  state.robot.motors         = [0, 0, 0, 0];
   // « Partie en cours » : repart de zéro à chaque (ré)ouverture de cet étang, distincte du
   // cumul persistant ci-dessus qui, lui, ne se remet à zéro qu'au RAZ.
   state.sim.sessionEnergyBaselineWh   = state.robot.energyWh;
