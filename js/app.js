@@ -1129,6 +1129,11 @@ let params = {
   pumpDescentSpeed: 0.05, pumpAscentSpeed: 0.08,
   pumpFlow: 500, robotSpeed: 0.20, cellSize: 0.4,
   workMode: 'mini-cycles',   // standard | mini-cycles | double-pass | intensive
+  // Forme du parcours planifié (voir planPath) : 'lines' = balayage en lignes (boustrophedon,
+  // existant) ; 'spiral' = anneaux concentriques depuis l'ancre du tuyau, vers l'extérieur. Les
+  // deux respectent la même contrainte physique (distance à l'ancre toujours croissante, jamais
+  // de retour en arrière côté tuyau) — seule la manière de parcourir la sélection change.
+  routeType: 'lines',        // lines | spiral
   // Objectif de curage — voir getCellBathyBaseline()/simulationTick : si un relevé bathymétrique
   // existe pour une case, le robot cible désormais sa profondeur RÉELLEMENT mesurée plutôt que la
   // profondeur globale uniforme ci-dessus (waterDepth/mudDepth, qui restent le repli pour les
@@ -1470,14 +1475,20 @@ function generateGrid(polygon) {
 }
 
 // ============================================================
-// PATH PLANNER — boustrophedon, orienté pour ne jamais enrouler le tuyau
+// PATH PLANNER — plusieurs formes de parcours, toutes orientées pour ne jamais enrouler le tuyau
 // ============================================================
-// Le tuyau relie une ancre fixe (berge) au robot. Pour qu'il ne s'enroule/emmêle jamais,
-// le balayage en lignes doit avancer en s'éloignant progressivement de l'ancre, sans jamais
-// revenir en arrière : on choisit donc l'axe de balayage (rangées ou colonnes) selon que
-// l'ancre est plutôt sur un bord haut/bas ou gauche/droite de l'étang, puis on ordonne les
-// lignes de la plus proche de l'ancre à la plus lointaine.
+// Le tuyau relie une ancre fixe (berge) au robot : quelle que soit la forme choisie
+// (params.routeType), le parcours doit toujours avancer en s'éloignant progressivement de
+// l'ancre, sans jamais revenir en arrière — sous peine d'enrouler/emmêler le tuyau autour du
+// robot ou d'un obstacle déjà dépassé.
 function planPath(cells) {
+  return params.routeType === 'spiral' ? planPathSpiral(cells) : planPathLines(cells);
+}
+
+// Balayage en lignes (boustrophedon) — forme par défaut. On choisit l'axe de balayage (rangées
+// ou colonnes) selon que l'ancre est plutôt sur un bord haut/bas ou gauche/droite de l'étang,
+// puis on ordonne les lignes de la plus proche de l'ancre à la plus lointaine.
+function planPathLines(cells) {
   const selected = cells.filter(c => c.selected && !c.completed);
   if (!selected.length) return [];
 
@@ -1517,6 +1528,50 @@ function planPath(cells) {
     forward = !forward;
   }
   return path.filter(i => i !== -1);
+}
+
+// Spirale — regroupe les cases par anneau de distance à l'ancre (même résolution que la grille,
+// cellSize) plutôt que par ligne/colonne, puis balaie chaque anneau par angle autour de l'ancre en
+// alternant le sens à chaque anneau (même principe d'alternance que le balayage en lignes) : le
+// robot tourne autour de l'ancre en s'en éloignant progressivement, anneau après anneau — jamais de
+// retour vers une distance déjà dépassée. Sans ancre définie, rien à spiraler autour : repli sur le
+// balayage en lignes.
+function planPathSpiral(cells) {
+  const anchor = state.pond?.hoseAnchor;
+  if (!anchor) return planPathLines(cells);
+  const selected = cells.filter(c => c.selected && !c.completed);
+  if (!selected.length) return [];
+
+  const cs = params.cellSize;
+  const byRing = {};
+  for (const c of selected) {
+    const ring = Math.floor(Math.hypot(c.cx - anchor.x, c.cy - anchor.y) / cs);
+    if (!byRing[ring]) byRing[ring] = [];
+    byRing[ring].push(c);
+  }
+  const ringIdxs = Object.keys(byRing).map(Number).sort((a, b) => a - b);
+
+  const path = [];
+  let forward = true;
+  for (const ring of ringIdxs) {
+    const group = byRing[ring].sort((a, b) => {
+      const angA = Math.atan2(a.cy - anchor.y, a.cx - anchor.x);
+      const angB = Math.atan2(b.cy - anchor.y, b.cx - anchor.x);
+      return forward ? angA - angB : angB - angA;
+    });
+    path.push(...group.map(c => cells.indexOf(c)));
+    forward = !forward;
+  }
+  return path.filter(i => i !== -1);
+}
+
+// Choix de la forme du parcours (voir planPath) — n'affecte que le PROCHAIN calcul de parcours
+// (Planifier/Démarrer) : ne recalcule pas un parcours déjà en cours, pour ne pas changer la
+// trajectoire sous le robot en plein travail.
+function setRouteType(type) {
+  params.routeType = type;
+  document.querySelectorAll('.route-type-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.routeType === type));
+  persistParams();
 }
 
 // ============================================================
@@ -4831,6 +4886,7 @@ function syncParamsToDOM() {
   if (cmEl) cmEl.checked = true;
   const curageResidualRow = document.getElementById('curageResidualRow');
   if (curageResidualRow) curageResidualRow.style.display = params.curageMode === 'partiel' ? 'flex' : 'none';
+  document.querySelectorAll('.route-type-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.routeType === params.routeType));
 }
 
 // Diffusion en direct des réglages (Paramètres, tarif, solaire...) à tous les appareils

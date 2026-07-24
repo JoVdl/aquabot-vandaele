@@ -12,7 +12,7 @@
       document.documentElement.setAttribute('data-theme', theme);
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=91">
+  <link rel="stylesheet" href="css/style.css?v=92">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" crossorigin=""/>
 </head>
@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v91</span>
+        <span class="logo-version" id="appVersion">v92</span>
       </div>
     </div>
     <div class="header-status">
@@ -311,7 +311,13 @@
                 <button class="btn btn-secondary btn-sm" id="btnSelectAll"       onclick="selectAllCells()"       disabled>☑ Toutes</button>
                 <button class="btn btn-secondary btn-sm" id="btnSelectRemaining" onclick="selectRemainingCells()" disabled>☑ Restantes</button>
                 <button class="btn btn-secondary btn-sm" id="btnDeselectAll"     onclick="deselectAllCells()"     disabled>☐ Aucune</button>
-                <button class="btn btn-accent    btn-sm" id="btnPlanRoute"       onclick="planRoute()"            disabled>↪ Planifier</button>
+              </div>
+              <div class="view-toggle-group" title="Forme du parcours planifié — les deux respectent la contrainte du tuyau (distance à l'ancre toujours croissante)">
+                <button class="view-toggle-btn route-type-btn active" data-route-type="lines"  onclick="setRouteType('lines')">📏 Lignes</button>
+                <button class="view-toggle-btn route-type-btn"        data-route-type="spiral" onclick="setRouteType('spiral')">🌀 Spirale</button>
+              </div>
+              <div class="sel-buttons">
+                <button class="btn btn-accent    btn-sm" id="btnPlanRoute"       onclick="planRoute()"            disabled style="width:100%">↪ Planifier</button>
               </div>
               <div class="sel-history-wrap">
                 <div class="sel-save-row">
@@ -881,6 +887,6 @@
     window.db = firebase.firestore();
   } catch(e) { console.warn("Firebase init failed:", e.message); }
 </script>
-<script src="js/app.js?v=91"></script>
+<script src="js/app.js?v=92"></script>
 </body>
 </html>
