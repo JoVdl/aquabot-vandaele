@@ -1090,6 +1090,10 @@ const state = {
     // partie (énergie / durée) plutôt que d'extrapoler depuis la puissance instantanée, qui
     // fluctue sans arrêt selon la phase du cycle (déplacement/descente/pompage/remontée).
     sessionElapsedBaselineSec: 0,
+    // Repères capturés au départ du CHANTIER en cours (pas de l'ouverture de l'étang, voir
+    // startSimulation) — utilisés par le récap de fin de chantier (finishSimulation) pour
+    // n'afficher que ce qui vient d'être fait sur ce chantier précis.
+    jobVolumeAtStart: 0, jobEnergyAtStart: 0, jobBeforeReadings: null,
   },
   view: { offsetX: 0, offsetY: 0, scale: 10, canvasH: 600 },
   drag: { active: false, mode: 'add' }, // for drag-select
@@ -4519,6 +4523,62 @@ function updateBathySurveyStats() {
   setText('bathySurveyDate',     new Date(survey.date).toLocaleString('fr-FR'));
 }
 
+// Récapitulatif affiché à la fin d'un chantier (voir finishSimulation) — les baselines
+// jobVolumeAtStart/jobEnergyAtStart/jobBeforeReadings sont capturées au lancement du chantier
+// (voir startSimulation) pour isoler CE chantier des totaux cumulés de l'étang.
+function computeJobRecap() {
+  const path = state.plannedPath || [];
+  const uniqueIdxs = [...new Set(path)];
+  const cellArea = params.cellSize * params.cellSize;
+
+  const beforeByIdx = {};
+  path.forEach((idx, i) => {
+    if (!(idx in beforeByIdx)) beforeByIdx[idx] = state.sim.jobBeforeReadings?.[i];
+  });
+  let mudBeforeSum = 0, mudAfterSum = 0, n = 0;
+  uniqueIdxs.forEach(idx => {
+    const before = beforeByIdx[idx];
+    const after  = getCellBathyBaseline(idx);
+    if (before && after) { mudBeforeSum += before.mud; mudAfterSum += after.mud; n++; }
+  });
+
+  let mudRemainingM3 = 0;
+  state.cells.forEach((c, idx) => { mudRemainingM3 += getCellBathyBaseline(idx).mud * cellArea; });
+
+  const energyWhJob = Math.max(0, state.robot.energyWh - (state.sim.jobEnergyAtStart || 0));
+
+  return {
+    cellCount:       uniqueIdxs.length,
+    surfaceM2:       uniqueIdxs.length * cellArea,
+    durationSec:     Math.max(0, state.robot.elapsedSec - (state.sim.sessionElapsedAtStart || 0)),
+    volumePumpedM3:  Math.max(0, (state.robot.volumePumped - (state.sim.jobVolumeAtStart || 0)) / 1000),
+    mudRemainingM3,
+    mudBeforeAvg:    n ? mudBeforeSum / n : null,
+    mudAfterAvg:     n ? mudAfterSum / n : null,
+    energyWhJob,
+    costJob:         (energyWhJob / 1000) * (params.elecTariff || 0),
+  };
+}
+
+function showJobRecap() {
+  const r = computeJobRecap();
+  setText('recapSurface',          `${r.cellCount} case${r.cellCount > 1 ? 's' : ''} · ${r.surfaceM2.toFixed(1)} m²`);
+  setText('recapDuration',         formatTime(r.durationSec));
+  setText('recapVolumePumped',     formatVolM3(r.volumePumpedM3));
+  setText('recapVolumeRemaining',  formatVolM3(r.mudRemainingM3));
+  setText('recapMudBefore',        r.mudBeforeAvg != null ? r.mudBeforeAvg.toFixed(2) + ' m' : '—');
+  setText('recapMudAfter',         r.mudAfterAvg  != null ? r.mudAfterAvg.toFixed(2)  + ' m' : '—');
+  setText('recapEnergy',           formatEnergyWh(r.energyWhJob));
+  setText('recapCost',             formatEnergyCost(r.energyWhJob, params.elecTariff || 0));
+  const overlay = document.getElementById('jobRecapOverlay');
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function closeJobRecap() {
+  const overlay = document.getElementById('jobRecapOverlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
 function updateBathyCompareStats() {
   const pond = state.pond;
   const before = pond?.bathySurveys?.find(s => s.id === state.bathy.compareBeforeId);
@@ -5453,6 +5513,12 @@ async function startSimulation() {
     state.sim.sessionElapsedAtStart = state.robot.elapsedSec;
     state.sim.paceDoneCount  = 0;
     state.sim.paceSecPerCell = null;
+    // Repères de départ pour le récap de fin de chantier (voir finishSimulation) — capturés ici,
+    // au tout premier départ du chantier (jamais à une reprise après pause), pour que le récap ne
+    // montre que ce QUI VIENT D'ÊTRE FAIT sur ce chantier précis, pas le cumul de tout l'étang.
+    state.sim.jobVolumeAtStart = state.robot.volumePumped;
+    state.sim.jobEnergyAtStart = state.robot.energyWh;
+    state.sim.jobBeforeReadings = state.plannedPath.map(idx => getCellBathyBaseline(idx));
     autoSaveSelectionOnStart();
     const first = state.cells[state.plannedPath[0]];
     if (first) { state.robot.x = first.cx; state.robot.y = first.cy; }
@@ -5776,6 +5842,7 @@ function finishSimulation() {
   saveWork();
   updatePondsList();
   showToast('Curage terminé ! Résultats enregistrés.', 'success');
+  showJobRecap();
   saveSimState();
   renderAllPondCanvases();
   renderSectionCanvas();
