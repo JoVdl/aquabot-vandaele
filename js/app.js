@@ -368,7 +368,11 @@ function subscribeSimState(pondId) {
       if (sim.plannedPath?.length) state.plannedPath = sim.plannedPath;
 
       state.robot.state          = sim.robotState  || 'stopped';
-      state.robot.elapsedSec     = sim.elapsedSec + (sim.simRunning ? offlineSec : 0);
+      // finiteOr, pas juste sim.elapsedSec tel quel : un champ manquant/invalide dans le document
+      // (ancien format, écriture partielle...) donnerait `undefined + offlineSec` = NaN, qui empoisonne
+      // ensuite la position du robot via la formule de dérive pendant le pompage (Math.sin(NaN)) — le
+      // robot reste alors bloqué indéfiniment sur la case en cours, sans la moindre erreur console.
+      state.robot.elapsedSec     = finiteOr(sim.elapsedSec, state.robot.elapsedSec) + (sim.simRunning ? offlineSec : 0);
       state.robot.volumePumped   = sim.volumePumped || 0;
       state.robot.energyWh       = sim.energyWh || 0;
       state.robot.x              = finiteOr(sim.x, state.robot.x);
@@ -511,7 +515,7 @@ function _resumeSimFromCloud(sim) {
   state.robot.pumpDepth      = sim.pumpDepth      ?? 0;
   state.robot.miniCyclesDone = sim.miniCyclesDone || 0;
   state.robot.pumpTimer      = 0;   // timer inconnu après déconnexion, redémarre le cycle
-  state.robot.elapsedSec     = sim.elapsedSec + offlineSec;
+  state.robot.elapsedSec     = finiteOr(sim.elapsedSec, state.robot.elapsedSec) + offlineSec;
   state.robot.volumePumped   = sim.volumePumped || 0;
   state.robot.energyWh       = sim.energyWh || 0;
   state.robot.heading        = sim.heading ?? state.robot.heading;
@@ -5477,6 +5481,13 @@ function simulationTick() {
   state.sim.lastTick = now;
   const dt = rawDt * state.sim.speed;
   state.robot.elapsedSec += rawDt * state.sim.speed;
+  // Filet de sécurité : elapsedSec sert de base à Math.sin/cos dans la formule de dérive de
+  // position pendant le pompage (voir plus bas) — s'il devient NaN (ex. un document de simulation
+  // reçu sans ce champ, additionné sans garde), Math.sin(NaN) empoisonne alors robot.x/y de façon
+  // permanente : le robot n'atteint plus jamais aucune case (distance toujours NaN) et reste
+  // bloqué indéfiniment, sans la moindre erreur console. On le remet à 0 dès qu'il n'est plus fini,
+  // plutôt que de laisser NaN se perpétuer silencieusement.
+  if (!Number.isFinite(state.robot.elapsedSec)) state.robot.elapsedSec = 0;
 
   const robot = state.robot;
   const path  = state.plannedPath;
@@ -5486,6 +5497,17 @@ function simulationTick() {
 
   const targetCell = state.cells[path[robot.currentCellIdx]];
   if (!targetCell) { robot.currentCellIdx++; return; }
+
+  // Filet de sécurité : une position robot déjà corrompue (NaN — via une session/lecture Firestore
+  // antérieure à ce correctif, ou toute autre cause future) rend la distance à la case cible NaN
+  // partout ensuite (Math.sqrt(NaN), dx/NaN...), donc `d < 0.05` n'est jamais vrai : le robot
+  // n'atteint plus jamais aucune case et reste bloqué indéfiniment, sim.running toujours actif,
+  // sans la moindre erreur console. On recale sur la case cible actuelle dès que ça arrive, plutôt
+  // que de laisser le blocage se perpétuer tant que l'utilisateur ne relance pas une case propre.
+  if (!Number.isFinite(robot.x) || !Number.isFinite(robot.y)) {
+    robot.x = targetCell.cx;
+    robot.y = targetCell.cy;
+  }
 
   // Filet de sécurité : le cache de cible par case (robot._cellFullDepth etc.) n'est normalement
   // posé qu'à la transition idle→descending. Si la session locale reprend en plein cycle sans
