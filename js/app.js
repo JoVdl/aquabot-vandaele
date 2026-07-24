@@ -5635,6 +5635,14 @@ function simulationTick() {
         if (!targetCell.completed) {
           targetCell.completed = true;
           robot.completedCells++;
+          // Filet de sécurité : startLiveBathySurveyIfEnabled() n'est normalement appelée qu'à la
+          // transition stopped→moving (démarrage frais, voir startSimulation). Une session qui
+          // atteint l'état "moving" par un autre chemin (ex. auto-guérison d'une position corrompue,
+          // voir simulationTick plus haut, sans jamais repasser par 'stopped') n'a alors jamais
+          // initialisé _liveSurveyId : la case se nettoie bien, mais la bathymétrie en direct ne se
+          // met silencieusement jamais à jour, sans le moindre signe visible. On l'initialise donc
+          // ici aussi si besoin, plutôt que de dépendre uniquement de cette seule transition.
+          if (state.bathy.liveDuringWork && !state.bathy._liveSurveyId) startLiveBathySurveyIfEnabled();
           if (state.bathy._liveSurveyId) {
             _recordLiveBathyReading(path[robot.currentCellIdx], robot._cellResult);
           }
