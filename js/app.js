@@ -44,7 +44,17 @@ let _lastKnownSimHeartbeat = 0;
 // la revendication réussit (soit personne d'autre n'est activement en train de piloter là
 // maintenant, soit c'est déjà nous) ; false si un autre appareil pilote réellement, là,
 // maintenant (heartbeat récent) — dans ce cas on ne démarre PAS de seconde boucle locale.
-async function claimSimOwnership(pondId) {
+//
+// markRunning (optionnel) : à passer `true` quand l'appelant va, dans la foulée, repasser en
+// marche (démarrage ou reprise après pause — voir startSimulation) — sans ça, cette écriture ne
+// touchait que driverId/lastUpdate, laissant transitoirement simRunning/robotState à leur ANCIENNE
+// valeur ("false"/"paused") dans le document. Si le snapshot listener de CE MÊME appareil traite
+// l'écho de cette écriture avant que startSimulation() n'ait eu le temps d'envoyer sa propre
+// sauvegarde complète (saveSimState(), juste après), il lit sim.simRunning === false et se
+// repause tout seul aussitôt (voir subscribeSimState) — symptôme observé : "Pause puis Reprendre
+// ne fait qu'une case et s'arrête à nouveau". En incluant simRunning dans CETTE MÊME écriture, il
+// n'existe plus d'état intermédiaire incohérent à lire.
+async function claimSimOwnership(pondId, markRunning) {
   if (!USE_CLOUD) return true; // pas de cloud = un seul appareil de toute façon
   try {
     const docRef = window.db.collection('aquabot_sim').doc(pondId);
@@ -53,7 +63,9 @@ async function claimSimOwnership(pondId) {
     const heldByOther = sim?.simRunning && sim.driverId && sim.driverId !== _deviceSessionId
       && (Date.now() - (sim.lastUpdate || 0)) < DRIVER_HEARTBEAT_TIMEOUT_MS;
     if (heldByOther) return false;
-    await docRef.set({ driverId: _deviceSessionId, lastUpdate: Date.now() }, { merge: true });
+    const patch = { driverId: _deviceSessionId, lastUpdate: Date.now() };
+    if (markRunning != null) patch.simRunning = markRunning;
+    await docRef.set(patch, { merge: true });
     return true;
   } catch (e) {
     reportFirestoreError(e, 'claimSimOwnership');
@@ -5342,7 +5354,7 @@ async function startSimulation() {
   // entre appareils (chacun calculait sa propre progression). Cet appareil reste simple vue,
   // déjà correctement synchronisée par subscribeSimState().
   if (USE_CLOUD) {
-    const owns = await claimSimOwnership(state.pond.id);
+    const owns = await claimSimOwnership(state.pond.id, true);
     if (!owns) {
       showToast('Simulation déjà en cours sur un autre appareil — cette vue va se synchroniser automatiquement.', 'error');
       return;
@@ -7414,7 +7426,7 @@ async function handleVisibilityChange() {
   if (!state.sim.backgroundPaused) return;
   state.sim.backgroundPaused = false;
   if (!state.sim.running || !state.pond) return;
-  const owns = !USE_CLOUD || await claimSimOwnership(state.pond.id);
+  const owns = !USE_CLOUD || await claimSimOwnership(state.pond.id, true);
   if (!owns) {
     // Un autre appareil a légitimement repris la main pendant notre absence — on redevient
     // simple suiveur, subscribeSimState() reflète déjà son état exact.
