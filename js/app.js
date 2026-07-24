@@ -223,9 +223,19 @@ function pondToFirestore(pond) {
 // ============================================================
 
 // Save robot/simulation state to aquabot_sim/{pondId}
+// _simSaveInFlight (voir simulationTick, seul appelant périodique) : sans repli de pression, un
+// nouvel envoi partait toutes les 200ms QUOI QU'IL ARRIVE, même si le précédent n'avait pas encore
+// été acquitté par le serveur (connexion lente/instable) — les écritures s'empilaient alors plus
+// vite qu'elles ne se vidaient, jusqu'à épuiser la file d'attente du SDK ("Write stream exhausted
+// maximum allowed queued writes", observé en continu pendant plusieurs minutes de travail normal,
+// pas seulement lors d'une rafale sur le curseur de vitesse déjà corrigée). Le rythme des envois
+// DÉCLENCHÉS PAR UNE ACTION UTILISATEUR explicite (Démarrer/Pause/Arrêt) n'est volontairement pas
+// concerné par ce filet — seul le battement de cœur périodique doit attendre son tour.
+let _simSaveInFlight = false;
 function saveSimState() {
   if (!USE_CLOUD || !state.pond) return;
   const completedIdxs = state.cells.map((c,i) => c.completed ? i : -1).filter(i => i !== -1);
+  _simSaveInFlight = true;
   window.db.collection('aquabot_sim').doc(state.pond.id).set({
     robotState:     state.robot.state,
     simRunning:     state.sim.running,
@@ -251,7 +261,8 @@ function saveSimState() {
     miniCycles:     params.miniCycles,
     driverId:       _deviceSessionId,
     lastUpdate:     Date.now(),
-  }).catch(e => reportFirestoreError(e, 'simState save'));
+  }).catch(e => reportFirestoreError(e, 'simState save'))
+    .finally(() => { _simSaveInFlight = false; });
 }
 
 // Debounced save of current cell selection (called after user changes selection)
@@ -5650,7 +5661,7 @@ function simulationTick() {
   // soit ~15-18 €/mois au tarif Firestore standard si le robot tourne tous les jours — voir
   // SIM_SAVE_INTERVAL_MS ci-dessus pour ajuster ce compromis fluidité/coût.
   const nowMs = Date.now();
-  if (USE_CLOUD && nowMs - state.sim.lastSimSave > SIM_SAVE_INTERVAL_MS) {
+  if (USE_CLOUD && !_simSaveInFlight && nowMs - state.sim.lastSimSave > SIM_SAVE_INTERVAL_MS) {
     state.sim.lastSimSave = nowMs;
     saveSimState();
   }
