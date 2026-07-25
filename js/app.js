@@ -1119,6 +1119,14 @@ const state = {
     liveDuringWork: true,
     _liveSurveyId: null,
   },
+  // Onglet Robot — vue 3D interactive des composants (voir "ROBOT 3D" plus bas). Indépendante
+  // de state.bathy : rotation/inclinaison/zoom/pan propres à cette scène, plus la pièce
+  // actuellement sélectionnée et l'état ouvert/fermé du boîtier électronique.
+  robotView: {
+    rotation: 35, tilt: 24, zoom: 1, pan: { x: 0, y: 0 },
+    selectedPart: null, boxOpen: false,
+    _layout: null, _anim: null, _dragInit: false,
+  },
 };
 
 // ============================================================
@@ -6745,6 +6753,507 @@ document.addEventListener('click', e => {
 });
 
 // ============================================================
+// ROBOT 3D — modèle interactif des composants (onglet Robot)
+// Même principe que la vue 3D bathymétrie (canevas 2D isométrique, pas de WebGL) mais pour un
+// vrai volume 3D fait de pavés droits, pas un maillage de terrain — chaque pièce du robot est
+// un ou plusieurs "boxes" cliquables (voir buildRobotBoxes), avec sa propre fiche technique
+// (ROBOT_PARTS) : description, caractéristiques, prix indicatif et lien d'achat. Le boîtier
+// électronique est un composant composite : "l'ouvrir" (toggleRobotBoxOpen) remplace sa coque
+// par ses sous-composants (ESP32, pilotes moteurs, etc.), chacun cliquable individuellement.
+// ============================================================
+
+// Fiche technique de chaque pièce — prix et liens vérifiés via recherche web (juillet 2026),
+// donnés à titre indicatif (peuvent varier). Les pièces sans lien ("fabrication sur mesure")
+// n'ont pas de produit du commerce équivalent identifié avec confiance.
+const ROBOT_PARTS = {
+  hull: {
+    name: 'Flotteurs modulaires (×6)', category: 'Structure',
+    desc: "Plateforme flottante en 6 flotteurs modulaires assemblés en grille 3×2, comme sur le robot réel — répartit la flottaison et facilite le transport et l'entretien (un flotteur endommagé se remplace seul, sans démonter tout le châssis).",
+    specs: [['Quantité', '6'], ['Disposition', '3 colonnes × 2 rangées'], ['Assemblage', 'Boulonné sur cadre aluminium']],
+    buyLabel: 'Fabrication sur mesure',
+  },
+  mast: {
+    name: 'Mât central', category: 'Structure',
+    desc: "Tube support pour l'antenne GPS et le boîtier électronique, fixé au centre de la plateforme — les hisse au-dessus de l'eau et des projections.",
+    specs: [['Hauteur', '≈ 0,8 m au-dessus du pont'], ['Matériau', 'Aluminium ou inox']],
+    buyLabel: 'Fabrication sur mesure',
+  },
+  gps: {
+    name: 'Récepteur GPS RTK (ZED-F9P)', category: 'Navigation',
+    desc: "Positionnement centimétrique en temps réel (RTK), corrections reçues via NTRIP (réseau Centipède) — voir arduino/aquabot_esp32/config.h. C'est lui qui permet au robot de suivre précisément le quadrillage de cases planifié.",
+    specs: [['Puce', 'u-blox ZED-F9P'], ['Précision', '≈ 1-2 cm (RTK fixe)'], ['Interface', 'I2C'], ['Fréquence', "jusqu'à 5 Hz"]],
+    priceLabel: '≈ 230 €', buyUrl: 'https://www.sparkfun.com/sparkfun-gps-rtk2-board-zed-f9p-qwiic-gps-15136.html', buyLabel: 'SparkFun GPS-RTK2 (ZED-F9P)',
+  },
+  controlbox: {
+    name: 'Boîtier électronique', category: 'Électronique',
+    desc: "Boîtier étanche regroupant toute l'électronique de pilotage — cliquez sur « Ouvrir le boîtier » ci-dessous pour voir chaque composant à l'intérieur.",
+    specs: [['Protection', 'IP65 / IP67'], ['Contenu', "ESP32, 4× pilotes moteurs, relais pompe, capteurs de courant, boussole"]],
+    buyLabel: 'Boîtier étanche du commerce',
+    composite: true, subParts: ['esp32', 'drivers', 'relay', 'currentsensors', 'compass'],
+  },
+  esp32: {
+    name: 'Microcontrôleur ESP32-WROOM-32', category: 'Électronique', parent: 'controlbox',
+    desc: "Le cerveau du robot : pilote les 4 propulseurs, la pompe et la sonde bathymétrique, lit le GPS et la boussole, et communique avec cette application via WiFi/Firebase.",
+    specs: [['CPU', 'Dual-core 240 MHz'], ['WiFi', '802.11 b/g/n'], ['E/S utilisées', 'PWM ×6 (propulseurs), I2C (GPS/boussole), ADC (courant)']],
+    priceLabel: '≈ 11 €', buyUrl: 'https://www.amazon.fr/Espressif-d%C3%A9veloppement-ESP32-DEVKITC-l%C3%A9valuation-ESP32-WROOM-32D/dp/B07G1867ZX', buyLabel: 'ESP32-DevKitC — Amazon.fr',
+  },
+  drivers: {
+    name: 'Pilotes moteurs BTS7960 (×4)', category: 'Électronique', parent: 'controlbox',
+    desc: "Un pont en H par propulseur (avant-gauche, avant-droit, arrière-gauche, arrière-droit), pour inverser le sens et moduler la puissance indépendamment sur chaque coin — permet de translater latéralement et de pivoter sur place sans gouvernail, utile pour tenir position pendant le pompage.",
+    specs: [['Courant max', '43 A'], ['Commande', 'PWM (RPWM / LPWM)']],
+    priceLabel: '≈ 9 € / pièce', buyUrl: 'https://www.amazon.fr/BTS7960B-puissance-conducteur-voiture-intelligente/dp/B00GKF8966', buyLabel: 'BTS7960 43A — Amazon.fr',
+  },
+  relay: {
+    name: 'Relais SSR pompe (230V)', category: 'Électronique', parent: 'controlbox',
+    desc: "Commute l'alimentation 230V de la pompe depuis une simple sortie logique de l'ESP32, sans contact mécanique — silencieux et longue durée de vie face aux nombreux cycles marche/arrêt d'un chantier.",
+    specs: [['Entrée', '3-32V DC'], ['Sortie', '24-480V AC, 25A']],
+    priceLabel: '≈ 10 €', buyUrl: 'https://www.amazon.fr/Relais-semi-conducteurs-SSR-25-semi-conducteurs-90-250V-24-480V/dp/B08Z86RQY2', buyLabel: 'Relais SSR-25 — Amazon.fr',
+  },
+  currentsensors: {
+    name: 'Capteurs de courant ACS712 (×2)', category: 'Électronique', parent: 'controlbox',
+    desc: "Mesurent le courant de la pompe et de la sonde bathymétrique pour détecter le fond (pic de courant à l'arrêt mécanique de la descente), sans capteur de position dédié.",
+    specs: [['Principe', 'Effet Hall'], ['Sortie', '66 mV/A (modèle 30A)']],
+    priceLabel: '≈ 7 € / pièce', buyUrl: 'https://www.amazon.fr/Module-capteur-courant-ACS712-30/dp/B0922FCH6L', buyLabel: 'ACS712 30A — Amazon.fr',
+  },
+  compass: {
+    name: 'Boussole électronique QMC5883L', category: 'Électronique', parent: 'controlbox',
+    desc: "Donne le cap du robot à l'arrêt ou à faible vitesse, quand le cap GPS (course over ground) n'est pas fiable.",
+    specs: [['Interface', 'I2C'], ['Adresse', '0x0D']],
+    priceLabel: '≈ 5 €', buyUrl: 'https://www.ebay.fr/itm/GY-273-QMC5883L-HMC5883L-Variant-3-Axis-Compass-Magnetometer-Module-SOLDERED-/282834089264', buyLabel: 'GY-273 QMC5883L — eBay',
+  },
+  battery: {
+    name: 'Batterie 12V (décharge lente)', category: 'Alimentation',
+    desc: "Alimente l'électronique et les 4 propulseurs. La pompe (230V, 1800W) est alimentée séparément — voir l'onglet Énergie pour le dimensionnement complet, elle domine largement le bilan électrique du robot.",
+    specs: [['Tension', '12V'], ['Capacité', '100 Ah'], ['Type', 'Gel / décharge lente']],
+    priceLabel: '≈ 259 €', buyUrl: 'https://www.amazon.fr/Batterie-100ah-12v-d%C3%A9charge-Lente-ULTIMATRON/dp/B08QV9FRSB', buyLabel: 'Batterie Gel 100Ah — Amazon.fr',
+  },
+  thrusters: {
+    name: 'Propulseurs (×4, montage en X)', category: 'Propulsion',
+    desc: "4 propulseurs immergés aux 4 coins de la plateforme, orientés à 45° de l'axe avant-arrière (montage en X) — ce montage holonome permet d'avancer, de translater latéralement et de pivoter sur place, sans gouvernail.",
+    specs: [['Alimentation', '12V DC'], ['Commande', 'Pont en H BTS7960'], ['Disposition', 'AV-G / AV-D / AR-G / AR-D']],
+    priceLabel: '≈ 40-60 € / pièce (indicatif)', buyUrl: 'https://www.gotronic.fr/cat-moteurs-cc-1089.htm', buyLabel: 'Moteurs CC étanches — Gotronic',
+  },
+  pump: {
+    name: 'Pompe de relevage (eaux chargées)', category: 'Curage',
+    desc: "Pompe immergée qui descend dans la vase via un treuil motorisé (voir config.h : détection du fond par pic de courant) — c'est elle qui domine tout le dimensionnement électrique et solaire du robot (voir onglet Énergie).",
+    specs: [['Puissance', '1800 W'], ['Alimentation', '230V AC'], ['Débit', '≈ 500 L/min (paramétrable)']],
+    priceLabel: '≈ 180 € (indicatif)', buyUrl: 'https://www.vevor.fr/pompes-a-eau-c_11090', buyLabel: 'Pompes eaux chargées — VEVOR',
+  },
+  hose: {
+    name: 'Tuyau de refoulement', category: 'Curage',
+    desc: "Achemine la vase pompée jusqu'à la zone de dépôt définie sur la berge (voir onglet Étangs) — posé au sol, sans flotter, contrairement au segment robot→ancre.",
+    specs: [['Diamètre', '≈ Ø32-40 mm']],
+    buyLabel: 'Fourni avec la pompe / tuyau standard du commerce',
+  },
+  bathyprobe: {
+    name: 'Sonde bathymétrique', category: 'Curage',
+    desc: "Plaque en bout de tige, actionnée par un moteur dédié (BTS7960), pour relever la profondeur d'eau et de vase case par case, indépendamment du cycle de pompage.",
+    specs: [['Détection', 'Pic de courant (interface eau/vase, puis fond dur)'], ['Plaque', '10×10 cm']],
+    buyLabel: 'Fabrication sur mesure',
+  },
+};
+
+const ROBOT_CORNER_SIGNS = [
+  [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+  [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+];
+const ROBOT_BOX_FACES = [
+  { normal: [1, 0, 0],  corners: [[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1]] },
+  { normal: [-1, 0, 0], corners: [[-1, 1, -1], [-1, -1, -1], [-1, -1, 1], [-1, 1, 1]] },
+  { normal: [0, 1, 0],  corners: [[1, 1, -1], [-1, 1, -1], [-1, 1, 1], [1, 1, 1]] },
+  { normal: [0, -1, 0], corners: [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1]] },
+  { normal: [0, 0, 1],  corners: [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]] },
+  { normal: [0, 0, -1], corners: [[-1, 1, -1], [1, 1, -1], [1, -1, -1], [-1, -1, -1]] },
+];
+
+// Repère robot : x = droite, y = avant, z = haut, origine au niveau du pont/ligne de flottaison
+// — même formule de projection (rotation d'azimut puis inclinaison) que bathyMeshProjectXY,
+// mais pour un point 3D quelconque (pas un relief à une seule valeur par colonne/ligne).
+function robotProject(x, y, z, thetaRad, tiltRad) {
+  const rx = x * Math.cos(thetaRad) - y * Math.sin(thetaRad);
+  const ry = x * Math.sin(thetaRad) + y * Math.cos(thetaRad);
+  return {
+    x: rx,
+    y: ry * Math.sin(tiltRad) - z * Math.cos(tiltRad),
+    depth: ry * Math.cos(tiltRad) + z * Math.sin(tiltRad),
+  };
+}
+
+// Géométrie de chaque pièce (mètres, approximative — modèle schématique cliquable, pas un CAO
+// fidèle au trait près) d'après la photo fournie par le client (plateforme à flotteurs
+// modulaires, mât central GPS/électronique, propulseur(s) immergé(s)) et le câblage réel
+// (arduino/aquabot_esp32/config.h : 4 propulseurs en X, pompe 1800W/220V, sonde bathymétrique).
+function buildRobotBoxes(boxOpen) {
+  const boxes = [];
+  const push = (cx, cy, cz, hx, hy, hz, color, partId) => boxes.push({ cx, cy, cz, hx, hy, hz, color, partId });
+
+  // Flotteurs modulaires (3 colonnes × 2 rangées, comme DASH_ROBOT_PONTOONS)
+  const half = 0.6, gap = 0.05, cols = 3, rows = 2;
+  const cw = (2 * half - gap * (cols - 1)) / cols, ch = (2 * half - gap * (rows - 1)) / rows;
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const cx = -half + i * (cw + gap) + cw / 2, cy = -half + j * (ch + gap) + ch / 2;
+      push(cx, cy, -0.03, cw / 2, ch / 2, 0.07, '#1e293b', 'hull');
+    }
+  }
+
+  // Mât central
+  push(0, 0.02, 0.35, 0.02, 0.02, 0.35, '#94a3b8', 'mast');
+  // Récepteur GPS RTK (sommet du mât) + tige d'antenne
+  push(0, 0.02, 0.74, 0.05, 0.05, 0.02, '#e2e8f0', 'gps');
+  push(0, 0.02, 0.80, 0.006, 0.006, 0.04, '#cbd5e1', 'gps');
+
+  // Boîtier électronique — coque fermée, OU PCB + sous-composants une fois "ouvert"
+  const bx = 0.12, by = 0.02, bz = 0.42, bhx = 0.09, bhy = 0.065, bhz = 0.05;
+  if (!boxOpen) {
+    push(bx, by, bz, bhx, bhy, bhz, '#0f172a', 'controlbox');
+  } else {
+    push(bx, by, bz - bhz * 0.75, bhx, bhy, bhz * 0.12, '#166534', 'controlbox'); // PCB
+    push(bx - bhx * 0.4, by - bhy * 0.35, bz - bhz * 0.35, 0.025, 0.025, 0.012, '#0f172a', 'esp32');
+    push(bx + bhx * 0.35, by - bhy * 0.4,  bz - bhz * 0.35, 0.028, 0.018, 0.01,  '#1d4ed8', 'drivers');
+    push(bx - bhx * 0.4, by + bhy * 0.35,  bz - bhz * 0.35, 0.022, 0.016, 0.01,  '#b91c1c', 'relay');
+    push(bx + bhx * 0.1, by + bhy * 0.4,   bz - bhz * 0.35, 0.016, 0.012, 0.008, '#a16207', 'currentsensors');
+    push(bx + bhx * 0.35, by + bhy * 0.05, bz - bhz * 0.35, 0.012, 0.012, 0.006, '#7c3aed', 'compass');
+  }
+
+  // Batterie 12V
+  push(-0.35, -0.3, 0.08, 0.13, 0.09, 0.08, '#1e293b', 'battery');
+
+  // 4 propulseurs (montage en X, voir config.h)
+  const tPos = [[half - 0.05, half - 0.05], [-(half - 0.05), half - 0.05], [half - 0.05, -(half - 0.05)], [-(half - 0.05), -(half - 0.05)]];
+  for (const [tx, ty] of tPos) {
+    push(tx, ty, -0.14, 0.04, 0.04, 0.05, '#334155', 'thrusters');   // corps
+    push(tx, ty, -0.32, 0.012, 0.012, 0.13, '#475569', 'thrusters'); // arbre immergé
+    push(tx, ty, -0.47, 0.06, 0.015, 0.06, '#0ea5e9', 'thrusters');  // hélice
+  }
+
+  // Pompe + treuil de descente/remontée + amorce de tuyau
+  push(0.35, -0.15, 0.15, 0.075, 0.075, 0.13, '#2563eb', 'pump');
+  push(0.35, -0.15, -0.15, 0.015, 0.015, 0.3, '#93c5fd', 'pump');
+  push(0.35, -0.07, 0.24, 0.05, 0.012, 0.012, '#93c5fd', 'hose');
+
+  // Sonde bathymétrique + crémaillère
+  push(-0.4, 0.35, 0.1, 0.02, 0.02, 0.18, '#78716c', 'bathyprobe');
+  push(-0.4, 0.35, -0.08, 0.07, 0.07, 0.01, '#a8a29e', 'bathyprobe');
+
+  return boxes;
+}
+
+function robotComputeLayout(boxes, thetaRad, tiltRad, canvasW, canvasH) {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const b of boxes) {
+    for (const [sx, sy, sz] of ROBOT_CORNER_SIGNS) {
+      const p = robotProject(b.cx + sx * b.hx, b.cy + sy * b.hy, b.cz + sz * b.hz, thetaRad, tiltRad);
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+  const fitScale = Math.min(canvasW / spanX, canvasH / spanY) * 0.8;
+  return {
+    fitScale, thetaRad, tiltRad,
+    offX: canvasW / 2 - ((minX + maxX) / 2) * fitScale,
+    offY: canvasH / 2 - ((minY + maxY) / 2) * fitScale,
+  };
+}
+
+function renderRobotScene() {
+  const canvas = document.getElementById('robotCanvas');
+  const wrap = document.getElementById('robotCanvasWrap');
+  if (!canvas || !wrap || !wrap.clientWidth) return;
+  canvas.width = wrap.clientWidth;
+  canvas.height = wrap.clientHeight || 360;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const v = state.robotView;
+  const thetaRad = v.rotation * Math.PI / 180, tiltRad = v.tilt * Math.PI / 180;
+  const boxes = buildRobotBoxes(v.boxOpen);
+  const L = robotComputeLayout(boxes, thetaRad, tiltRad, canvas.width, canvas.height);
+  v._layout = L;
+
+  const faces = [];
+  for (const b of boxes) {
+    for (const f of ROBOT_BOX_FACES) {
+      const corners = f.corners.map(([sx, sy, sz]) => robotProject(
+        b.cx + sx * b.hx, b.cy + sy * b.hy, b.cz + sz * b.hz, thetaRad, tiltRad
+      ));
+      // Normale tournée par l'azimut (repère caméra, comme le maillage bathymétrie) — même
+      // lumière fixe partagée (BATHY_MESH_LIGHT) pour un rendu cohérent avec le reste de l'app.
+      const nx0 = f.normal[0], ny0 = f.normal[1], nz0 = f.normal[2];
+      const nx = nx0 * Math.cos(thetaRad) - ny0 * Math.sin(thetaRad);
+      const ny = nx0 * Math.sin(thetaRad) + ny0 * Math.cos(thetaRad);
+      const dot = nx * BATHY_MESH_LIGHT.x + ny * BATHY_MESH_LIGHT.y + nz0 * BATHY_MESH_LIGHT.z;
+      const depth = (corners[0].depth + corners[1].depth + corners[2].depth + corners[3].depth) / 4;
+      faces.push({
+        corners, color: b.color, partId: b.partId,
+        shade: Math.max(0.4, Math.min(1.08, 0.6 + dot * 0.55)),
+        depth, selected: b.partId === v.selectedPart,
+      });
+    }
+  }
+  faces.sort((a, b) => a.depth - b.depth); // loin → près (peintre)
+
+  // Polygones écran (coordonnées déjà mises à l'échelle/zoom/pan) mis en cache pour le hit-test
+  // au clic (voir robotHitTest) — un vrai test point-dans-polygone par FACE, pas juste une boîte
+  // englobante par pièce : deux pièces voisines peuvent avoir des boîtes englobantes qui se
+  // recouvrent largement à l'écran sans que leurs faces réellement dessinées ne se recouvrent.
+  const screenFaces = [];
+  for (const face of faces) {
+    const poly = face.corners.map(p => ({
+      x: p.x * L.fitScale * v.zoom + L.offX + v.pan.x,
+      y: p.y * L.fitScale * v.zoom + L.offY + v.pan.y,
+    }));
+    screenFaces.push({ partId: face.partId, poly });
+    ctx.beginPath();
+    poly.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+    const rgb = hexToRgb(face.color);
+    ctx.fillStyle = rgbCss(rgbShade(rgb, face.shade));
+    ctx.fill();
+    ctx.strokeStyle = face.selected ? '#facc15' : 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = face.selected ? 2 : 1;
+    ctx.stroke();
+  }
+  v._screenFaces = screenFaces; // près → loin non garanti : voir robotHitTest (parcours inversé)
+}
+
+function _pointInPolygon(px, py, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+    const intersect = ((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+// Hit-test au clic : vrai test point-dans-polygone sur les faces RÉELLEMENT dessinées (mêmes
+// polygones écran que le rendu, voir renderRobotScene), parcourues de la plus PROCHE de la
+// caméra vers la plus loin (ordre inverse du peintre) — la première face qui contient le point
+// gagne. Remplace un premier essai par boîte englobante par pièce, qui se trompait dès que deux
+// pièces voisines avaient des boîtes englobantes qui se recouvraient sans que leurs faces
+// dessinées ne se recouvrent réellement (ex. la pompe, sous le pont, "gagnait" à tort face aux
+// flotteurs simplement parce que leurs boîtes englobantes se chevauchaient à l'écran).
+function robotHitTest(px, py) {
+  const faces = state.robotView._screenFaces;
+  if (!faces) return null;
+  for (let i = faces.length - 1; i >= 0; i--) {
+    if (_pointInPolygon(px, py, faces[i].poly)) return faces[i].partId;
+  }
+  return null;
+}
+
+function _animateRobotView(targetZoom, targetPan) {
+  const v = state.robotView;
+  if (v._anim) cancelAnimationFrame(v._anim);
+  const startZoom = v.zoom, startPan = { x: v.pan.x, y: v.pan.y };
+  const t0 = performance.now(), dur = 380;
+  function step(now) {
+    const t = Math.min(1, (now - t0) / dur);
+    const e = 1 - Math.pow(1 - t, 3); // easeOutCubic
+    v.zoom = startZoom + (targetZoom - startZoom) * e;
+    v.pan.x = startPan.x + (targetPan.x - startPan.x) * e;
+    v.pan.y = startPan.y + (targetPan.y - startPan.y) * e;
+    renderRobotScene();
+    v._anim = t < 1 ? requestAnimationFrame(step) : null;
+  }
+  v._anim = requestAnimationFrame(step);
+}
+
+// Recentre/zoome la caméra sur UNE pièce (voir selectRobotPart) — c'est ce qui donne
+// l'impression que "le détail s'affiche en zoom" demandée, en plus du panneau d'infos.
+function robotFocusOnPart(partId) {
+  const canvas = document.getElementById('robotCanvas');
+  const L = state.robotView._layout;
+  if (!canvas || !L) return;
+  const boxes = buildRobotBoxes(state.robotView.boxOpen).filter(b => b.partId === partId);
+  if (!boxes.length) return;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const b of boxes) {
+    for (const [sx, sy, sz] of ROBOT_CORNER_SIGNS) {
+      const p = robotProject(b.cx + sx * b.hx, b.cy + sy * b.hy, b.cz + sz * b.hz, L.thetaRad, L.tiltRad);
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const spanX = Math.max(0.001, (maxX - minX)) * L.fitScale;
+  const spanY = Math.max(0.001, (maxY - minY)) * L.fitScale;
+  const targetZoom = Math.max(0.9, Math.min(5, Math.min((canvas.width * 0.55) / spanX, (canvas.height * 0.55) / spanY)));
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  _animateRobotView(targetZoom, {
+    x: canvas.width / 2 - L.offX - cx * L.fitScale * targetZoom,
+    y: canvas.height / 2 - L.offY - cy * L.fitScale * targetZoom,
+  });
+}
+
+function resetRobotView() {
+  _animateRobotView(1, { x: 0, y: 0 });
+}
+
+const ROBOT_TOP_LEVEL_PARTS = ['hull', 'mast', 'gps', 'controlbox', 'battery', 'thrusters', 'pump', 'hose', 'bathyprobe'];
+
+// Liste texte des composants (à côté du modèle 3D) — accès alternatif au clic sur le modèle,
+// utile en particulier sur petit écran où une pièce peut être minuscule à l'écran.
+function renderRobotPartList() {
+  const list = document.getElementById('robotPartList');
+  if (!list) return;
+  const sel = state.robotView.selectedPart;
+  const selTop = sel && ROBOT_PARTS[sel]?.parent ? ROBOT_PARTS[sel].parent : sel;
+  list.innerHTML = ROBOT_TOP_LEVEL_PARTS.map(id => {
+    const p = ROBOT_PARTS[id];
+    return `<button class="robot-part-list-item${id === selTop ? ' active' : ''}" onclick="selectRobotPart('${id}')">
+      <span class="robot-part-list-name">${p.name}</span>
+      <span class="robot-part-list-price">${p.priceLabel || '—'}</span>
+    </button>`;
+  }).join('');
+}
+
+function selectRobotPart(partId) {
+  state.robotView.selectedPart = partId;
+  renderRobotScene();
+  renderRobotDetailPanel(partId);
+  renderRobotPartList();
+  robotFocusOnPart(partId);
+}
+
+function closeRobotDetail() {
+  state.robotView.selectedPart = null;
+  const panel = document.getElementById('robotDetailPanel');
+  if (panel) panel.style.display = 'none';
+  renderRobotScene();
+  renderRobotPartList();
+}
+
+function toggleRobotBoxOpen() {
+  state.robotView.boxOpen = !state.robotView.boxOpen;
+  const cur = state.robotView.selectedPart, part = ROBOT_PARTS[cur];
+  // Si on referme le boîtier alors qu'un sous-composant (désormais invisible) était affiché,
+  // on remonte sur le boîtier lui-même plutôt que de laisser un panneau orphelin.
+  if (!state.robotView.boxOpen && part?.parent) selectRobotPart(part.parent);
+  else { renderRobotScene(); if (cur) renderRobotDetailPanel(cur); }
+}
+
+function renderRobotDetailPanel(partId) {
+  const panel = document.getElementById('robotDetailPanel');
+  const body = document.getElementById('robotDetailBody');
+  const part = ROBOT_PARTS[partId];
+  if (!panel || !body || !part) { if (panel) panel.style.display = 'none'; return; }
+
+  let html = `<div class="robot-detail-cat">${part.category}</div>`;
+  if (part.parent) {
+    const parentPart = ROBOT_PARTS[part.parent];
+    html += `<button class="robot-breadcrumb" onclick="selectRobotPart('${part.parent}')">← ${parentPart ? parentPart.name : 'Retour'}</button>`;
+  }
+  html += `<div class="robot-detail-name">${part.name}</div>`;
+  html += `<p class="robot-detail-desc">${part.desc}</p>`;
+  if (part.specs?.length) {
+    html += `<div class="robot-spec-list">` + part.specs.map(([k, val]) => `<div class="robot-spec-row"><span>${k}</span><b>${val}</b></div>`).join('') + `</div>`;
+  }
+  html += `<div class="robot-price-row"><span>Prix indicatif</span><b>${part.priceLabel || '—'}</b></div>`;
+  if (part.buyUrl) {
+    html += `<a class="btn btn-accent btn-sm robot-buy-btn" href="${part.buyUrl}" target="_blank" rel="noopener noreferrer">🛒 ${part.buyLabel}</a>`;
+  } else if (part.buyLabel) {
+    html += `<div class="robot-buy-note">${part.buyLabel}</div>`;
+  }
+  if (part.composite) {
+    html += `<div class="robot-subpart-head">Composants à l'intérieur</div>`;
+    html += `<div class="robot-subpart-list">` + part.subParts.map(id => {
+      const sp = ROBOT_PARTS[id];
+      return sp ? `<button class="robot-subpart-item" onclick="selectRobotPart('${id}')"><span>${sp.name}</span><span>›</span></button>` : '';
+    }).join('') + `</div>`;
+    html += `<button class="btn btn-secondary btn-sm robot-toggle-box-btn" onclick="toggleRobotBoxOpen()">${state.robotView.boxOpen ? '🔒 Fermer le boîtier' : '🔓 Ouvrir le boîtier'}</button>`;
+  }
+  body.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+function _robotClientToCanvas(clientX, clientY, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: (clientX - rect.left) * (canvas.width / rect.width), y: (clientY - rect.top) * (canvas.height / rect.height) };
+}
+function _handleRobotClick(clientX, clientY, canvas) {
+  const p = _robotClientToCanvas(clientX, clientY, canvas);
+  const partId = robotHitTest(p.x, p.y);
+  if (partId) selectRobotPart(partId);
+}
+
+let _robotDrag = null, _robotTouch = null;
+
+function _initRobotPanZoomEvents() {
+  const canvas = document.getElementById('robotCanvas');
+  if (!canvas || state.robotView._dragInit) return;
+  state.robotView._dragInit = true;
+
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const v = state.robotView;
+    v.zoom = Math.max(0.5, Math.min(6, v.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    renderRobotScene();
+  }, { passive: false });
+
+  canvas.addEventListener('mousedown', e => {
+    _robotDrag = { startX: e.clientX, startY: e.clientY, rotation: state.robotView.rotation, tilt: state.robotView.tilt };
+    canvas.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!_robotDrag) return;
+    const v = state.robotView;
+    v.rotation = (_robotDrag.rotation + (e.clientX - _robotDrag.startX) * 0.4 + 360) % 360;
+    v.tilt = Math.max(5, Math.min(80, _robotDrag.tilt - (e.clientY - _robotDrag.startY) * 0.3));
+    renderRobotScene();
+  });
+  window.addEventListener('mouseup', e => {
+    if (!_robotDrag) return;
+    const moved = Math.hypot(e.clientX - _robotDrag.startX, e.clientY - _robotDrag.startY);
+    _robotDrag = null;
+    canvas.style.cursor = 'grab';
+    if (moved < 6) _handleRobotClick(e.clientX, e.clientY, canvas);
+  });
+
+  canvas.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      _robotTouch = { mode: 'rotate', x: t.clientX, y: t.clientY, rotation: state.robotView.rotation, tilt: state.robotView.tilt };
+    } else if (e.touches.length === 2) {
+      const [t1, t2] = e.touches;
+      _robotTouch = { mode: 'pinch', dist: Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY), zoom: state.robotView.zoom };
+    }
+  }, { passive: true });
+  canvas.addEventListener('touchmove', e => {
+    if (!_robotTouch) return;
+    const v = state.robotView;
+    if (_robotTouch.mode === 'rotate' && e.touches.length === 1) {
+      const t = e.touches[0];
+      v.rotation = (_robotTouch.rotation + (t.clientX - _robotTouch.x) * 0.4 + 360) % 360;
+      v.tilt = Math.max(5, Math.min(80, _robotTouch.tilt - (t.clientY - _robotTouch.y) * 0.3));
+      renderRobotScene();
+    } else if (_robotTouch.mode === 'pinch' && e.touches.length === 2) {
+      const [t1, t2] = e.touches;
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      v.zoom = Math.max(0.5, Math.min(6, _robotTouch.zoom * (dist / _robotTouch.dist)));
+      renderRobotScene();
+    }
+  }, { passive: true });
+  canvas.addEventListener('touchend', e => {
+    if (_robotTouch && _robotTouch.mode === 'rotate' && e.changedTouches.length) {
+      const t = e.changedTouches[0];
+      const moved = Math.hypot(t.clientX - _robotTouch.x, t.clientY - _robotTouch.y);
+      if (moved < 8) _handleRobotClick(t.clientX, t.clientY, canvas);
+    }
+    _robotTouch = null;
+  });
+
+  canvas.style.cursor = 'grab';
+}
+
+function initRobotSceneIfNeeded() {
+  _initRobotPanZoomEvents();
+  renderRobotPartList();
+  requestAnimationFrame(() => renderRobotScene());
+}
+
+// ============================================================
 // TAB NAVIGATION
 // ============================================================
 function setActiveTab(tab) {
@@ -6787,6 +7296,8 @@ function setActiveTab(tab) {
     renderBathyTab();
   } else if (tab === 'ponds') {
     updatePondsList();
+  } else if (tab === 'robot') {
+    requestAnimationFrame(() => initRobotSceneIfNeeded());
   }
 }
 
@@ -7724,6 +8235,7 @@ function init() {
     resizeSectionCanvas(); renderSectionCanvas();
     if (_leafletMapBathy) _leafletMapBathy.invalidateSize();
     renderBathyCanvas();
+    if (state.activeTab === 'robot') renderRobotScene();
   });
 
   // Réaffiche périodiquement l'état des boutons (léger, aucun accès réseau) pour que

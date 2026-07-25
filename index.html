@@ -12,7 +12,7 @@
       document.documentElement.setAttribute('data-theme', theme);
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=96">
+  <link rel="stylesheet" href="css/style.css?v=97">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" crossorigin=""/>
 </head>
@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v96</span>
+        <span class="logo-version" id="appVersion">v97</span>
       </div>
     </div>
     <div class="header-status">
@@ -73,6 +73,10 @@
     <button class="nav-tab" data-tab="ponds">
       <svg viewBox="0 0 20 20" fill="currentColor"><path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
       <span>Étangs</span>
+    </button>
+    <button class="nav-tab" data-tab="robot">
+      <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1.06A6.002 6.002 0 0116 10v1a2 2 0 012 2v2a2 2 0 01-2 2h-.17A2 2 0 0114 18H6a2 2 0 01-1.83-1H4a2 2 0 01-2-2v-2a2 2 0 012-2v-1a6.002 6.002 0 015-5.94V3a1 1 0 011-1zM7 11a1 1 0 100 2 1 1 0 000-2zm6 0a1 1 0 100 2 1 1 0 000-2z" clip-rule="evenodd"/></svg>
+      <span>Robot</span>
     </button>
   </nav>
 
@@ -865,6 +869,38 @@
       </div>
     </section>
 
+    <!-- ============================
+         TAB: ROBOT (modèle 3D interactif des composants)
+    ============================= -->
+    <section class="tab-panel" id="panel-robot">
+      <div class="energy-layout">
+        <div class="energy-grid robot-grid">
+
+          <div class="card robot-3d-card">
+            <div class="card-header">
+              <span>Modèle 3D du robot</span>
+              <button class="btn btn-ghost btn-sm" onclick="resetRobotView()" title="Réinitialiser le zoom/déplacement">⊙ Recentrer</button>
+            </div>
+            <p class="energy-disclaimer" style="padding-top:6px">Glissez pour pivoter, molette/pincement pour zoomer, cliquez sur une pièce pour voir sa fiche technique. Cliquez sur le boîtier électronique pour l'ouvrir et voir chaque composant à l'intérieur.</p>
+            <div class="robot-canvas-wrap" id="robotCanvasWrap">
+              <canvas id="robotCanvas"></canvas>
+              <div class="robot-detail-panel" id="robotDetailPanel" style="display:none">
+                <button class="bathy-cell-info-close" onclick="closeRobotDetail()" title="Fermer">✕</button>
+                <div id="robotDetailBody"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Liste des composants</div>
+            <p class="energy-disclaimer" style="padding-top:6px">Cliquez un composant pour le sélectionner dans le modèle 3D ci-contre.</p>
+            <div class="robot-part-list" id="robotPartList"></div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <div id="toast" class="toast" style="display:none"></div>
@@ -952,6 +988,6 @@
     window.db = firebase.firestore();
   } catch(e) { console.warn("Firebase init failed:", e.message); }
 </script>
-<script src="js/app.js?v=96"></script>
+<script src="js/app.js?v=97"></script>
 </body>
 </html>

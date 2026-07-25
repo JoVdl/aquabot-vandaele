@@ -1005,6 +1005,71 @@ svg { display: block; }
 .recap-value { font-size: 14px; font-weight: 700; color: var(--text-1); }
 
 /* ============================================================
+   ROBOT TAB — modèle 3D interactif des composants
+   ============================================================ */
+.robot-grid { grid-template-columns: 2fr 1fr; align-items: start; }
+@media (max-width: 660px) { .robot-grid { grid-template-columns: 1fr; } }
+.robot-canvas-wrap {
+  position: relative; width: 100%; aspect-ratio: 4 / 3;
+  background: var(--bg-app); margin-top: 10px; overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+.robot-canvas-wrap canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.robot-detail-panel {
+  position: absolute; top: 8px; right: 8px; z-index: 8;
+  width: 250px; max-width: calc(100% - 16px); max-height: calc(100% - 16px); overflow-y: auto;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35); padding: 12px 14px; font-size: 11px;
+}
+.robot-detail-cat {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--accent); margin-bottom: 4px;
+}
+.robot-breadcrumb {
+  display: block; background: none; border: none; color: var(--text-2); font-size: 10.5px;
+  cursor: pointer; padding: 0 0 6px; text-align: left;
+}
+.robot-breadcrumb:hover { color: var(--accent); }
+.robot-detail-name { font-size: 13.5px; font-weight: 800; color: var(--text-1); padding-right: 18px; margin-bottom: 4px; }
+.robot-detail-desc { color: var(--text-2); line-height: 1.5; margin-bottom: 8px; }
+.robot-spec-list { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.robot-spec-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 4px 0; color: var(--text-2);
+}
+.robot-spec-row b { color: var(--text-1); font-weight: 700; text-align: right; }
+.robot-price-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; margin-bottom: 8px;
+}
+.robot-price-row b { color: var(--text-1); font-weight: 800; }
+.robot-buy-btn { display: block; text-align: center; text-decoration: none; }
+.robot-buy-note { font-size: 10.5px; color: var(--text-3); font-style: italic; margin-bottom: 4px; }
+.robot-subpart-head {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-3); margin: 10px 0 4px;
+}
+.robot-subpart-list { display: flex; flex-direction: column; gap: 3px; }
+.robot-subpart-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 6px 9px; color: var(--text-1); font-size: 11px; cursor: pointer; text-align: left;
+}
+.robot-subpart-item:hover { border-color: var(--accent); }
+.robot-subpart-item span:last-child { color: var(--text-3); }
+.robot-toggle-box-btn { width: 100%; margin-top: 10px; }
+.robot-part-list { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.robot-part-list-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 10px; cursor: pointer; text-align: left; font-size: 11.5px;
+}
+.robot-part-list-item:hover { border-color: var(--text-3); }
+.robot-part-list-item.active { border-color: var(--accent); background: var(--accent-glow); }
+.robot-part-list-name { color: var(--text-1); font-weight: 600; }
+.robot-part-list-price { color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ============================================================
    SATELLITE / LEAFLET MAP
    ============================================================ */
 #leaflet-container {
