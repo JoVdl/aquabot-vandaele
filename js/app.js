@@ -6840,9 +6840,9 @@ const ROBOT_PARTS = {
     priceLabel: '≈ 259 €', buyUrl: 'https://www.amazon.fr/Batterie-100ah-12v-d%C3%A9charge-Lente-ULTIMATRON/dp/B08QV9FRSB', buyLabel: 'Batterie Gel 100Ah — Amazon.fr',
   },
   thrusters: {
-    name: 'Propulseurs (×4, montage en X)', category: 'Propulsion',
-    desc: "4 petits moteurs de barque électriques 12V, un sous chaque flotteur, orientés à 45° de l'axe avant-arrière (montage en X) — ce montage holonome permet d'avancer, de translater latéralement et de pivoter sur place, sans gouvernail.",
-    specs: [['Type', 'Moteur de barque électrique 12V'], ['Commande', 'Pont en H BTS7960'], ['Disposition', 'AV-G / AV-D / AR-G / AR-D']],
+    name: 'Propulseurs (×4, N/S/E/O)', category: 'Propulsion',
+    desc: "4 moteurs de barque électriques 12V façon torpille (corps profilé noir, arbre de fixation vertical, safran sous le nez, hélice 3 pales — comme le modèle réel), placés dans les espaces libres du robot plutôt que sous les flotteurs : un à l'avant et un à l'arrière dans le couloir central (au-delà des flotteurs), un à gauche et un à droite dans l'espace entre les 2 flotteurs de chaque ponton. Cette disposition permet d'avancer, de translater latéralement et de pivoter sur place, sans gouvernail.",
+    specs: [['Type', 'Moteur de barque électrique 12V (façon torpille, hélice 3 pales)'], ['Commande', 'Pont en H BTS7960'], ['Disposition', 'Avant / Arrière / Gauche / Droit (espaces libres)']],
     priceLabel: '≈ 40-60 € / pièce (indicatif)', buyUrl: 'https://www.gotronic.fr/cat-moteurs-cc-1089.htm', buyLabel: 'Moteurs CC étanches — Gotronic',
   },
   pump: {
@@ -6859,8 +6859,8 @@ const ROBOT_PARTS = {
   },
   bathyprobe: {
     name: 'Sonde bathymétrique', category: 'Curage',
-    desc: "Plaque en bout de tige, sur son propre petit motoréducteur + crémaillère (même principe que le mécanisme de la pompe, mais un actionneur dédié plus petit), pour relever la profondeur d'eau et de vase case par case, indépendamment du cycle de pompage.",
-    specs: [['Détection', 'Pic de courant (interface eau/vase, puis fond dur)'], ['Plaque', '10×10 cm']],
+    desc: "Plaque en bout de tige, sur son propre motoréducteur + pignon + crémaillère verticale (même principe que le mécanisme de la pompe, voir « Pompe de relevage »), monté juste à côté de celui de la pompe en haut de la tour de levage : sa crémaillère descend juste à côté de celle de la pompe, sans la gêner, pour sonder au plus près de là où la pompe passe. Relève la profondeur d'eau et de vase case par case, indépendamment du cycle de pompage.",
+    specs: [['Détection', 'Pic de courant (interface eau/vase, puis fond dur)'], ['Mécanisme', 'Motoréducteur 12V (type portail) + pignon/crémaillère, dédié'], ['Plaque', '10×10 cm']],
     buyLabel: 'Fabrication sur mesure',
   },
 };
@@ -7014,20 +7014,63 @@ function buildRobotBoxes(boxOpen) {
     push(bx0 - bhx * 0.2, by0 + bhy * 0.55,  bz - bhz * 0.5, 0.011, 0.011, 0.006, '#7c3aed', 'compass');
   }
 
-  // 4 propulseurs — petits moteurs de barque électriques 12V, un sous chaque flotteur (voir
-  // config.h : montage en X, AV-G/AV-D/AR-G/AR-D)
-  for (const [tx, ty] of floatPos) {
-    push(tx, ty, -0.24, 0.045, 0.045, 0.055, '#334155', 'thrusters'); // corps moteur
-    push(tx, ty, -0.42, 0.014, 0.014, 0.13,  '#475569', 'thrusters'); // arbre immergé
-    push(tx, ty, -0.58, 0.06, 0.016, 0.06,   '#0ea5e9', 'thrusters'); // hélice
+  // 4 propulseurs façon "torpille" (photo réelle : corps profilé noir, arbre de fixation
+  // vertical, safran sous le nez, hélice 3 pales) — dans les espaces libres du robot (nord/sud
+  // dans le couloir central au-delà des flotteurs, est/ouest dans l'espace entre les 2 flotteurs
+  // de chaque ponton), pas sous les flotteurs eux-mêmes.
+  const thrusterMounts = [
+    { x: 0, y: robotHalfY, axis: 'y', sign: 1 },    // nord (avant)
+    { x: 0, y: -robotHalfY, axis: 'y', sign: -1 },  // sud (arrière)
+    { x: fCenterX, y: 0, axis: 'x', sign: 1 },      // est (droit)
+    { x: -fCenterX, y: 0, axis: 'x', sign: -1 },    // ouest (gauche)
+  ];
+  for (const { x: mx, y: my, axis, sign } of thrusterMounts) {
+    const place = (u, v, z, hu, hv, hz, color) => {
+      if (axis === 'y') push(mx + v, my + sign * u, z, hv, hu, hz, color, 'thrusters');
+      else push(mx + sign * u, my + v, z, hu, hv, hz, color, 'thrusters');
+    };
+    const shaftTopZ = -0.20, shaftBotZ = -0.40;
+    push(mx, my, (shaftTopZ + shaftBotZ) / 2, 0.012, 0.012, (shaftTopZ - shaftBotZ) / 2, '#111827', 'thrusters'); // arbre de fixation
+    const bz = shaftBotZ;
+    place(0.018, 0, bz, 0.018, 0.026, 0.026, '#0b0f19'); // nez
+    place(0.081, 0, bz, 0.045, 0.032, 0.032, '#0b0f19'); // corps principal
+    place(0.138, 0, bz, 0.012, 0.028, 0.028, '#0b0f19'); // culot arrière
+    place(0.03, 0, bz - 0.045, 0.007, 0.005, 0.018, '#0b0f19'); // safran sous le nez
+    const propU = 0.176;
+    place(propU, 0, bz, 0.01, 0.014, 0.014, '#111827'); // moyeu de l'hélice
+    for (const [dv, dz] of [[0, 0.032], [0.028, -0.016], [-0.028, -0.016]]) {
+      place(propU + 0.006, dv, bz + dz, 0.006, 0.017, 0.017, '#111827'); // pale
+    }
   }
 
-  // Sonde bathymétrique — même principe (motoréducteur + crémaillère verticale) que le
-  // mécanisme de la pompe, mais un actionneur dédié plus petit, en porte-à-faux au bord de la
-  // plateforme (pas sous un flotteur, pour rester bien visible/dégagé).
-  const px = floatPos[2][0] + fHalfX + 0.06, py = floatPos[2][1];
-  push(px, py, 0.35, 0.014, 0.014, 0.3, '#78716c', 'bathyprobe');
-  push(px, py, -0.05, 0.06, 0.06, 0.008, '#a8a29e', 'bathyprobe');
+  // Sonde bathymétrique — même mécanisme que la pompe (motoréducteur + pignon + crémaillère
+  // verticale), avec un second motoréducteur monté juste à côté de celui de la pompe, en haut de
+  // la même tour : sa crémaillère descend juste à côté de celle de la pompe (décalée de
+  // probeDX), sans la gêner, pour sonder au plus près de là où la pompe passe. Porte la sonde
+  // (tube + plaque) tout en bas, à la place du corps de pompe.
+  const probeDX = -0.14; // décalage vs la crémaillère de la pompe (x=0), à l'écart du pignon (x≈0.05) et des montants de la tour (x=±0.11)
+  push(probeDX - 0.02, towerCy, motorBaseZ + 0.045, 0.048, 0.045, 0.045, '#6b7280', 'bathyprobe'); // boîtier principal
+  push(probeDX - 0.02 + 0.018, towerCy - 0.018, motorBaseZ + 0.10, 0.02, 0.018, 0.018, '#6b7280', 'bathyprobe'); // compartiment supérieur
+  push(probeDX - 0.02 + 0.018, towerCy - 0.018, motorBaseZ + 0.122, 0.004, 0.004, 0.006, '#374151', 'bathyprobe'); // vis du couvercle
+  push(probeDX - 0.02, towerCy, motorBaseZ - 0.006, 0.07, 0.06, 0.006, '#4b5563', 'bathyprobe'); // plaque de fixation
+
+  push(probeDX, towerCy, armCz, rackX, rackX, armHz, '#94a3b8', 'bathyprobe'); // corps de la crémaillère
+  for (let i = 0; i < rackToothCount; i++) {
+    const tz = armZBot + (i + 0.5) * (armZTop - armZBot) / rackToothCount;
+    push(probeDX - 0.006, towerCy, tz, 0.006, 0.012, 0.012, '#cbd5e1', 'bathyprobe'); // dent (côté opposé à la pompe)
+  }
+  const probeGearCx = probeDX - 0.05, probeGearCz = armZTop - 0.01;
+  push(probeGearCx, towerCy, probeGearCz, gearR * 0.4, gearThick, gearR * 0.4, '#8aa63c', 'bathyprobe'); // moyeu central
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    push(probeGearCx + Math.cos(a) * gearR, towerCy, probeGearCz + Math.sin(a) * gearR, 0.009, gearThick, 0.009, '#a3c94f', 'bathyprobe'); // dent du pignon
+  }
+  push(probeGearCx, towerCy - gearThick - 0.006, probeGearCz, 0.005, 0.006, 0.005, '#374151', 'bathyprobe'); // axe du pignon
+
+  // Sonde (tube + plaque), fixée tout en bas de cette crémaillère comme la pompe l'est à la
+  // sienne — position de repos au niveau du pont.
+  push(probeDX, towerCy, -0.08, 0.014, 0.014, 0.08, '#78716c', 'bathyprobe'); // tube
+  push(probeDX, towerCy, -0.17, 0.05, 0.05, 0.007, '#a8a29e', 'bathyprobe'); // plaque
 
   // Mode édition (voir "ROBOT ÉDITION" plus bas) : décalage/échelle de groupe appliqués aux
   // pièces existantes (rigide — déplace/redimensionne toutes les boxes d'une même pièce ensemble,
