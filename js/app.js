@@ -6793,7 +6793,7 @@ const ROBOT_PARTS = {
   controlbox: {
     name: 'Caisse électrique (batteries + électronique)', category: 'Électronique',
     desc: "Grosse caisse en fer sur l'un des flotteurs, regroupant les batteries et toute l'électronique de pilotage — cliquez sur « Ouvrir la caisse » ci-dessous pour voir chaque composant à l'intérieur.",
-    specs: [['Protection', 'IP65 / IP67'], ['Contenu', "Batterie, ESP32, 4× pilotes moteurs, relais pompe, capteurs de courant, boussole"]],
+    specs: [['Dimensions', '85 × 35 × 35 cm'], ['Protection', 'IP65 / IP67'], ['Contenu', "Batterie, ESP32, 4× pilotes moteurs, relais pompe, capteurs de courant, boussole"]],
     buyLabel: 'Caisse étanche du commerce',
     composite: true, subParts: ['battery', 'esp32', 'drivers', 'relay', 'currentsensors', 'compass'],
   },
@@ -6934,10 +6934,12 @@ function buildRobotBoxes(boxOpen) {
   push(mx, my, 0.74, 0.05, 0.05, 0.02, '#e2e8f0', 'gps');
   push(mx, my, 0.80, 0.006, 0.006, 0.04, '#cbd5e1', 'gps');
 
-  // Grosse caisse en fer (batteries + composants électriques) — sur le flotteur opposé au mât.
+  // Grosse caisse en fer (85×35×35 cm), sur le flotteur opposé au mât — sa plus grande dimension
+  // (85cm) posée dans le sens de la largeur du robot, comme les flotteurs eux-mêmes.
   // Coque fermée, OU PCB + batterie + sous-composants une fois "ouverte".
   const [bx0, by0] = floatPos[3];
-  const bz = 0.2, bhx = 0.16, bhy = 0.13, bhz = 0.09;
+  const bhx = 0.425, bhy = 0.175, bhz = 0.175; // 85 × 35 × 35 cm
+  const bz = (-0.05 + fHalfZ) + bhz; // posée sur le dessus du flotteur (float top = -0.05 + fHalfZ)
   if (!boxOpen) {
     push(bx0, by0, bz, bhx, bhy, bhz, '#3f4a5a', 'controlbox');
   } else {
