@@ -7029,7 +7029,7 @@ function buildRobotBoxes(boxOpen) {
       if (axis === 'y') push(mx + v, my + sign * u, z, hv, hu, hz, color, 'thrusters');
       else push(mx + sign * u, my + v, z, hu, hv, hz, color, 'thrusters');
     };
-    const shaftTopZ = -0.20, shaftBotZ = -0.40;
+    const shaftTopZ = 0, shaftBotZ = -0.40; // remonte jusqu'au plan de l'armature (z=0, niveau des traverses) pour s'y fixer
     push(mx, my, (shaftTopZ + shaftBotZ) / 2, 0.012, 0.012, (shaftTopZ - shaftBotZ) / 2, '#111827', 'thrusters'); // arbre de fixation
     const bz = shaftBotZ;
     place(0.018, 0, bz, 0.018, 0.026, 0.026, '#0b0f19'); // nez
