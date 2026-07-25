@@ -6768,14 +6768,14 @@ document.addEventListener('click', e => {
 const ROBOT_PARTS = {
   hull: {
     name: 'Flotteurs Rotax (×4)', category: 'Structure',
-    desc: "4 flotteurs Rotax rectangulaires montés par paires à l'avant et à l'arrière de la plateforme, leur longueur (106cm) suivant la LARGEUR du robot — laissant l'espace central libre, entre les deux paires, pour l'armature de levage de la pompe. Répartit la flottaison et facilite le transport/l'entretien (un flotteur endommagé se remplace seul).",
-    specs: [['Marque', 'Rotax'], ['Dimensions', '106 × 54 × 30 cm (L × l × H)'], ['Quantité', '4'], ['Robot (l × L)', '≈ 2 × 2,5 m']],
+    desc: "4 flotteurs Rotax rectangulaires formant 2 pontons gauche/droite (chacun fait de 2 flotteurs bout à bout, avant + arrière), avec un couloir central d'environ 37cm entre les deux pontons — c'est là que se trouve l'armature de levage de la pompe. Répartit la flottaison et facilite le transport/l'entretien (un flotteur endommagé se remplace seul).",
+    specs: [['Marque', 'Rotax'], ['Dimensions', '106 × 54 × 30 cm (L × l × H)'], ['Quantité', '4'], ['Espace entre pontons', '≈ 37 cm']],
     buyLabel: 'Fabrication sur mesure',
   },
   frame: {
-    name: 'Armature centrale (échelle acier)', category: 'Structure',
-    desc: "Châssis en échelle (rails + traverses en acier), dans l'espace libre entre les flotteurs avant et arrière — porte le motoréducteur et guide la crémaillère verticale de la pompe (voir « Pompe de relevage ») du fond de l'eau jusqu'à la surface sans qu'elle ne heurte les flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait librement.",
-    specs: [['Matériau', 'Acier (rails + traverses soudées)'], ['Rôle', 'Guidage vertical de la pompe']],
+    name: 'Armature centrale (échelle, tube 3×3cm)', category: 'Structure',
+    desc: "Châssis en échelle, en tube d'acier carré 3×3cm (rails + traverses soudées), dans le couloir central entre les pontons gauche et droite — porte le motoréducteur et guide la crémaillère verticale de la pompe (voir « Pompe de relevage ») du fond de l'eau jusqu'à la surface, centrée sur la longueur du robot, sans qu'elle ne heurte les flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait librement.",
+    specs: [['Matériau', "Tube acier carré 3 × 3 cm"], ['Rôle', 'Guidage vertical de la pompe']],
     buyLabel: 'Fabrication sur mesure',
   },
   mast: {
@@ -6893,12 +6893,15 @@ function buildRobotBoxes(boxOpen) {
   const boxes = [];
   const push = (cx, cy, cz, hx, hy, hz, color, partId) => boxes.push({ cx, cy, cz, hx, hy, hz, color, partId });
 
-  // 4 flotteurs Rotax rectangulaires (106 × 54 × 30 cm), montés PAR PAIRES à l'avant et à
-  // l'arrière — pas aux 4 coins d'une grille — leur longueur (106cm) suivant la LARGEUR du
-  // robot (2m), leur largeur (54cm) suivant sa LONGUEUR (2,5m). L'espace central entre les deux
-  // paires (voir 'frame' plus bas) reste libre pour l'armature de levage de la pompe.
-  const fHalfX = 0.53, fHalfY = 0.27, fHalfZ = 0.15; // 106×54×30 cm
-  const fCenterX = fHalfX + 0.01, fCenterY = 1.25 - fHalfY; // robot ≈ 2,12 × 2,5 m
+  // 4 flotteurs Rotax rectangulaires (106 × 54 × 30 cm), formant 2 pontons GAUCHE/DROITE (chacun
+  // fait de 2 flotteurs bout à bout, avant + arrière), avec un couloir central d'environ 37cm
+  // ENTRE les deux pontons (sur le côté longueur, photo du châssis réel) — pas un espace avant/
+  // arrière. Leur longueur (106cm) suit donc la LONGUEUR du robot, leur largeur (54cm) sa LARGEUR.
+  // C'est dans ce couloir central que se trouve l'armature de levage de la pompe (voir 'frame').
+  const fHalfX = 0.27, fHalfY = 0.53, fHalfZ = 0.15; // 106×54×30 cm
+  const sideGap = 0.37; // espace mesuré par le client entre les 2 pontons gauche/droite
+  const fCenterX = fHalfX + sideGap / 2;
+  const fCenterY = fHalfY + 0.01; // flotteurs avant/arrière du même côté quasi bout à bout
   const floatPos = [[fCenterX, fCenterY], [-fCenterX, fCenterY], [fCenterX, -fCenterY], [-fCenterX, -fCenterY]];
   for (const [fx, fy] of floatPos) push(fx, fy, -0.05, fHalfX, fHalfY, fHalfZ, '#1e293b', 'hull');
 
@@ -6906,7 +6909,7 @@ function buildRobotBoxes(boxOpen) {
   // avant/arrière — porte en haut le motoréducteur + pignon qui entraîne la crémaillère verticale
   // au bout de laquelle la pompe est fixée, la guidant du fond jusqu'à la surface sans qu'elle ne
   // heurte les flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait.
-  const railX = 0.09, railT = 0.014;
+  const railX = 0.09, railT = 0.015; // tube carré 3×3 cm
   const armZTop = 0.95, armZBot = -0.65;
   const armCz = (armZTop + armZBot) / 2, armHz = (armZTop - armZBot) / 2;
   push(railX, 0, armCz, railT, railT, armHz, '#64748b', 'frame');
@@ -6935,10 +6938,10 @@ function buildRobotBoxes(boxOpen) {
   push(mx, my, 0.80, 0.006, 0.006, 0.04, '#cbd5e1', 'gps');
 
   // Grosse caisse en fer (85×35×35 cm), sur le flotteur opposé au mât — sa plus grande dimension
-  // (85cm) posée dans le sens de la largeur du robot, comme les flotteurs eux-mêmes.
+  // (85cm) posée dans le sens de la longueur du robot, comme les flotteurs eux-mêmes.
   // Coque fermée, OU PCB + batterie + sous-composants une fois "ouverte".
   const [bx0, by0] = floatPos[3];
-  const bhx = 0.425, bhy = 0.175, bhz = 0.175; // 85 × 35 × 35 cm
+  const bhx = 0.175, bhy = 0.425, bhz = 0.175; // 85 × 35 × 35 cm
   const bz = (-0.05 + fHalfZ) + bhz; // posée sur le dessus du flotteur (float top = -0.05 + fHalfZ)
   if (!boxOpen) {
     push(bx0, by0, bz, bhx, bhy, bhz, '#3f4a5a', 'controlbox');
