@@ -6847,7 +6847,7 @@ const ROBOT_PARTS = {
   },
   pump: {
     name: 'Pompe de relevage + mécanisme de levage', category: 'Curage',
-    desc: "Pompe submersible cylindrique en inox, avec poignée de transport et cage de protection en acier autour de la crépine (comme sur la pompe réelle), fixée au bout d'une crémaillère verticale entraînée par un motoréducteur de type moteur de portail (avec pignon) monté en haut de la tour de levage (voir « Armature complète ») — la fait descendre dans la vase (jusqu'à 61cm sous l'eau) puis remonter jusqu'au-dessus du pont (91cm), guidée sans à-coups. Position de repos (hors cycle de pompage) au niveau du pont. Détection du fond par pic de courant (voir config.h).",
+    desc: "Pompe submersible cylindrique en inox, avec poignée de transport et cage de protection en acier autour de la crépine (comme sur la pompe réelle), fixée tout en bas d'une crémaillère verticale dentée. Un motoréducteur de type moteur de portail (boîtier gris, compartiment supérieur vissé, plaque de fixation), monté en haut de la tour de levage (voir « Armature complète »), entraîne un pignon denté sur son flanc qui engrène cette crémaillère sur toute sa hauteur — fait descendre la pompe dans la vase (jusqu'à 61cm sous l'eau) puis la remonter jusqu'au-dessus du pont (91cm), guidée sans à-coups. Position de repos (hors cycle de pompage) au niveau du pont. Détection du fond par pic de courant (voir config.h).",
     specs: [['Puissance pompe', '1800 W'], ['Alimentation pompe', '230V AC'], ['Débit', '≈ 500 L/min (paramétrable)'], ['Mécanisme de levage', 'Motoréducteur 12V (type portail) + pignon/crémaillère'], ['Course', '91cm au-dessus du pont → 61cm sous l\'eau'], ['Position de repos', 'Niveau du pont'], ['Protection', 'Cage acier autour de la crépine']],
     priceLabel: '≈ 180 € (pompe, indicatif)', buyUrl: 'https://www.vevor.fr/pompes-a-eau-c_11090', buyLabel: 'Pompes eaux chargées — VEVOR',
   },
@@ -6945,11 +6945,36 @@ function buildRobotBoxes(boxOpen) {
     push(-towerHalf, towerCy, z, tubeT, towerHalf, tubeT, '#64748b', 'frame');
   }
 
-  // Mécanisme de levage de la pompe : motoréducteur type moteur de portail (avec pignon), en haut
-  // de la tour, entraînant la crémaillère verticale (pleine course, 91cm → -61cm) au bout de
-  // laquelle la pompe est fixée.
-  push(0, towerCy, armZTop + 0.06, 0.05, 0.05, 0.055, '#1e293b', 'pump'); // motoréducteur
-  push(0, towerCy, armCz, 0.016, 0.016, armHz, '#94a3b8', 'pump'); // crémaillère
+  // Mécanisme de levage de la pompe : motoréducteur type moteur de portail (photo réelle) — gros
+  // boîtier gris, petit compartiment supérieur (couvercle vissé) et plaque de fixation à la base
+  // — monté en haut de la tour, avec son pignon denté visible sur le flanc.
+  const motorCx = 0.02, motorBaseZ = armZTop + 0.03;
+  push(motorCx, towerCy, motorBaseZ + 0.045, 0.048, 0.045, 0.045, '#6b7280', 'pump'); // boîtier principal
+  push(motorCx - 0.018, towerCy - 0.018, motorBaseZ + 0.10, 0.02, 0.018, 0.018, '#6b7280', 'pump'); // compartiment supérieur
+  push(motorCx - 0.018, towerCy - 0.018, motorBaseZ + 0.122, 0.004, 0.004, 0.006, '#374151', 'pump'); // vis du couvercle
+  push(motorCx, towerCy, motorBaseZ - 0.006, 0.07, 0.06, 0.006, '#4b5563', 'pump'); // plaque de fixation
+
+  // Crémaillère verticale (pleine course, 91cm → -61cm), fixée à la pompe tout en bas — SES DENTS
+  // (petits plots sur le flanc, sur toute la hauteur) passent par le pignon du motoréducteur, qui
+  // l'entraîne pour faire monter/descendre la pompe.
+  const rackX = 0.016;
+  push(0, towerCy, armCz, rackX, rackX, armHz, '#94a3b8', 'pump'); // corps de la crémaillère
+  const rackToothCount = 16;
+  for (let i = 0; i < rackToothCount; i++) {
+    const tz = armZBot + (i + 0.5) * (armZTop - armZBot) / rackToothCount;
+    push(rackX + 0.006, towerCy, tz, 0.006, 0.012, 0.012, '#cbd5e1', 'pump'); // dent
+  }
+
+  // Pignon denté du motoréducteur, sur le flanc, engrenant la crémaillère juste en dessous du
+  // boîtier — le corps du pignon est dans le plan X/Z (comme la crémaillère, verticale), pour
+  // qu'ils s'engrènent visuellement l'un dans l'autre.
+  const gearCx = 0.05, gearCz = armZTop - 0.01, gearR = 0.03, gearThick = 0.011;
+  push(gearCx, towerCy, gearCz, gearR * 0.4, gearThick, gearR * 0.4, '#8aa63c', 'pump'); // moyeu central
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    push(gearCx + Math.cos(a) * gearR, towerCy, gearCz + Math.sin(a) * gearR, 0.009, gearThick, 0.009, '#a3c94f', 'pump'); // dent du pignon
+  }
+  push(gearCx, towerCy - gearThick - 0.006, gearCz, 0.005, 0.006, 0.005, '#374151', 'pump'); // axe du pignon
   // Pompe submersible cylindrique en inox (photo réelle), en position de repos (niveau du pont,
   // z=0) — plus trapue qu'une simple boîte pour se rapprocher d'un corps de pompe.
   push(0, towerCy, 0, 0.07, 0.07, 0.14, '#c4c9d1', 'pump'); // corps de pompe (inox)
