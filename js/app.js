@@ -6767,15 +6767,21 @@ document.addEventListener('click', e => {
 // n'ont pas de produit du commerce équivalent identifié avec confiance.
 const ROBOT_PARTS = {
   hull: {
-    name: 'Flotteurs modulaires (×6)', category: 'Structure',
-    desc: "Plateforme flottante en 6 flotteurs modulaires assemblés en grille 3×2, comme sur le robot réel — répartit la flottaison et facilite le transport et l'entretien (un flotteur endommagé se remplace seul, sans démonter tout le châssis).",
-    specs: [['Quantité', '6'], ['Disposition', '3 colonnes × 2 rangées'], ['Assemblage', 'Boulonné sur cadre aluminium']],
+    name: 'Flotteurs (×4)', category: 'Structure',
+    desc: "Plateforme flottante en 4 flotteurs rectangulaires, un à chaque coin, laissant l'espace central libre pour l'armature de levage de la pompe — répartit la flottaison et facilite le transport et l'entretien (un flotteur endommagé se remplace seul, sans démonter tout le châssis).",
+    specs: [['Quantité', '4'], ['Disposition', 'Un par coin'], ['Assemblage', 'Boulonné sur cadre aluminium']],
+    buyLabel: 'Fabrication sur mesure',
+  },
+  frame: {
+    name: 'Armature centrale (tube carré)', category: 'Structure',
+    desc: "Châssis en tube d'acier carré, au centre de la plateforme, entre les 4 flotteurs — guide la crémaillère verticale de la pompe (voir « Pompe de relevage ») du fond de l'eau jusqu'à la surface sans qu'elle ne heurte les flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait librement.",
+    specs: [['Matériau', 'Tube acier carré'], ['Rôle', 'Guidage vertical de la pompe']],
     buyLabel: 'Fabrication sur mesure',
   },
   mast: {
-    name: 'Mât central', category: 'Structure',
-    desc: "Tube support pour l'antenne GPS et le boîtier électronique, fixé au centre de la plateforme — les hisse au-dessus de l'eau et des projections.",
-    specs: [['Hauteur', '≈ 0,8 m au-dessus du pont'], ['Matériau', 'Aluminium ou inox']],
+    name: 'Mât GPS', category: 'Structure',
+    desc: "Tube support pour l'antenne GPS, fixé sur l'un des flotteurs (le centre de la plateforme étant occupé par l'armature de la pompe) — la hisse au-dessus de l'eau et des projections.",
+    specs: [['Hauteur', '≈ 0,7 m au-dessus du pont'], ['Matériau', 'Aluminium ou inox']],
     buyLabel: 'Fabrication sur mesure',
   },
   gps: {
@@ -6785,11 +6791,11 @@ const ROBOT_PARTS = {
     priceLabel: '≈ 230 €', buyUrl: 'https://www.sparkfun.com/sparkfun-gps-rtk2-board-zed-f9p-qwiic-gps-15136.html', buyLabel: 'SparkFun GPS-RTK2 (ZED-F9P)',
   },
   controlbox: {
-    name: 'Boîtier électronique', category: 'Électronique',
-    desc: "Boîtier étanche regroupant toute l'électronique de pilotage — cliquez sur « Ouvrir le boîtier » ci-dessous pour voir chaque composant à l'intérieur.",
-    specs: [['Protection', 'IP65 / IP67'], ['Contenu', "ESP32, 4× pilotes moteurs, relais pompe, capteurs de courant, boussole"]],
-    buyLabel: 'Boîtier étanche du commerce',
-    composite: true, subParts: ['esp32', 'drivers', 'relay', 'currentsensors', 'compass'],
+    name: 'Caisse électrique (batteries + électronique)', category: 'Électronique',
+    desc: "Grosse caisse en fer sur l'un des flotteurs, regroupant les batteries et toute l'électronique de pilotage — cliquez sur « Ouvrir la caisse » ci-dessous pour voir chaque composant à l'intérieur.",
+    specs: [['Protection', 'IP65 / IP67'], ['Contenu', "Batterie, ESP32, 4× pilotes moteurs, relais pompe, capteurs de courant, boussole"]],
+    buyLabel: 'Caisse étanche du commerce',
+    composite: true, subParts: ['battery', 'esp32', 'drivers', 'relay', 'currentsensors', 'compass'],
   },
   esp32: {
     name: 'Microcontrôleur ESP32-WROOM-32', category: 'Électronique', parent: 'controlbox',
@@ -6822,22 +6828,22 @@ const ROBOT_PARTS = {
     priceLabel: '≈ 5 €', buyUrl: 'https://www.ebay.fr/itm/GY-273-QMC5883L-HMC5883L-Variant-3-Axis-Compass-Magnetometer-Module-SOLDERED-/282834089264', buyLabel: 'GY-273 QMC5883L — eBay',
   },
   battery: {
-    name: 'Batterie 12V (décharge lente)', category: 'Alimentation',
+    name: 'Batterie 12V (décharge lente)', category: 'Alimentation', parent: 'controlbox',
     desc: "Alimente l'électronique et les 4 propulseurs. La pompe (230V, 1800W) est alimentée séparément — voir l'onglet Énergie pour le dimensionnement complet, elle domine largement le bilan électrique du robot.",
     specs: [['Tension', '12V'], ['Capacité', '100 Ah'], ['Type', 'Gel / décharge lente']],
     priceLabel: '≈ 259 €', buyUrl: 'https://www.amazon.fr/Batterie-100ah-12v-d%C3%A9charge-Lente-ULTIMATRON/dp/B08QV9FRSB', buyLabel: 'Batterie Gel 100Ah — Amazon.fr',
   },
   thrusters: {
     name: 'Propulseurs (×4, montage en X)', category: 'Propulsion',
-    desc: "4 propulseurs immergés aux 4 coins de la plateforme, orientés à 45° de l'axe avant-arrière (montage en X) — ce montage holonome permet d'avancer, de translater latéralement et de pivoter sur place, sans gouvernail.",
-    specs: [['Alimentation', '12V DC'], ['Commande', 'Pont en H BTS7960'], ['Disposition', 'AV-G / AV-D / AR-G / AR-D']],
+    desc: "4 petits moteurs de barque électriques 12V, un sous chaque flotteur, orientés à 45° de l'axe avant-arrière (montage en X) — ce montage holonome permet d'avancer, de translater latéralement et de pivoter sur place, sans gouvernail.",
+    specs: [['Type', 'Moteur de barque électrique 12V'], ['Commande', 'Pont en H BTS7960'], ['Disposition', 'AV-G / AV-D / AR-G / AR-D']],
     priceLabel: '≈ 40-60 € / pièce (indicatif)', buyUrl: 'https://www.gotronic.fr/cat-moteurs-cc-1089.htm', buyLabel: 'Moteurs CC étanches — Gotronic',
   },
   pump: {
-    name: 'Pompe de relevage (eaux chargées)', category: 'Curage',
-    desc: "Pompe immergée qui descend dans la vase via un treuil motorisé (voir config.h : détection du fond par pic de courant) — c'est elle qui domine tout le dimensionnement électrique et solaire du robot (voir onglet Énergie).",
-    specs: [['Puissance', '1800 W'], ['Alimentation', '230V AC'], ['Débit', '≈ 500 L/min (paramétrable)']],
-    priceLabel: '≈ 180 € (indicatif)', buyUrl: 'https://www.vevor.fr/pompes-a-eau-c_11090', buyLabel: 'Pompes eaux chargées — VEVOR',
+    name: 'Pompe de relevage + mécanisme de levage', category: 'Curage',
+    desc: "Pompe fixée au bout d'une crémaillère verticale, entraînée par un motoréducteur de type moteur de portail (avec pignon) monté en haut de l'armature centrale (voir « Armature centrale ») — la fait descendre dans la vase puis remonter jusqu'à la surface, guidée sans à-coups. Détection du fond par pic de courant (voir config.h).",
+    specs: [['Puissance pompe', '1800 W'], ['Alimentation pompe', '230V AC'], ['Débit', '≈ 500 L/min (paramétrable)'], ['Mécanisme de levage', 'Motoréducteur 12V (type portail) + pignon/crémaillère']],
+    priceLabel: '≈ 180 € (pompe, indicatif)', buyUrl: 'https://www.vevor.fr/pompes-a-eau-c_11090', buyLabel: 'Pompes eaux chargées — VEVOR',
   },
   hose: {
     name: 'Tuyau de refoulement', category: 'Curage',
@@ -6847,7 +6853,7 @@ const ROBOT_PARTS = {
   },
   bathyprobe: {
     name: 'Sonde bathymétrique', category: 'Curage',
-    desc: "Plaque en bout de tige, actionnée par un moteur dédié (BTS7960), pour relever la profondeur d'eau et de vase case par case, indépendamment du cycle de pompage.",
+    desc: "Plaque en bout de tige, sur son propre petit motoréducteur + crémaillère (même principe que le mécanisme de la pompe, mais un actionneur dédié plus petit), pour relever la profondeur d'eau et de vase case par case, indépendamment du cycle de pompage.",
     specs: [['Détection', 'Pic de courant (interface eau/vase, puis fond dur)'], ['Plaque', '10×10 cm']],
     buyLabel: 'Fabrication sur mesure',
   },
@@ -6887,54 +6893,71 @@ function buildRobotBoxes(boxOpen) {
   const boxes = [];
   const push = (cx, cy, cz, hx, hy, hz, color, partId) => boxes.push({ cx, cy, cz, hx, hy, hz, color, partId });
 
-  // Flotteurs modulaires (3 colonnes × 2 rangées, comme DASH_ROBOT_PONTOONS)
-  const half = 0.6, gap = 0.05, cols = 3, rows = 2;
-  const cw = (2 * half - gap * (cols - 1)) / cols, ch = (2 * half - gap * (rows - 1)) / rows;
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const cx = -half + i * (cw + gap) + cw / 2, cy = -half + j * (ch + gap) + ch / 2;
-      push(cx, cy, -0.03, cw / 2, ch / 2, 0.07, '#1e293b', 'hull');
-    }
+  // 4 flotteurs RECTANGULAIRES aux 4 coins (pas une grille modulaire) — laissent un espace
+  // central libre pour l'armature (voir 'frame' plus bas), corrigé d'après le retour du client.
+  const fHalf = 0.27, fGap = 0.10; // fGap = demi-espace central libre au milieu de la plateforme
+  const fCenter = fGap + fHalf;
+  const floatPos = [[fCenter, fCenter], [-fCenter, fCenter], [fCenter, -fCenter], [-fCenter, -fCenter]];
+  for (const [fx, fy] of floatPos) push(fx, fy, -0.03, fHalf, fHalf, 0.07, '#1e293b', 'hull');
+
+  // Armature centrale en tube carré : 4 montants + cadre haut/bas — guide la pompe (fixée à la
+  // crémaillère verticale, voir 'pump') du fond jusqu'à la surface sans qu'elle ne heurte les
+  // flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait librement.
+  const armHalf = 0.11, postT = 0.014;
+  const postZTop = 0.95, postZBot = -0.65;
+  const postCz = (postZTop + postZBot) / 2, postHz = (postZTop - postZBot) / 2;
+  const armCorners = [[armHalf, armHalf], [-armHalf, armHalf], [armHalf, -armHalf], [-armHalf, -armHalf]];
+  for (const [ax, ay] of armCorners) push(ax, ay, postCz, postT, postT, postHz, '#64748b', 'frame');
+  for (const z of [postZTop, 0]) { // cadre haut (sous le motoréducteur) + cadre bas (niveau pont)
+    push(0, armHalf, z, armHalf, postT, postT, '#64748b', 'frame');
+    push(0, -armHalf, z, armHalf, postT, postT, '#64748b', 'frame');
+    push(armHalf, 0, z, postT, armHalf, postT, '#64748b', 'frame');
+    push(-armHalf, 0, z, postT, armHalf, postT, '#64748b', 'frame');
   }
 
-  // Mât central
-  push(0, 0.02, 0.35, 0.02, 0.02, 0.35, '#94a3b8', 'mast');
-  // Récepteur GPS RTK (sommet du mât) + tige d'antenne
-  push(0, 0.02, 0.74, 0.05, 0.05, 0.02, '#e2e8f0', 'gps');
-  push(0, 0.02, 0.80, 0.006, 0.006, 0.04, '#cbd5e1', 'gps');
+  // Mécanisme de levage de la pompe : moteur de portail (motoréducteur + pignon) fixé en haut de
+  // l'armature, entraînant une crémaillère verticale au bout de laquelle la pompe est attachée.
+  push(0, 0, postZTop + 0.06, 0.05, 0.05, 0.055, '#1e293b', 'pump'); // motoréducteur
+  push(0, 0, (postZTop - 0.6) / 2, 0.016, 0.016, (postZTop + 0.6) / 2, '#94a3b8', 'pump'); // crémaillère
+  push(0, 0, -0.28, 0.065, 0.065, 0.11, '#2563eb', 'pump'); // corps de la pompe, position de repos illustrative
+  push(0.12, 0.02, -0.18, 0.05, 0.012, 0.012, '#93c5fd', 'hose'); // amorce de tuyau de refoulement
 
-  // Boîtier électronique — coque fermée, OU PCB + sous-composants une fois "ouvert"
-  const bx = 0.12, by = 0.02, bz = 0.42, bhx = 0.09, bhy = 0.065, bhz = 0.05;
+  // Mât GPS — sur l'un des flotteurs (le centre étant occupé par l'armature)
+  const [mx, my] = floatPos[0];
+  push(mx, my, 0.35, 0.018, 0.018, 0.35, '#94a3b8', 'mast');
+  push(mx, my, 0.74, 0.05, 0.05, 0.02, '#e2e8f0', 'gps');
+  push(mx, my, 0.80, 0.006, 0.006, 0.04, '#cbd5e1', 'gps');
+
+  // Grosse caisse en fer (batteries + composants électriques) — sur le flotteur opposé au mât.
+  // Coque fermée, OU PCB + batterie + sous-composants une fois "ouverte".
+  const [bx0, by0] = floatPos[3];
+  const bz = 0.13, bhx = 0.16, bhy = 0.13, bhz = 0.09;
   if (!boxOpen) {
-    push(bx, by, bz, bhx, bhy, bhz, '#0f172a', 'controlbox');
+    push(bx0, by0, bz, bhx, bhy, bhz, '#3f4a5a', 'controlbox');
   } else {
-    push(bx, by, bz - bhz * 0.75, bhx, bhy, bhz * 0.12, '#166534', 'controlbox'); // PCB
-    push(bx - bhx * 0.4, by - bhy * 0.35, bz - bhz * 0.35, 0.025, 0.025, 0.012, '#0f172a', 'esp32');
-    push(bx + bhx * 0.35, by - bhy * 0.4,  bz - bhz * 0.35, 0.028, 0.018, 0.01,  '#1d4ed8', 'drivers');
-    push(bx - bhx * 0.4, by + bhy * 0.35,  bz - bhz * 0.35, 0.022, 0.016, 0.01,  '#b91c1c', 'relay');
-    push(bx + bhx * 0.1, by + bhy * 0.4,   bz - bhz * 0.35, 0.016, 0.012, 0.008, '#a16207', 'currentsensors');
-    push(bx + bhx * 0.35, by + bhy * 0.05, bz - bhz * 0.35, 0.012, 0.012, 0.006, '#7c3aed', 'compass');
+    push(bx0, by0, bz - bhz * 0.8, bhx, bhy, bhz * 0.1, '#166534', 'controlbox'); // PCB
+    push(bx0 - bhx * 0.55, by0 - bhy * 0.5, bz - bhz * 0.45, 0.05, 0.035, 0.028, '#1e293b', 'battery');
+    push(bx0 + bhx * 0.15, by0 - bhy * 0.55, bz - bhz * 0.5, 0.022, 0.022, 0.012, '#0f172a', 'esp32');
+    push(bx0 + bhx * 0.55, by0 - bhy * 0.15, bz - bhz * 0.5, 0.025, 0.016, 0.01,  '#1d4ed8', 'drivers');
+    push(bx0 + bhx * 0.55, by0 + bhy * 0.3,  bz - bhz * 0.5, 0.02,  0.014, 0.01,  '#b91c1c', 'relay');
+    push(bx0 + bhx * 0.15, by0 + bhy * 0.55, bz - bhz * 0.5, 0.014, 0.011, 0.008, '#a16207', 'currentsensors');
+    push(bx0 - bhx * 0.2, by0 + bhy * 0.55,  bz - bhz * 0.5, 0.011, 0.011, 0.006, '#7c3aed', 'compass');
   }
 
-  // Batterie 12V
-  push(-0.35, -0.3, 0.08, 0.13, 0.09, 0.08, '#1e293b', 'battery');
-
-  // 4 propulseurs (montage en X, voir config.h)
-  const tPos = [[half - 0.05, half - 0.05], [-(half - 0.05), half - 0.05], [half - 0.05, -(half - 0.05)], [-(half - 0.05), -(half - 0.05)]];
-  for (const [tx, ty] of tPos) {
-    push(tx, ty, -0.14, 0.04, 0.04, 0.05, '#334155', 'thrusters');   // corps
-    push(tx, ty, -0.32, 0.012, 0.012, 0.13, '#475569', 'thrusters'); // arbre immergé
-    push(tx, ty, -0.47, 0.06, 0.015, 0.06, '#0ea5e9', 'thrusters');  // hélice
+  // 4 propulseurs — petits moteurs de barque électriques 12V, montés aux 4 coins (voir config.h :
+  // montage en X, AV-G/AV-D/AR-G/AR-D)
+  for (const [tx, ty] of floatPos) {
+    push(tx, ty, -0.12, 0.045, 0.045, 0.055, '#334155', 'thrusters'); // corps moteur
+    push(tx, ty, -0.30, 0.014, 0.014, 0.13,  '#475569', 'thrusters'); // arbre immergé
+    push(tx, ty, -0.46, 0.06, 0.016, 0.06,   '#0ea5e9', 'thrusters'); // hélice
   }
 
-  // Pompe + treuil de descente/remontée + amorce de tuyau
-  push(0.35, -0.15, 0.15, 0.075, 0.075, 0.13, '#2563eb', 'pump');
-  push(0.35, -0.15, -0.15, 0.015, 0.015, 0.3, '#93c5fd', 'pump');
-  push(0.35, -0.07, 0.24, 0.05, 0.012, 0.012, '#93c5fd', 'hose');
-
-  // Sonde bathymétrique + crémaillère
-  push(-0.4, 0.35, 0.1, 0.02, 0.02, 0.18, '#78716c', 'bathyprobe');
-  push(-0.4, 0.35, -0.08, 0.07, 0.07, 0.01, '#a8a29e', 'bathyprobe');
+  // Sonde bathymétrique — même principe (motoréducteur + crémaillère verticale) que le
+  // mécanisme de la pompe, mais un actionneur dédié plus petit, en porte-à-faux au bord de la
+  // plateforme (pas sous un flotteur, pour rester bien visible/dégagé).
+  const px = floatPos[2][0] + fHalf + 0.06, py = floatPos[2][1];
+  push(px, py, 0.35, 0.014, 0.014, 0.3, '#78716c', 'bathyprobe');
+  push(px, py, -0.05, 0.06, 0.06, 0.008, '#a8a29e', 'bathyprobe');
 
   return boxes;
 }
@@ -7091,7 +7114,7 @@ function resetRobotView() {
   _animateRobotView(1, { x: 0, y: 0 });
 }
 
-const ROBOT_TOP_LEVEL_PARTS = ['hull', 'mast', 'gps', 'controlbox', 'battery', 'thrusters', 'pump', 'hose', 'bathyprobe'];
+const ROBOT_TOP_LEVEL_PARTS = ['hull', 'frame', 'mast', 'gps', 'controlbox', 'thrusters', 'pump', 'hose', 'bathyprobe'];
 
 // Liste texte des composants (à côté du modèle 3D) — accès alternatif au clic sur le modèle,
 // utile en particulier sur petit écran où une pièce peut être minuscule à l'écran.
@@ -7162,7 +7185,7 @@ function renderRobotDetailPanel(partId) {
       const sp = ROBOT_PARTS[id];
       return sp ? `<button class="robot-subpart-item" onclick="selectRobotPart('${id}')"><span>${sp.name}</span><span>›</span></button>` : '';
     }).join('') + `</div>`;
-    html += `<button class="btn btn-secondary btn-sm robot-toggle-box-btn" onclick="toggleRobotBoxOpen()">${state.robotView.boxOpen ? '🔒 Fermer le boîtier' : '🔓 Ouvrir le boîtier'}</button>`;
+    html += `<button class="btn btn-secondary btn-sm robot-toggle-box-btn" onclick="toggleRobotBoxOpen()">${state.robotView.boxOpen ? '🔒 Fermer la caisse' : '🔓 Ouvrir la caisse'}</button>`;
   }
   body.innerHTML = html;
   panel.style.display = 'block';

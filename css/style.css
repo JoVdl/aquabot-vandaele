@@ -1015,12 +1015,13 @@ svg { display: block; }
   border-radius: var(--radius-sm);
 }
 .robot-canvas-wrap canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-.robot-detail-panel {
-  position: absolute; top: 8px; right: 8px; z-index: 8;
-  width: 250px; max-width: calc(100% - 16px); max-height: calc(100% - 16px); overflow-y: auto;
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.35); padding: 12px 14px; font-size: 11px;
-}
+/* Colonne de côté (détail du composant + liste) — EMPILÉE sous le modèle 3D en mobile (grille
+   à une colonne), jamais superposée par-dessus (voir robot-detail-card ci-dessous) : un
+   panneau plein écran par-dessus le modèle masquait toute la vue 3D, peu ergonomique. */
+.robot-side-col { display: flex; flex-direction: column; gap: 12px; }
+.robot-detail-card { font-size: 11px; }
+.robot-detail-card .card-header, .robot-3d-card .card-header { justify-content: space-between; }
+#robotDetailBody { padding: 12px 14px; max-height: 420px; overflow-y: auto; }
 .robot-detail-cat {
   font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--accent); margin-bottom: 4px;
