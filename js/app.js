@@ -6768,14 +6768,14 @@ document.addEventListener('click', e => {
 const ROBOT_PARTS = {
   hull: {
     name: 'Flotteurs Rotax (×4)', category: 'Structure',
-    desc: "4 flotteurs Rotax rectangulaires formant 2 pontons gauche/droite (chacun fait de 2 flotteurs bout à bout, avant + arrière), avec un couloir central d'environ 37cm entre les deux pontons — c'est là que se trouve l'armature de levage de la pompe. Répartit la flottaison et facilite le transport/l'entretien (un flotteur endommagé se remplace seul).",
-    specs: [['Marque', 'Rotax'], ['Dimensions', '106 × 54 × 30 cm (L × l × H)'], ['Quantité', '4'], ['Espace entre pontons', '≈ 37 cm']],
+    desc: "4 flotteurs Rotax rectangulaires formant 2 pontons gauche/droite. Sur un même côté, les flotteurs avant et arrière sont espacés d'environ 38cm (250cm de long au total − 2×106cm) ; les deux pontons gauche/droite sont eux séparés par un couloir central de 92cm, où se trouve l'armature de levage de la pompe. Répartit la flottaison et facilite le transport/l'entretien (un flotteur endommagé se remplace seul).",
+    specs: [['Marque', 'Rotax'], ['Dimensions', '106 × 54 × 30 cm (L × l × H)'], ['Quantité', '4'], ['Espace avant/arrière (même côté)', '≈ 38 cm'], ['Couloir central (gauche/droite)', '≈ 92 cm']],
     buyLabel: 'Fabrication sur mesure',
   },
   frame: {
-    name: 'Armature centrale (échelle, tube 3×3cm)', category: 'Structure',
-    desc: "Châssis en échelle, en tube d'acier carré 3×3cm (rails + traverses soudées), dans le couloir central entre les pontons gauche et droite — porte le motoréducteur et guide la crémaillère verticale de la pompe (voir « Pompe de relevage ») du fond de l'eau jusqu'à la surface, centrée sur la longueur du robot, sans qu'elle ne heurte les flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait librement.",
-    specs: [['Matériau', "Tube acier carré 3 × 3 cm"], ['Rôle', 'Guidage vertical de la pompe']],
+    name: 'Armature complète (tube 3×3cm)', category: 'Structure',
+    desc: "Châssis en tube d'acier carré 3×3cm : 2 longerons sur toute la longueur du robot, dans le couloir central entre les 2 pontons, reliés par des traverses à hauteur de chaque flotteur et aux deux bouts — rigidifie l'ensemble du robot, pas seulement la zone de la pompe. Une petite tour verticale, au centre de cette armature, porte le motoréducteur et guide la crémaillère verticale de la pompe (voir « Pompe de relevage ») du fond de l'eau jusqu'à la surface, sans qu'elle ne heurte les flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait librement.",
+    specs: [['Matériau', "Tube acier carré 3 × 3 cm"], ['Portée', 'Toute la longueur du robot (250cm)'], ['Rôle', 'Rigidité du châssis + guidage vertical de la pompe']],
     buyLabel: 'Fabrication sur mesure',
   },
   mast: {
@@ -6893,29 +6893,45 @@ function buildRobotBoxes(boxOpen) {
   const boxes = [];
   const push = (cx, cy, cz, hx, hy, hz, color, partId) => boxes.push({ cx, cy, cz, hx, hy, hz, color, partId });
 
-  // 4 flotteurs Rotax rectangulaires (106 × 54 × 30 cm), formant 2 pontons GAUCHE/DROITE (chacun
-  // fait de 2 flotteurs bout à bout, avant + arrière), avec un couloir central d'environ 37cm
-  // ENTRE les deux pontons (sur le côté longueur, photo du châssis réel) — pas un espace avant/
-  // arrière. Leur longueur (106cm) suit donc la LONGUEUR du robot, leur largeur (54cm) sa LARGEUR.
-  // C'est dans ce couloir central que se trouve l'armature de levage de la pompe (voir 'frame').
+  // 4 flotteurs Rotax rectangulaires (106 × 54 × 30 cm), formant 2 pontons GAUCHE/DROITE — leur
+  // longueur (106cm) suit la LONGUEUR du robot, leur largeur (54cm) sa LARGEUR. Deux espaces
+  // mesurés par le client (250cm de long, 106cm par flotteur) :
+  //  - entre les 2 flotteurs d'un MÊME côté (avant/arrière) : 250 - 106×2 = 38cm
+  //  - entre les 2 pontons GAUCHE/DROITE (couloir central, où passe l'armature) : 92cm
   const fHalfX = 0.27, fHalfY = 0.53, fHalfZ = 0.15; // 106×54×30 cm
-  const sideGap = 0.37; // espace mesuré par le client entre les 2 pontons gauche/droite
-  const fCenterX = fHalfX + sideGap / 2;
-  const fCenterY = fHalfY + 0.01; // flotteurs avant/arrière du même côté quasi bout à bout
+  const sameSideGap = 0.38, corridorW = 0.92;
+  const fCenterX = fHalfX + corridorW / 2;
+  const fCenterY = fHalfY + sameSideGap / 2;
   const floatPos = [[fCenterX, fCenterY], [-fCenterX, fCenterY], [fCenterX, -fCenterY], [-fCenterX, -fCenterY]];
   for (const [fx, fy] of floatPos) push(fx, fy, -0.05, fHalfX, fHalfY, fHalfZ, '#1e293b', 'hull');
 
-  // Armature centrale en échelle (2 rails + traverses), dans l'espace libre entre les flotteurs
-  // avant/arrière — porte en haut le motoréducteur + pignon qui entraîne la crémaillère verticale
-  // au bout de laquelle la pompe est fixée, la guidant du fond jusqu'à la surface sans qu'elle ne
-  // heurte les flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait.
-  const railX = 0.09, railT = 0.015; // tube carré 3×3 cm
+  // Armature COMPLÈTE en tube d'acier carré 3×3cm — pas seulement la tour centrale de levage :
+  // 2 longerons sur toute la longueur du robot, dans le couloir central entre les 2 pontons, +
+  // traverses reliant les longerons à hauteur de chaque flotteur (avant/arrière) et aux deux
+  // bouts — ossature qui rigidifie l'ensemble, dans laquelle vient s'insérer la tour de levage
+  // de la pompe (voir plus bas). Traverses/longerons positionnés à vue, à confirmer/ajuster avec
+  // l'outil de mesure (voir onglet Robot > lien vers le schéma interactif).
+  const tubeT = 0.015; // 3×3 cm
+  const railX2 = 0.30; // écartement des 2 longerons dans le couloir de 92cm
+  const robotHalfY = fCenterY + fHalfY; // bout avant/arrière des flotteurs
+  push(railX2, 0, 0, tubeT, robotHalfY, tubeT, '#64748b', 'frame');
+  push(-railX2, 0, 0, tubeT, robotHalfY, tubeT, '#64748b', 'frame');
+  for (const ty of [-robotHalfY, -fCenterY, 0, fCenterY, robotHalfY]) {
+    push(0, ty, 0, railX2, tubeT, tubeT, '#64748b', 'frame');
+  }
+
+  // Tour de levage de la pompe : petite échelle verticale (même tube 3×3cm) au centre de
+  // l'armature, du fond de l'eau jusqu'au-dessus du pont — porte en haut le motoréducteur +
+  // pignon qui entraîne la crémaillère verticale au bout de laquelle la pompe est fixée, la
+  // guidant sans qu'elle ne heurte les flotteurs ni ne se coince, contrairement à un simple
+  // câble qui se balancerait.
+  const railX = 0.09;
   const armZTop = 0.95, armZBot = -0.65;
   const armCz = (armZTop + armZBot) / 2, armHz = (armZTop - armZBot) / 2;
-  push(railX, 0, armCz, railT, railT, armHz, '#64748b', 'frame');
-  push(-railX, 0, armCz, railT, railT, armHz, '#64748b', 'frame');
+  push(railX, 0, armCz, tubeT, tubeT, armHz, '#64748b', 'frame');
+  push(-railX, 0, armCz, tubeT, tubeT, armHz, '#64748b', 'frame');
   for (const z of [0.75, 0.4, 0.05, -0.3]) { // traverses de l'échelle, à intervalles réguliers
-    push(0, 0, z, railX, railT, railT, '#64748b', 'frame');
+    push(0, 0, z, railX, tubeT, tubeT, '#64748b', 'frame');
   }
 
   // Mécanisme de levage de la pompe : motoréducteur type moteur de portail (avec pignon), en haut
