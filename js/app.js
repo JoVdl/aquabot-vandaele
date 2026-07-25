@@ -7517,12 +7517,21 @@ function renderRobotPartList() {
   }).join('') + (state.robotView.editMode ? `<button class="robot-part-list-add" onclick="robotAddCustomPart()">+ Ajouter un composant</button>` : '');
 }
 
+// En dessous de ce seuil (même breakpoint que .robot-grid en CSS, colonne unique = mise en page
+// "téléphone"), on n'anime plus la caméra vers la pièce sélectionnée : sur petit écran, ce zoom
+// automatique surprenait plus qu'il n'aidait (on perd ses repères, sans les gestes de recentrage
+// au clavier/souris pour s'y retrouver) — la pièce reste identifiable via son contour jaune dans
+// la vue courante, et le panneau de détail s'ouvre de toute façon.
+function _robotIsCompactViewport() {
+  return window.innerWidth <= 660;
+}
+
 function selectRobotPart(partId) {
   state.robotView.selectedPart = partId;
   renderRobotScene();
   renderRobotDetailPanel(partId);
   renderRobotPartList();
-  robotFocusOnPart(partId);
+  if (!_robotIsCompactViewport()) robotFocusOnPart(partId);
 }
 
 function closeRobotDetail() {
