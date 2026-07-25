@@ -4561,6 +4561,41 @@ function computeJobRecap() {
   };
 }
 
+// Repli pour un chantier terminé AVANT l'existence de pond.lastJobRecap (rien n'a été figé à
+// l'époque) : reconstruit un récap approximatif à partir des totaux cumulés de l'étang
+// (pond.work), plutôt que de ne rien pouvoir afficher pour ces chantiers plus anciens. À la
+// différence de computeJobRecap(), impossible d'isoler UN chantier précis ici — ces totaux
+// couvrent tout le travail effectué depuis le dernier RAZ, potentiellement plusieurs chantiers.
+function computeFallbackJobRecap() {
+  const cellArea = params.cellSize * params.cellSize;
+  const completedIdxs = state.cells.map((c, i) => c.completed ? i : -1).filter(i => i !== -1);
+  const before = latestBathySurvey(state.pond, 'before');
+  let mudBeforeSum = 0, mudAfterSum = 0, n = 0;
+  completedIdxs.forEach(idx => {
+    const b = before?.readings?.[idx];
+    const a = getCellBathyBaseline(idx);
+    if (b && a) { mudBeforeSum += b.mud; mudAfterSum += a.mud; n++; }
+  });
+
+  let mudRemainingM3 = 0;
+  state.cells.forEach((c, idx) => { mudRemainingM3 += getCellBathyBaseline(idx).mud * cellArea; });
+
+  const energyWhJob = state.robot.energyWh;
+
+  return {
+    cellCount:       completedIdxs.length,
+    surfaceM2:       completedIdxs.length * cellArea,
+    durationSec:     state.robot.elapsedSec,
+    volumePumpedM3:  state.robot.volumePumped / 1000,
+    mudRemainingM3,
+    mudBeforeAvg:    n ? mudBeforeSum / n : null,
+    mudAfterAvg:     n ? mudAfterSum / n : null,
+    energyWhJob,
+    costJob:         (energyWhJob / 1000) * (params.elecTariff || 0),
+    approximate:     true,
+  };
+}
+
 // `recap` : passer un objet déjà calculé (ex. state.pond.lastJobRecap, pour rouvrir le récap
 // d'un chantier déjà terminé) ; à défaut, recalculé à la volée depuis l'état courant (cas du
 // chantier qui vient tout juste de se terminer, voir finishSimulation).
@@ -4574,15 +4609,22 @@ function showJobRecap(recap) {
   setText('recapMudAfter',         r.mudAfterAvg  != null ? r.mudAfterAvg.toFixed(2)  + ' m' : '—');
   setText('recapEnergy',           formatEnergyWh(r.energyWhJob));
   setText('recapCost',             formatEnergyCost(r.energyWhJob, params.elecTariff || 0));
-  setText('recapDate',             r.date ? `Terminé le ${new Date(r.date).toLocaleString('fr-FR')}` : '');
+  setText('recapDate', r.date ? `Terminé le ${new Date(r.date).toLocaleString('fr-FR')}`
+    : (r.approximate ? 'Estimation à partir des totaux cumulés (chantier antérieur à cette fonctionnalité)' : ''));
   const overlay = document.getElementById('jobRecapOverlay');
   if (overlay) overlay.style.display = 'flex';
 }
 
+// Repli sur computeFallbackJobRecap() (voir plus haut) quand l'étang n'a pas de lastJobRecap
+// figé — cas d'un chantier terminé avant l'existence de cette fonctionnalité, pour lequel rien
+// n'a jamais été enregistré à l'époque.
 function showLastJobRecap() {
-  const recap = state.pond?.lastJobRecap;
-  if (!recap) { showToast('Aucun récap de chantier disponible pour cet étang.', 'error'); return; }
-  showJobRecap(recap);
+  if (state.pond?.lastJobRecap) { showJobRecap(state.pond.lastJobRecap); return; }
+  if (!state.cells.some(c => c.completed)) {
+    showToast('Aucun récap de chantier disponible pour cet étang.', 'error');
+    return;
+  }
+  showJobRecap(computeFallbackJobRecap());
 }
 
 function closeJobRecap() {
@@ -5924,7 +5966,14 @@ function updateUI() {
   if (dashEmpty) dashEmpty.style.display = state.pond ? 'none' : 'flex';
   updateEnergyTab();
   const recapBtn = document.getElementById('btnLastJobRecap');
-  if (recapBtn) recapBtn.style.display = state.pond?.lastJobRecap ? '' : 'none';
+  if (recapBtn) {
+    // Un chantier terminé avant l'existence de pond.lastJobRecap n'a rien de figé — le bouton
+    // reste quand même utile pour lui via computeFallbackJobRecap() (voir showLastJobRecap), tant
+    // qu'il y a au moins une case déjà traitée et qu'aucun chantier n'est en cours (sinon ce
+    // serait redondant avec les totaux déjà affichés juste au-dessus, en direct).
+    const hasRecap = !!state.pond?.lastJobRecap || (!state.sim.running && state.cells.some(c => c.completed));
+    recapBtn.style.display = hasRecap ? '' : 'none';
+  }
 
   const robot = state.robot, path = state.plannedPath;
   const total = path.length;
