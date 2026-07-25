@@ -12,7 +12,7 @@
       document.documentElement.setAttribute('data-theme', theme);
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=95">
+  <link rel="stylesheet" href="css/style.css?v=96">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" crossorigin=""/>
 </head>
@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v95</span>
+        <span class="logo-version" id="appVersion">v96</span>
       </div>
     </div>
     <div class="header-status">
@@ -879,6 +879,19 @@
         <button class="modal-close" onclick="closeJobRecap()" aria-label="Fermer">✕</button>
       </div>
       <div class="modal-body">
+        <div class="recap-3d-wrap" id="recap3DWrap" style="display:none">
+          <div class="recap-3d-label">Bathymétrie 3D — vase avant / après</div>
+          <div class="recap-3d-row">
+            <div class="recap-3d-col">
+              <canvas id="recap3DBefore" class="recap-3d-canvas"></canvas>
+              <span class="recap-3d-caption">Avant</span>
+            </div>
+            <div class="recap-3d-col">
+              <canvas id="recap3DAfter" class="recap-3d-canvas"></canvas>
+              <span class="recap-3d-caption">Après</span>
+            </div>
+          </div>
+        </div>
         <div class="recap-grid">
           <div class="recap-stat">
             <span class="recap-label">Cases traitées / surface</span>
@@ -939,6 +952,6 @@
     window.db = firebase.firestore();
   } catch(e) { console.warn("Firebase init failed:", e.message); }
 </script>
-<script src="js/app.js?v=95"></script>
+<script src="js/app.js?v=96"></script>
 </body>
 </html>

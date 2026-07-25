@@ -4536,11 +4536,21 @@ function computeJobRecap() {
   path.forEach((idx, i) => {
     if (!(idx in beforeByIdx)) beforeByIdx[idx] = state.sim.jobBeforeReadings?.[i];
   });
+  // Relevés complets avant/après (pas seulement les moyennes ci-dessous) — pour la vue 3D du
+  // récap (voir renderJobRecap3D). Tableaux de la taille de l'étang entier (null hors des cases
+  // de ce chantier), même format que les relevés bathySurveys, pour réutiliser tel quel le même
+  // moteur de rendu 3D (renderBathy3DMesh) que l'onglet Bathymétrie.
+  const beforeReadings = new Array(state.cells.length).fill(null);
+  const afterReadings  = new Array(state.cells.length).fill(null);
   let mudBeforeSum = 0, mudAfterSum = 0, n = 0;
   uniqueIdxs.forEach(idx => {
     const before = beforeByIdx[idx];
     const after  = getCellBathyBaseline(idx);
-    if (before && after) { mudBeforeSum += before.mud; mudAfterSum += after.mud; n++; }
+    if (before && after) {
+      mudBeforeSum += before.mud; mudAfterSum += after.mud; n++;
+      beforeReadings[idx] = before;
+      afterReadings[idx]  = after;
+    }
   });
 
   let mudRemainingM3 = 0;
@@ -4558,6 +4568,8 @@ function computeJobRecap() {
     mudAfterAvg:     n ? mudAfterSum / n : null,
     energyWhJob,
     costJob:         (energyWhJob / 1000) * (params.elecTariff || 0),
+    beforeReadings,
+    afterReadings,
   };
 }
 
@@ -4570,11 +4582,17 @@ function computeFallbackJobRecap() {
   const cellArea = params.cellSize * params.cellSize;
   const completedIdxs = state.cells.map((c, i) => c.completed ? i : -1).filter(i => i !== -1);
   const before = latestBathySurvey(state.pond, 'before');
+  const beforeReadings = new Array(state.cells.length).fill(null);
+  const afterReadings  = new Array(state.cells.length).fill(null);
   let mudBeforeSum = 0, mudAfterSum = 0, n = 0;
   completedIdxs.forEach(idx => {
     const b = before?.readings?.[idx];
     const a = getCellBathyBaseline(idx);
-    if (b && a) { mudBeforeSum += b.mud; mudAfterSum += a.mud; n++; }
+    if (b && a) {
+      mudBeforeSum += b.mud; mudAfterSum += a.mud; n++;
+      beforeReadings[idx] = b;
+      afterReadings[idx]  = a;
+    }
   });
 
   let mudRemainingM3 = 0;
@@ -4592,6 +4610,8 @@ function computeFallbackJobRecap() {
     mudAfterAvg:     n ? mudAfterSum / n : null,
     energyWhJob,
     costJob:         (energyWhJob / 1000) * (params.elecTariff || 0),
+    beforeReadings,
+    afterReadings,
     approximate:     true,
   };
 }
@@ -4613,6 +4633,55 @@ function showJobRecap(recap) {
     : (r.approximate ? 'Estimation à partir des totaux cumulés (chantier antérieur à cette fonctionnalité)' : ''));
   const overlay = document.getElementById('jobRecapOverlay');
   if (overlay) overlay.style.display = 'flex';
+  renderJobRecap3D(r.beforeReadings, r.afterReadings);
+}
+
+// Réutilise le moteur de rendu 3D de l'onglet Bathymétrie (renderBathy3DMesh) pour dessiner deux
+// mini-vues côte à côte (avant/après) à partir des relevés propres à CE chantier (voir
+// computeJobRecap/computeFallbackJobRecap) — beforeReadings/afterReadings peuvent être soit des
+// tableaux déjà décodés (récap qui vient d'être calculé) soit la forme compacte {n,b64} issue de
+// Firestore (récap rouvert depuis pond.lastJobRecap) : decodeBathyReadings gère les deux.
+function renderJobRecap3D(beforeReadingsRaw, afterReadingsRaw) {
+  const wrap = document.getElementById('recap3DWrap');
+  const canvasBefore = document.getElementById('recap3DBefore');
+  const canvasAfter  = document.getElementById('recap3DAfter');
+  if (!wrap || !canvasBefore || !canvasAfter || !state.pond) { if (wrap) wrap.style.display = 'none'; return; }
+
+  const beforeReadings = decodeBathyReadings(beforeReadingsRaw);
+  const afterReadings  = decodeBathyReadings(afterReadingsRaw);
+  const valuesBefore = state.cells.map((c, i) => beforeReadings[i] ? beforeReadings[i].mud : null);
+  const valuesAfter  = state.cells.map((c, i) => afterReadings[i]  ? afterReadings[i].mud  : null);
+
+  const allVals = [];
+  valuesBefore.forEach(v => { if (v != null) allVals.push(v); });
+  valuesAfter.forEach(v  => { if (v != null) allVals.push(v); });
+  if (!allVals.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+
+  const min = Math.min(...allVals);
+  const max = Math.max(...allVals);
+  const range = (max - min) || (Math.abs(max) || 1) * 0.05 || 1;
+
+  // Échelle de couleur/hauteur partagée entre les deux vues (même min/range) pour rester
+  // directement comparables au coup d'œil — et 'mud'/pas de fond satellite : la vue 3D normale
+  // (state.bathy.*) affiche le relevé COURANT choisi par l'utilisateur dans l'onglet
+  // Bathymétrie, sans rapport avec les tableaux avant/après de CE chantier qu'on veut ici —
+  // sauvegardés et restaurés pour ne pas perturber cet état par ailleurs.
+  const saved = { metric: state.bathy.metric, show3DMap: state.bathy.show3DMap };
+  state.bathy.metric = 'mud';
+  state.bathy.show3DMap = false;
+  try {
+    [[canvasBefore, valuesBefore], [canvasAfter, valuesAfter]].forEach(([canvas, values]) => {
+      canvas.width  = canvas.clientWidth  || 180;
+      canvas.height = canvas.clientHeight || 150;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      renderBathy3DMesh(ctx, canvas.width, canvas.height, values, min, range);
+    });
+  } finally {
+    state.bathy.metric = saved.metric;
+    state.bathy.show3DMap = saved.show3DMap;
+  }
 }
 
 // Repli sur computeFallbackJobRecap() (voir plus haut) quand l'étang n'a pas de lastJobRecap
@@ -5898,7 +5967,17 @@ function finishSimulation() {
   // les baselines dont il dépend (state.sim.jobVolumeAtStart etc.) sont, elles, réinitialisées
   // au prochain démarrage de chantier.
   const jobRecap = computeJobRecap();
-  if (state.pond) state.pond.lastJobRecap = { ...jobRecap, date: Date.now() };
+  if (state.pond) {
+    // beforeReadings/afterReadings encodés en base64 (voir encodeBathyReadings, déjà utilisé pour
+    // les relevés bathySurveys complets) avant persistance — sinon deux tableaux JSON bruts d'une
+    // taille de l'étang entier alourdiraient inutilement le document Firestore de l'étang.
+    state.pond.lastJobRecap = {
+      ...jobRecap,
+      beforeReadings: encodeBathyReadings(jobRecap.beforeReadings),
+      afterReadings:  encodeBathyReadings(jobRecap.afterReadings),
+      date: Date.now(),
+    };
+  }
   saveWork();
   updatePondsList();
   showToast('Curage terminé ! Résultats enregistrés.', 'success');
