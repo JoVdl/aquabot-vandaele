@@ -1124,9 +1124,15 @@ const state = {
   // actuellement sélectionnée et l'état ouvert/fermé du boîtier électronique.
   robotView: {
     rotation: 35, tilt: 24, zoom: 1, pan: { x: 0, y: 0 },
-    selectedPart: null, boxOpen: false,
+    selectedPart: null, boxOpen: false, editMode: false,
     _layout: null, _anim: null, _dragInit: false,
   },
+  // Modifications du modèle 3D faites par l'utilisateur en mode édition (voir "ROBOT ÉDITION" plus
+  // bas) : décalage/échelle appliqués aux pièces existantes + pièces personnalisées ajoutées.
+  // null tant que l'onglet Robot n'a pas encore été ouvert une première fois (voir
+  // initRobotSceneIfNeeded, qui charge depuis localStorage — ces réglages sont propres à cet
+  // appareil, pas synchronisés entre appareils).
+  robotEdits: null,
 };
 
 // ============================================================
@@ -6792,8 +6798,8 @@ const ROBOT_PARTS = {
   },
   controlbox: {
     name: 'Caisse électrique (batteries + électronique)', category: 'Électronique',
-    desc: "Grosse caisse en fer montée sur un support surélevé, à l'extrémité arrière de l'armature centrale (au-dessus du couloir entre les 2 pontons), regroupant les batteries et toute l'électronique de pilotage — cliquez sur « Ouvrir la caisse » ci-dessous pour voir chaque composant à l'intérieur.",
-    specs: [['Dimensions', '85 × 35 × 35 cm'], ['Position', 'Support surélevé, extrémité arrière de l\'armature'], ['Protection', 'IP65 / IP67'], ['Contenu', "Batterie, ESP32, 4× pilotes moteurs, relais pompe, capteurs de courant, boussole"]],
+    desc: "Grosse caisse en fer montée sur un support surélevé, à l'extrémité arrière de l'armature centrale, posée EN TRAVERS du robot sur les 2 longerons intérieurs du couloir central, regroupant les batteries et toute l'électronique de pilotage — cliquez sur « Ouvrir la caisse » ci-dessous pour voir chaque composant à l'intérieur.",
+    specs: [['Dimensions', '85 × 35 × 35 cm'], ['Position', 'Support surélevé, en travers, extrémité arrière de l\'armature'], ['Protection', 'IP65 / IP67'], ['Contenu', "Batterie, ESP32, 4× pilotes moteurs, relais pompe, capteurs de courant, boussole"]],
     buyLabel: 'Caisse étanche du commerce',
     composite: true, subParts: ['battery', 'esp32', 'drivers', 'relay', 'currentsensors', 'compass'],
   },
@@ -6961,9 +6967,10 @@ function buildRobotBoxes(boxOpen) {
 
   // Grosse caisse en fer (85×35×35 cm), montée sur un support surélevé à l'extrémité arrière de
   // l'armature (photo réelle), au-dessus du couloir central — sa plus grande dimension (85cm)
-  // posée dans le sens de la longueur du robot. Coque fermée, OU PCB + batterie + sous-composants
-  // une fois "ouverte".
-  const bhx = 0.175, bhy = 0.425, bhz = 0.175; // 85 × 35 × 35 cm
+  // posée en TRAVERS du robot (dans le sens de la largeur), calée sur les 2 longerons intérieurs
+  // du couloir (90cm d'écart). Coque fermée, OU PCB + batterie + sous-composants une fois
+  // "ouverte".
+  const bhx = 0.425, bhy = 0.175, bhz = 0.175; // 85 × 35 × 35 cm
   const bracketH = 0.10; // hauteur du support surélevé, entre l'armature et le fond de la caisse
   const bx0 = 0, by0 = -1.26 + bhy; // centrée dans le couloir, bord arrière affleurant la traverse arrière
   const bz = bracketH + bhz;
@@ -6996,6 +7003,28 @@ function buildRobotBoxes(boxOpen) {
   const px = floatPos[2][0] + fHalfX + 0.06, py = floatPos[2][1];
   push(px, py, 0.35, 0.014, 0.014, 0.3, '#78716c', 'bathyprobe');
   push(px, py, -0.05, 0.06, 0.06, 0.008, '#a8a29e', 'bathyprobe');
+
+  // Mode édition (voir "ROBOT ÉDITION" plus bas) : décalage/échelle de groupe appliqués aux
+  // pièces existantes (rigide — déplace/redimensionne toutes les boxes d'une même pièce ensemble,
+  // autour du centre de leur boîte englobante), puis pièces personnalisées ajoutées par
+  // l'utilisateur.
+  const edits = state.robotEdits || { overrides: {}, custom: [] };
+  for (const [partId, ov] of Object.entries(edits.overrides)) {
+    const group = boxes.filter(b => b.partId === partId);
+    if (!group.length) continue;
+    const gcx = (Math.min(...group.map(b => b.cx - b.hx)) + Math.max(...group.map(b => b.cx + b.hx))) / 2;
+    const gcy = (Math.min(...group.map(b => b.cy - b.hy)) + Math.max(...group.map(b => b.cy + b.hy))) / 2;
+    const gcz = (Math.min(...group.map(b => b.cz - b.hz)) + Math.max(...group.map(b => b.cz + b.hz))) / 2;
+    const sx = ov.sx ?? 1, sy = ov.sy ?? 1, sz = ov.sz ?? 1;
+    const dx = ov.dx || 0, dy = ov.dy || 0, dz = ov.dz || 0;
+    for (const b of group) {
+      b.cx = gcx + (b.cx - gcx) * sx + dx;
+      b.cy = gcy + (b.cy - gcy) * sy + dy;
+      b.cz = gcz + (b.cz - gcz) * sz + dz;
+      b.hx *= sx; b.hy *= sy; b.hz *= sz;
+    }
+  }
+  for (const c of edits.custom) push(c.cx, c.cy, c.cz, c.hx, c.hy, c.hz, c.color || '#d97706', c.id);
 
   return boxes;
 }
@@ -7154,20 +7183,160 @@ function resetRobotView() {
 
 const ROBOT_TOP_LEVEL_PARTS = ['hull', 'frame', 'mast', 'gps', 'controlbox', 'thrusters', 'pump', 'hose', 'bathyprobe'];
 
+// ============================================================
+// ROBOT ÉDITION — mode "édition" du modèle 3D : repositionner/redimensionner les pièces
+// existantes (décalage + échelle de groupe appliqués dans buildRobotBoxes, voir plus haut), et
+// ajouter/éditer/supprimer des pièces personnalisées. Réglages propres à cet appareil
+// (localStorage), pas synchronisés entre appareils comme le reste de l'état de l'étang — c'est
+// un outil de calage du modèle, pas une donnée métier.
+// ============================================================
+const ROBOT_EDITS_KEY = 'aquabot_robotEdits';
+
+function loadRobotEdits() {
+  try {
+    const raw = localStorage.getItem(ROBOT_EDITS_KEY);
+    if (!raw) return { overrides: {}, custom: [] };
+    const parsed = JSON.parse(raw);
+    return { overrides: parsed.overrides || {}, custom: Array.isArray(parsed.custom) ? parsed.custom : [] };
+  } catch { return { overrides: {}, custom: [] }; }
+}
+function saveRobotEdits() {
+  try { localStorage.setItem(ROBOT_EDITS_KEY, JSON.stringify(state.robotEdits)); } catch {}
+}
+
+// Inscrit (ou ré-inscrit) les pièces personnalisées dans ROBOT_PARTS pour que tout le code
+// existant (fiche détail, hit-test, liste des composants) les traite comme n'importe quelle
+// pièce du modèle, sans duplication de logique.
+function robotSyncCustomParts() {
+  for (const key of Object.keys(ROBOT_PARTS)) {
+    if (ROBOT_PARTS[key]?._custom) delete ROBOT_PARTS[key];
+  }
+  for (const c of state.robotEdits.custom) {
+    ROBOT_PARTS[c.id] = {
+      name: c.name || 'Composant personnalisé', category: 'Personnalisé',
+      desc: "Composant ajouté manuellement en mode édition.",
+      specs: [['Dimensions', `${Math.round(c.hx * 200)} × ${Math.round(c.hy * 200)} × ${Math.round(c.hz * 200)} cm`]],
+      buyLabel: 'Ajouté manuellement', _custom: true,
+    };
+  }
+}
+
+function toggleRobotEditMode() {
+  state.robotView.editMode = !state.robotView.editMode;
+  const btn = document.getElementById('robotEditModeBtn');
+  if (btn) {
+    btn.textContent = state.robotView.editMode ? '✅ Terminer l\'édition' : '✏️ Mode édition';
+    btn.classList.toggle('active', state.robotView.editMode);
+  }
+  renderRobotPartList();
+  if (state.robotView.selectedPart) renderRobotDetailPanel(state.robotView.selectedPart);
+}
+
+function robotAddCustomPart() {
+  const id = 'custom_' + Date.now().toString(36);
+  state.robotEdits.custom.push({ id, name: 'Nouveau composant', cx: 0, cy: 0, cz: 0.2, hx: 0.1, hy: 0.1, hz: 0.1, color: '#d97706' });
+  robotSyncCustomParts();
+  saveRobotEdits();
+  selectRobotPart(id);
+}
+
+function robotEditOverride(partId, field, value) {
+  const v = parseFloat(value);
+  if (!Number.isFinite(v)) return;
+  const ov = state.robotEdits.overrides[partId] || (state.robotEdits.overrides[partId] = {});
+  ov[field] = v;
+  saveRobotEdits();
+  renderRobotScene();
+}
+function robotResetOverride(partId) {
+  delete state.robotEdits.overrides[partId];
+  saveRobotEdits();
+  renderRobotScene();
+  renderRobotDetailPanel(partId);
+}
+function robotEditCustomField(partId, field, value) {
+  const c = state.robotEdits.custom.find(x => x.id === partId);
+  if (!c) return;
+  c[field] = (field === 'name' || field === 'color') ? value : parseFloat(value);
+  if (field === 'name') {
+    robotSyncCustomParts();
+    renderRobotPartList();
+    const nameEl = document.querySelector('#robotDetailBody .robot-detail-name');
+    if (nameEl) nameEl.textContent = value;
+  }
+  saveRobotEdits();
+  renderRobotScene();
+}
+function robotDeleteCustomPart(partId) {
+  state.robotEdits.custom = state.robotEdits.custom.filter(c => c.id !== partId);
+  delete ROBOT_PARTS[partId];
+  saveRobotEdits();
+  closeRobotDetail();
+  renderRobotPartList();
+  renderRobotScene();
+}
+
+function renderRobotEditControls(partId, part) {
+  if (part._custom) {
+    const c = state.robotEdits.custom.find(x => x.id === partId);
+    if (!c) return '';
+    const cm = v => Math.round(v * 100);
+    return `
+      <div class="robot-edit-panel">
+        <div class="robot-edit-head">✏️ Édition — composant personnalisé</div>
+        <label class="robot-edit-field">Nom
+          <input type="text" value="${c.name.replace(/"/g, '&quot;')}" oninput="robotEditCustomField('${partId}','name',this.value)">
+        </label>
+        <div class="robot-edit-grid">
+          <label>Position X (cm)<input type="number" value="${cm(c.cx)}" oninput="robotEditCustomField('${partId}','cx',this.value/100)"></label>
+          <label>Position Y (cm)<input type="number" value="${cm(c.cy)}" oninput="robotEditCustomField('${partId}','cy',this.value/100)"></label>
+          <label>Position Z (cm)<input type="number" value="${cm(c.cz)}" oninput="robotEditCustomField('${partId}','cz',this.value/100)"></label>
+          <label>Largeur X (cm)<input type="number" min="1" value="${cm(c.hx * 2)}" oninput="robotEditCustomField('${partId}','hx',this.value/200)"></label>
+          <label>Longueur Y (cm)<input type="number" min="1" value="${cm(c.hy * 2)}" oninput="robotEditCustomField('${partId}','hy',this.value/200)"></label>
+          <label>Hauteur Z (cm)<input type="number" min="1" value="${cm(c.hz * 2)}" oninput="robotEditCustomField('${partId}','hz',this.value/200)"></label>
+        </div>
+        <label class="robot-edit-field">Couleur
+          <input type="color" value="${c.color}" oninput="robotEditCustomField('${partId}','color',this.value)">
+        </label>
+        <button class="btn btn-danger btn-sm robot-edit-delete" onclick="robotDeleteCustomPart('${partId}')">🗑 Supprimer ce composant</button>
+      </div>`;
+  }
+  const ov = state.robotEdits.overrides[partId] || {};
+  const dx = Math.round((ov.dx || 0) * 100), dy = Math.round((ov.dy || 0) * 100), dz = Math.round((ov.dz || 0) * 100);
+  const sx = Math.round((ov.sx ?? 1) * 100), sy = Math.round((ov.sy ?? 1) * 100), sz = Math.round((ov.sz ?? 1) * 100);
+  return `
+    <div class="robot-edit-panel">
+      <div class="robot-edit-head">✏️ Édition — repositionner / redimensionner</div>
+      <p class="robot-edit-hint">Déplace et redimensionne l'ensemble de cette pièce (toutes ses boxes ensemble, autour de son centre).</p>
+      <div class="robot-edit-grid">
+        <label>Décalage X (cm)<input type="number" value="${dx}" oninput="robotEditOverride('${partId}','dx',this.value/100)"></label>
+        <label>Décalage Y (cm)<input type="number" value="${dy}" oninput="robotEditOverride('${partId}','dy',this.value/100)"></label>
+        <label>Décalage Z (cm)<input type="number" value="${dz}" oninput="robotEditOverride('${partId}','dz',this.value/100)"></label>
+        <label>Échelle X (%)<input type="number" min="10" value="${sx}" oninput="robotEditOverride('${partId}','sx',this.value/100)"></label>
+        <label>Échelle Y (%)<input type="number" min="10" value="${sy}" oninput="robotEditOverride('${partId}','sy',this.value/100)"></label>
+        <label>Échelle Z (%)<input type="number" min="10" value="${sz}" oninput="robotEditOverride('${partId}','sz',this.value/100)"></label>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="robotResetOverride('${partId}')">↺ Réinitialiser cette pièce</button>
+    </div>`;
+}
+
 // Liste texte des composants (à côté du modèle 3D) — accès alternatif au clic sur le modèle,
-// utile en particulier sur petit écran où une pièce peut être minuscule à l'écran.
+// utile en particulier sur petit écran où une pièce peut être minuscule à l'écran. Inclut les
+// pièces personnalisées ajoutées en mode édition, et le bouton d'ajout quand ce mode est actif.
 function renderRobotPartList() {
   const list = document.getElementById('robotPartList');
   if (!list) return;
   const sel = state.robotView.selectedPart;
   const selTop = sel && ROBOT_PARTS[sel]?.parent ? ROBOT_PARTS[sel].parent : sel;
-  list.innerHTML = ROBOT_TOP_LEVEL_PARTS.map(id => {
+  const ids = [...ROBOT_TOP_LEVEL_PARTS, ...(state.robotEdits?.custom.map(c => c.id) || [])];
+  list.innerHTML = ids.map(id => {
     const p = ROBOT_PARTS[id];
+    if (!p) return '';
     return `<button class="robot-part-list-item${id === selTop ? ' active' : ''}" onclick="selectRobotPart('${id}')">
       <span class="robot-part-list-name">${p.name}</span>
       <span class="robot-part-list-price">${p.priceLabel || '—'}</span>
     </button>`;
-  }).join('');
+  }).join('') + (state.robotView.editMode ? `<button class="robot-part-list-add" onclick="robotAddCustomPart()">+ Ajouter un composant</button>` : '');
 }
 
 function selectRobotPart(partId) {
@@ -7225,6 +7394,7 @@ function renderRobotDetailPanel(partId) {
     }).join('') + `</div>`;
     html += `<button class="btn btn-secondary btn-sm robot-toggle-box-btn" onclick="toggleRobotBoxOpen()">${state.robotView.boxOpen ? '🔒 Fermer la caisse' : '🔓 Ouvrir la caisse'}</button>`;
   }
+  if (state.robotView.editMode && !part.parent) html += renderRobotEditControls(partId, part);
   body.innerHTML = html;
   panel.style.display = 'block';
 }
@@ -7309,6 +7479,10 @@ function _initRobotPanZoomEvents() {
 }
 
 function initRobotSceneIfNeeded() {
+  if (!state.robotEdits) {
+    state.robotEdits = loadRobotEdits();
+    robotSyncCustomParts();
+  }
   _initRobotPanZoomEvents();
   renderRobotPartList();
   requestAnimationFrame(() => renderRobotScene());

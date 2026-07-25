@@ -12,7 +12,7 @@
       document.documentElement.setAttribute('data-theme', theme);
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=103">
+  <link rel="stylesheet" href="css/style.css?v=104">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" crossorigin=""/>
 </head>
@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v103</span>
+        <span class="logo-version" id="appVersion">v104</span>
       </div>
     </div>
     <div class="header-status">
@@ -879,9 +879,12 @@
           <div class="card robot-3d-card">
             <div class="card-header">
               <span>Modèle 3D du robot</span>
-              <button class="btn btn-ghost btn-sm" onclick="resetRobotView()" title="Réinitialiser le zoom/déplacement">⊙ Recentrer</button>
+              <span style="display:flex; gap:6px">
+                <button class="btn btn-ghost btn-sm" id="robotEditModeBtn" onclick="toggleRobotEditMode()" title="Repositionner, redimensionner ou ajouter des composants">✏️ Mode édition</button>
+                <button class="btn btn-ghost btn-sm" onclick="resetRobotView()" title="Réinitialiser le zoom/déplacement">⊙ Recentrer</button>
+              </span>
             </div>
-            <p class="energy-disclaimer" style="padding-top:6px">Glissez pour pivoter, molette/pincement pour zoomer, cliquez sur une pièce pour voir sa fiche technique. Cliquez sur la caisse électrique pour l'ouvrir et voir chaque composant à l'intérieur.</p>
+            <p class="energy-disclaimer" style="padding-top:6px">Glissez pour pivoter, molette/pincement pour zoomer, cliquez sur une pièce pour voir sa fiche technique. Cliquez sur la caisse électrique pour l'ouvrir et voir chaque composant à l'intérieur. En mode édition, sélectionnez une pièce pour la repositionner/redimensionner précisément, ou ajoutez-en une nouvelle.</p>
             <div class="robot-canvas-wrap" id="robotCanvasWrap">
               <canvas id="robotCanvas"></canvas>
             </div>
@@ -994,6 +997,6 @@
     window.db = firebase.firestore();
   } catch(e) { console.warn("Firebase init failed:", e.message); }
 </script>
-<script src="js/app.js?v=103"></script>
+<script src="js/app.js?v=104"></script>
 </body>
 </html>
