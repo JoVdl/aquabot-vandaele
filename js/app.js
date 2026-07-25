@@ -6794,68 +6794,68 @@ const ROBOT_PARTS = {
     name: 'Récepteur GPS RTK (ZED-F9P)', category: 'Navigation',
     desc: "Positionnement centimétrique en temps réel (RTK), corrections reçues via NTRIP (réseau Centipède) — voir arduino/aquabot_esp32/config.h. C'est lui qui permet au robot de suivre précisément le quadrillage de cases planifié.",
     specs: [['Puce', 'u-blox ZED-F9P'], ['Précision', '≈ 1-2 cm (RTK fixe)'], ['Interface', 'I2C'], ['Fréquence', "jusqu'à 5 Hz"]],
-    priceLabel: '≈ 230 €', buyUrl: 'https://www.sparkfun.com/sparkfun-gps-rtk2-board-zed-f9p-qwiic-gps-15136.html', buyLabel: 'SparkFun GPS-RTK2 (ZED-F9P)',
+    priceLabel: '≈ 230 €', priceValue: 230, buyUrl: 'https://www.sparkfun.com/sparkfun-gps-rtk2-board-zed-f9p-qwiic-gps-15136.html', buyLabel: 'SparkFun GPS-RTK2 (ZED-F9P)',
   },
   controlbox: {
     name: 'Caisse électrique (batteries + électronique)', category: 'Électronique',
     desc: "Grosse caisse en fer montée sur un support surélevé, à l'extrémité arrière de l'armature centrale, posée EN TRAVERS du robot sur les 2 longerons intérieurs du couloir central, regroupant les batteries et toute l'électronique de pilotage — cliquez sur « Ouvrir la caisse » ci-dessous pour voir chaque composant à l'intérieur.",
     specs: [['Dimensions', '85 × 35 × 35 cm'], ['Position', 'Support surélevé, en travers, extrémité arrière de l\'armature'], ['Protection', 'IP65 / IP67'], ['Contenu', "Batterie, ESP32, 4× pilotes moteurs, relais pompe, capteurs de courant, boussole"]],
-    buyLabel: 'Caisse étanche du commerce',
+    priceLabel: '≈ 486 € (coffret seul, indicatif)', priceValue: 486, buyUrl: 'https://www.achat-electrique.com/fr/3201-coffret-electrique-en-polyester-etanche-ip66-800x600x300-porte-vitree-avec-auvent-ide.html', buyLabel: 'Coffret polyester étanche IP66, 80×60×30cm — achat-electrique.com',
     composite: true, subParts: ['battery', 'esp32', 'drivers', 'relay', 'currentsensors', 'compass'],
   },
   esp32: {
     name: 'Microcontrôleur ESP32-WROOM-32', category: 'Électronique', parent: 'controlbox',
     desc: "Le cerveau du robot : pilote les 4 propulseurs, la pompe et la sonde bathymétrique, lit le GPS et la boussole, et communique avec cette application via WiFi/Firebase.",
     specs: [['CPU', 'Dual-core 240 MHz'], ['WiFi', '802.11 b/g/n'], ['E/S utilisées', 'PWM ×6 (propulseurs), I2C (GPS/boussole), ADC (courant)']],
-    priceLabel: '≈ 11 €', buyUrl: 'https://www.amazon.fr/Espressif-d%C3%A9veloppement-ESP32-DEVKITC-l%C3%A9valuation-ESP32-WROOM-32D/dp/B07G1867ZX', buyLabel: 'ESP32-DevKitC — Amazon.fr',
+    priceLabel: '≈ 11 €', priceValue: 11, buyUrl: 'https://www.amazon.fr/Espressif-d%C3%A9veloppement-ESP32-DEVKITC-l%C3%A9valuation-ESP32-WROOM-32D/dp/B07G1867ZX', buyLabel: 'ESP32-DevKitC — Amazon.fr',
   },
   drivers: {
     name: 'Pilotes moteurs BTS7960 (×4)', category: 'Électronique', parent: 'controlbox',
     desc: "Un pont en H par propulseur (avant-gauche, avant-droit, arrière-gauche, arrière-droit), pour inverser le sens et moduler la puissance indépendamment sur chaque coin — permet de translater latéralement et de pivoter sur place sans gouvernail, utile pour tenir position pendant le pompage.",
     specs: [['Courant max', '43 A'], ['Commande', 'PWM (RPWM / LPWM)']],
-    priceLabel: '≈ 9 € / pièce', buyUrl: 'https://www.amazon.fr/BTS7960B-puissance-conducteur-voiture-intelligente/dp/B00GKF8966', buyLabel: 'BTS7960 43A — Amazon.fr',
+    priceLabel: '≈ 9 € / pièce', priceValue: 36, buyUrl: 'https://www.amazon.fr/BTS7960B-puissance-conducteur-voiture-intelligente/dp/B00GKF8966', buyLabel: 'BTS7960 43A — Amazon.fr',
   },
   relay: {
     name: 'Relais SSR pompe (230V)', category: 'Électronique', parent: 'controlbox',
     desc: "Commute l'alimentation 230V de la pompe depuis une simple sortie logique de l'ESP32, sans contact mécanique — silencieux et longue durée de vie face aux nombreux cycles marche/arrêt d'un chantier.",
     specs: [['Entrée', '3-32V DC'], ['Sortie', '24-480V AC, 25A']],
-    priceLabel: '≈ 10 €', buyUrl: 'https://www.amazon.fr/Relais-semi-conducteurs-SSR-25-semi-conducteurs-90-250V-24-480V/dp/B08Z86RQY2', buyLabel: 'Relais SSR-25 — Amazon.fr',
+    priceLabel: '≈ 10 €', priceValue: 10, buyUrl: 'https://www.amazon.fr/Relais-semi-conducteurs-SSR-25-semi-conducteurs-90-250V-24-480V/dp/B08Z86RQY2', buyLabel: 'Relais SSR-25 — Amazon.fr',
   },
   currentsensors: {
     name: 'Capteurs de courant ACS712 (×2)', category: 'Électronique', parent: 'controlbox',
     desc: "Mesurent le courant de la pompe et de la sonde bathymétrique pour détecter le fond (pic de courant à l'arrêt mécanique de la descente), sans capteur de position dédié.",
     specs: [['Principe', 'Effet Hall'], ['Sortie', '66 mV/A (modèle 30A)']],
-    priceLabel: '≈ 7 € / pièce', buyUrl: 'https://www.amazon.fr/Module-capteur-courant-ACS712-30/dp/B0922FCH6L', buyLabel: 'ACS712 30A — Amazon.fr',
+    priceLabel: '≈ 7 € / pièce', priceValue: 14, buyUrl: 'https://www.amazon.fr/Module-capteur-courant-ACS712-30/dp/B0922FCH6L', buyLabel: 'ACS712 30A — Amazon.fr',
   },
   compass: {
     name: 'Boussole électronique QMC5883L', category: 'Électronique', parent: 'controlbox',
     desc: "Donne le cap du robot à l'arrêt ou à faible vitesse, quand le cap GPS (course over ground) n'est pas fiable.",
     specs: [['Interface', 'I2C'], ['Adresse', '0x0D']],
-    priceLabel: '≈ 5 €', buyUrl: 'https://www.ebay.fr/itm/GY-273-QMC5883L-HMC5883L-Variant-3-Axis-Compass-Magnetometer-Module-SOLDERED-/282834089264', buyLabel: 'GY-273 QMC5883L — eBay',
+    priceLabel: '≈ 5 €', priceValue: 5, buyUrl: 'https://www.ebay.fr/itm/GY-273-QMC5883L-HMC5883L-Variant-3-Axis-Compass-Magnetometer-Module-SOLDERED-/282834089264', buyLabel: 'GY-273 QMC5883L — eBay',
   },
   battery: {
     name: 'Batterie 12V (décharge lente)', category: 'Alimentation', parent: 'controlbox',
     desc: "Alimente l'électronique et les 4 propulseurs. La pompe (230V, 1800W) est alimentée séparément — voir l'onglet Énergie pour le dimensionnement complet, elle domine largement le bilan électrique du robot.",
     specs: [['Tension', '12V'], ['Capacité', '100 Ah'], ['Type', 'Gel / décharge lente']],
-    priceLabel: '≈ 259 €', buyUrl: 'https://www.amazon.fr/Batterie-100ah-12v-d%C3%A9charge-Lente-ULTIMATRON/dp/B08QV9FRSB', buyLabel: 'Batterie Gel 100Ah — Amazon.fr',
+    priceLabel: '≈ 259 €', priceValue: 259, buyUrl: 'https://www.amazon.fr/Batterie-100ah-12v-d%C3%A9charge-Lente-ULTIMATRON/dp/B08QV9FRSB', buyLabel: 'Batterie Gel 100Ah — Amazon.fr',
   },
   thrusters: {
     name: 'Propulseurs (×4, N/S/E/O)', category: 'Propulsion',
     desc: "4 moteurs de barque électriques 12V façon torpille (corps profilé noir, arbre de fixation vertical, safran sous le nez, hélice 3 pales — comme le modèle réel), placés dans les espaces libres du robot plutôt que sous les flotteurs : un à l'avant et un à l'arrière dans le couloir central (au-delà des flotteurs), un à gauche et un à droite dans l'espace entre les 2 flotteurs de chaque ponton. Cette disposition permet d'avancer, de translater latéralement et de pivoter sur place, sans gouvernail.",
     specs: [['Type', 'Moteur de barque électrique 12V (façon torpille, hélice 3 pales)'], ['Commande', 'Pont en H BTS7960'], ['Disposition', 'Avant / Arrière / Gauche / Droit (espaces libres)']],
-    priceLabel: '≈ 40-60 € / pièce (indicatif)', buyUrl: 'https://www.gotronic.fr/cat-moteurs-cc-1089.htm', buyLabel: 'Moteurs CC étanches — Gotronic',
+    priceLabel: '≈ 40-60 € / pièce (indicatif)', priceValue: 200, buyUrl: 'https://www.gotronic.fr/cat-moteurs-cc-1089.htm', buyLabel: 'Moteurs CC étanches — Gotronic',
   },
   pump: {
     name: 'Pompe de relevage + mécanisme de levage', category: 'Curage',
     desc: "Pompe submersible cylindrique en inox, avec poignée de transport et cage de protection en acier autour de la crépine (comme sur la pompe réelle), fixée tout en bas d'une crémaillère verticale dentée. Un motoréducteur de type moteur de portail (boîtier gris, compartiment supérieur vissé, plaque de fixation), monté en haut de la tour de levage (voir « Armature complète »), entraîne un pignon denté sur son flanc qui engrène cette crémaillère sur toute sa hauteur — fait descendre la pompe dans la vase (jusqu'à 61cm sous l'eau) puis la remonter jusqu'au-dessus du pont (91cm), guidée sans à-coups. Position de repos (hors cycle de pompage) au niveau du pont. Détection du fond par pic de courant (voir config.h).",
     specs: [['Puissance pompe', '1800 W'], ['Alimentation pompe', '230V AC'], ['Débit', '≈ 500 L/min (paramétrable)'], ['Mécanisme de levage', 'Motoréducteur 12V (type portail) + pignon/crémaillère'], ['Course', '91cm au-dessus du pont → 61cm sous l\'eau'], ['Position de repos', 'Niveau du pont'], ['Protection', 'Cage acier autour de la crépine']],
-    priceLabel: '≈ 180 € (pompe, indicatif)', buyUrl: 'https://www.vevor.fr/pompes-a-eau-c_11090', buyLabel: 'Pompes eaux chargées — VEVOR',
+    priceLabel: '≈ 180 € (pompe, indicatif)', priceValue: 180, buyUrl: 'https://www.vevor.fr/pompes-a-eau-c_11090', buyLabel: 'Pompes eaux chargées — VEVOR',
   },
   hose: {
     name: 'Tuyau de refoulement (plat toile)', category: 'Curage',
     desc: "Tuyau plat en toile (type tuyau incendie, comme sur la pompe réelle), enroulable pour le stockage — achemine la vase pompée jusqu'à la zone de dépôt définie sur la berge (voir onglet Étangs), posé au sol, sans flotter.",
     specs: [['Type', 'Tuyau plat toile (layflat)'], ['Diamètre', '≈ Ø32-40 mm']],
-    buyLabel: 'Fourni avec la pompe / tuyau standard du commerce',
+    priceLabel: '≈ 98 € (5m avec raccords, indicatif)', priceValue: 98, buyUrl: 'https://www.pompes-h2o.com/fr/flexibles-incendie-plat/3878-kit-tuyau-incendie-guillemin-dn40.html', buyLabel: 'Tuyau plat incendie DN40 + raccords — pompes-h2o.com',
   },
   bathyprobe: {
     name: 'Sonde bathymétrique', category: 'Curage',
@@ -7249,7 +7249,117 @@ function resetRobotView() {
   _animateRobotView(1, { x: 0, y: 0 });
 }
 
+// Zoome en gardant fixe à l'écran le point (px,py) — évite qu'un pincement/molette proche d'un
+// bord fasse "sauter" le contenu ailleurs, ce qui laissait facilement l'utilisateur mobile
+// zoomé sur une zone qu'il ne visait pas, sans repère pour revenir dessus (voir aussi le pan
+// combiné au pincement dans _initRobotPanZoomEvents, et le double-tap pour réinitialiser).
+function robotZoomAt(px, py, factor) {
+  const v = state.robotView, L = v._layout;
+  const newZoom = Math.max(0.5, Math.min(6, v.zoom * factor));
+  if (L) {
+    const r = newZoom / v.zoom;
+    v.pan.x += (px - L.offX - v.pan.x) * (1 - r);
+    v.pan.y += (py - L.offY - v.pan.y) * (1 - r);
+  }
+  v.zoom = newZoom;
+}
+
 const ROBOT_TOP_LEVEL_PARTS = ['hull', 'frame', 'mast', 'gps', 'controlbox', 'thrusters', 'pump', 'hose', 'bathyprobe'];
+
+// ============================================================
+// ROBOT PROCUREMENT — suivi d'achat des composants (onglet Robot)
+// Statut par pièce (à commander / commandé / en stock) + récap budget total / reste à acheter,
+// à partir de priceValue (montant numérique, ×quantité déjà inclus) défini sur les pièces ayant
+// un prix réel dans ROBOT_PARTS ci-dessus. Synchronisé entre appareils comme les Paramètres
+// (même doc unique Firestore "dernier écrivain gagne") — contrairement à state.robotEdits (calage
+// du modèle 3D, propre à l'appareil), le suivi d'achat est une donnée de projet qu'on veut
+// retrouver partout (ex. cocher "commandé" depuis le téléphone en boutique).
+// ============================================================
+const ROBOT_PROCUREMENT_IDS = [...ROBOT_TOP_LEVEL_PARTS, ...ROBOT_PARTS.controlbox.subParts];
+const ROBOT_STATUS_META = {
+  todo:    { label: 'À commander', dot: '#94a3b8' },
+  ordered: { label: 'Commandé',    dot: '#d97706' },
+  owned:   { label: 'En stock',    dot: '#16a34a' },
+};
+let robotProcurement = {}; // { [partId]: 'todo' | 'ordered' | 'owned' } — absent = 'todo'
+
+function robotProcurementStatus(partId) {
+  return robotProcurement[partId] || 'todo';
+}
+
+function setRobotPartStatus(partId, status) {
+  robotProcurement[partId] = status;
+  persistRobotProcurement();
+  renderRobotPartList();
+  renderRobotProcurementRecap();
+}
+
+function persistRobotProcurement() {
+  localStorage.setItem('aquabot_robotProcurement', JSON.stringify(robotProcurement));
+  if (USE_CLOUD) {
+    window.db.collection('aquabot_meta').doc('robotProcurement').set(robotProcurement)
+      .catch(e => reportFirestoreError(e, 'persistRobotProcurement'));
+  }
+}
+
+let _robotProcurementUnsubscribe = null;
+function subscribeRobotProcurement() {
+  if (!USE_CLOUD || _robotProcurementUnsubscribe) return;
+  _robotProcurementUnsubscribe = window.db.collection('aquabot_meta').doc('robotProcurement').onSnapshot(doc => {
+    if (!doc.exists) return;
+    const remote = doc.data();
+    if (!remote) return;
+    Object.assign(robotProcurement, remote);
+    localStorage.setItem('aquabot_robotProcurement', JSON.stringify(robotProcurement));
+    renderRobotPartList();
+    renderRobotProcurementRecap();
+  }, e => reportFirestoreError(e, 'subscribeRobotProcurement'));
+}
+
+function _robotFormatEuro(n) {
+  return Math.round(n).toLocaleString('fr-FR') + ' €';
+}
+
+// Petit point coloré (aperçu du statut, non-interactif) — dans la liste des composants et la
+// liste des sous-composants, où la place manque pour un vrai sélecteur.
+function robotStatusDot(partId) {
+  if (!ROBOT_PROCUREMENT_IDS.includes(partId)) return '';
+  const meta = ROBOT_STATUS_META[robotProcurementStatus(partId)];
+  return `<span class="robot-status-dot" style="background:${meta.dot}" title="${meta.label}"></span>`;
+}
+
+// Vrai sélecteur (change le statut) — dans le panneau de détail, où il y a la place.
+function robotStatusSelect(partId) {
+  if (!ROBOT_PROCUREMENT_IDS.includes(partId)) return '';
+  const cur = robotProcurementStatus(partId);
+  const opts = Object.entries(ROBOT_STATUS_META).map(([k, m]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${m.label}</option>`).join('');
+  return `<label class="robot-status-select-wrap">Statut d'achat
+    <select class="robot-status-select" onchange="setRobotPartStatus('${partId}', this.value)">${opts}</select>
+  </label>`;
+}
+
+// Récap budget projet — carte toujours visible en haut de la colonne de l'onglet Robot (voir
+// index.html #robotRecapTotal etc.), mise à jour à chaque changement de statut ou d'écho
+// Firestore, et une première fois par initRobotSceneIfNeeded().
+function renderRobotProcurementRecap() {
+  const elTotal = document.getElementById('robotRecapTotal');
+  if (!elTotal) return;
+  let total = 0, ownedValue = 0, remaining = 0, ownedCount = 0;
+  for (const id of ROBOT_PROCUREMENT_IDS) {
+    const val = ROBOT_PARTS[id]?.priceValue;
+    const owned = robotProcurementStatus(id) === 'owned';
+    if (owned) ownedCount++;
+    if (!val) continue;
+    total += val;
+    if (owned) ownedValue += val; else remaining += val;
+  }
+  elTotal.textContent = _robotFormatEuro(total);
+  document.getElementById('robotRecapOwned').textContent = _robotFormatEuro(ownedValue);
+  document.getElementById('robotRecapRemaining').textContent = _robotFormatEuro(remaining);
+  const pct = Math.round(100 * ownedCount / ROBOT_PROCUREMENT_IDS.length);
+  document.getElementById('robotRecapProgressFill').style.width = pct + '%';
+  document.getElementById('robotRecapProgressLabel').textContent = `${ownedCount} / ${ROBOT_PROCUREMENT_IDS.length} composants en stock`;
+}
 
 // ============================================================
 // ROBOT ÉDITION — mode "édition" du modèle 3D : repositionner/redimensionner les pièces
@@ -7401,7 +7511,7 @@ function renderRobotPartList() {
     const p = ROBOT_PARTS[id];
     if (!p) return '';
     return `<button class="robot-part-list-item${id === selTop ? ' active' : ''}" onclick="selectRobotPart('${id}')">
-      <span class="robot-part-list-name">${p.name}</span>
+      <span class="robot-part-list-name">${robotStatusDot(id)}${p.name}</span>
       <span class="robot-part-list-price">${p.priceLabel || '—'}</span>
     </button>`;
   }).join('') + (state.robotView.editMode ? `<button class="robot-part-list-add" onclick="robotAddCustomPart()">+ Ajouter un composant</button>` : '');
@@ -7443,7 +7553,7 @@ function renderRobotDetailPanel(partId) {
     const parentPart = ROBOT_PARTS[part.parent];
     html += `<button class="robot-breadcrumb" onclick="selectRobotPart('${part.parent}')">← ${parentPart ? parentPart.name : 'Retour'}</button>`;
   }
-  html += `<div class="robot-detail-name">${part.name}</div>`;
+  html += `<div class="robot-detail-name">${robotStatusDot(partId)}${part.name}</div>`;
   html += `<p class="robot-detail-desc">${part.desc}</p>`;
   if (part.specs?.length) {
     html += `<div class="robot-spec-list">` + part.specs.map(([k, val]) => `<div class="robot-spec-row"><span>${k}</span><b>${val}</b></div>`).join('') + `</div>`;
@@ -7454,11 +7564,12 @@ function renderRobotDetailPanel(partId) {
   } else if (part.buyLabel) {
     html += `<div class="robot-buy-note">${part.buyLabel}</div>`;
   }
+  html += robotStatusSelect(partId);
   if (part.composite) {
     html += `<div class="robot-subpart-head">Composants à l'intérieur</div>`;
     html += `<div class="robot-subpart-list">` + part.subParts.map(id => {
       const sp = ROBOT_PARTS[id];
-      return sp ? `<button class="robot-subpart-item" onclick="selectRobotPart('${id}')"><span>${sp.name}</span><span>›</span></button>` : '';
+      return sp ? `<button class="robot-subpart-item" onclick="selectRobotPart('${id}')"><span>${robotStatusDot(id)}${sp.name}</span><span>›</span></button>` : '';
     }).join('') + `</div>`;
     html += `<button class="btn btn-secondary btn-sm robot-toggle-box-btn" onclick="toggleRobotBoxOpen()">${state.robotView.boxOpen ? '🔒 Fermer la caisse' : '🔓 Ouvrir la caisse'}</button>`;
   }
@@ -7477,7 +7588,7 @@ function _handleRobotClick(clientX, clientY, canvas) {
   if (partId) selectRobotPart(partId);
 }
 
-let _robotDrag = null, _robotTouch = null;
+let _robotDrag = null, _robotTouch = null, _robotLastTap = null;
 
 function _initRobotPanZoomEvents() {
   const canvas = document.getElementById('robotCanvas');
@@ -7486,10 +7597,12 @@ function _initRobotPanZoomEvents() {
 
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    const v = state.robotView;
-    v.zoom = Math.max(0.5, Math.min(6, v.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    const p = _robotClientToCanvas(e.clientX, e.clientY, canvas);
+    robotZoomAt(p.x, p.y, e.deltaY < 0 ? 1.12 : 1 / 1.12);
     renderRobotScene();
   }, { passive: false });
+
+  canvas.addEventListener('dblclick', () => resetRobotView());
 
   canvas.addEventListener('mousedown', e => {
     _robotDrag = { startX: e.clientX, startY: e.clientY, rotation: state.robotView.rotation, tilt: state.robotView.tilt };
@@ -7516,7 +7629,8 @@ function _initRobotPanZoomEvents() {
       _robotTouch = { mode: 'rotate', x: t.clientX, y: t.clientY, rotation: state.robotView.rotation, tilt: state.robotView.tilt };
     } else if (e.touches.length === 2) {
       const [t1, t2] = e.touches;
-      _robotTouch = { mode: 'pinch', dist: Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY), zoom: state.robotView.zoom };
+      const mid = _robotClientToCanvas((t1.clientX + t2.clientX) / 2, (t1.clientY + t2.clientY) / 2, canvas);
+      _robotTouch = { mode: 'pinchpan', dist: Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY), mid };
     }
   }, { passive: true });
   canvas.addEventListener('touchmove', e => {
@@ -7527,10 +7641,19 @@ function _initRobotPanZoomEvents() {
       v.rotation = (_robotTouch.rotation + (t.clientX - _robotTouch.x) * 0.4 + 360) % 360;
       v.tilt = Math.max(5, Math.min(80, _robotTouch.tilt - (t.clientY - _robotTouch.y) * 0.3));
       renderRobotScene();
-    } else if (_robotTouch.mode === 'pinch' && e.touches.length === 2) {
+    } else if (_robotTouch.mode === 'pinchpan' && e.touches.length === 2) {
       const [t1, t2] = e.touches;
+      const mid = _robotClientToCanvas((t1.clientX + t2.clientX) / 2, (t1.clientY + t2.clientY) / 2, canvas);
       const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-      v.zoom = Math.max(0.5, Math.min(6, _robotTouch.zoom * (dist / _robotTouch.dist)));
+      // Déplace d'abord du delta du milieu des 2 doigts (pan), PUIS zoome ancré sur ce même
+      // point (voir robotZoomAt) — combine pan+zoom au pincement, sans quoi zoomer près d'un
+      // bord "éjectait" le modèle hors champ, sans moyen d'y revenir autrement qu'en dézoomant
+      // complètement (voir "⊙ Recentrer" / double-tap ci-dessous, pour un retour rapide).
+      v.pan.x += mid.x - _robotTouch.mid.x;
+      v.pan.y += mid.y - _robotTouch.mid.y;
+      robotZoomAt(mid.x, mid.y, dist / _robotTouch.dist);
+      _robotTouch.mid = mid;
+      _robotTouch.dist = dist;
       renderRobotScene();
     }
   }, { passive: true });
@@ -7538,7 +7661,12 @@ function _initRobotPanZoomEvents() {
     if (_robotTouch && _robotTouch.mode === 'rotate' && e.changedTouches.length) {
       const t = e.changedTouches[0];
       const moved = Math.hypot(t.clientX - _robotTouch.x, t.clientY - _robotTouch.y);
-      if (moved < 8) _handleRobotClick(t.clientX, t.clientY, canvas);
+      if (moved < 8) {
+        const now = Date.now();
+        const isDoubleTap = _robotLastTap && (now - _robotLastTap.t) < 350 && Math.hypot(t.clientX - _robotLastTap.x, t.clientY - _robotLastTap.y) < 30;
+        if (isDoubleTap) { resetRobotView(); _robotLastTap = null; }
+        else { _handleRobotClick(t.clientX, t.clientY, canvas); _robotLastTap = { t: now, x: t.clientX, y: t.clientY }; }
+      }
     }
     _robotTouch = null;
   });
@@ -7553,6 +7681,7 @@ function initRobotSceneIfNeeded() {
   }
   _initRobotPanZoomEvents();
   renderRobotPartList();
+  renderRobotProcurementRecap();
   requestAnimationFrame(() => renderRobotScene());
 }
 
@@ -8507,9 +8636,11 @@ function init() {
   toggleSatelliteViewDash(true);
   loadPonds();
   try { const sp = localStorage.getItem('aquabot_params'); if (sp) Object.assign(params, JSON.parse(sp)); } catch {}
+  try { const rp = localStorage.getItem('aquabot_robotProcurement'); if (rp) Object.assign(robotProcurement, JSON.parse(rp)); } catch {}
 
   syncParamsToDOM();
   subscribeParams();
+  subscribeRobotProcurement();
 
   document.querySelectorAll('.nav-tab').forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
 

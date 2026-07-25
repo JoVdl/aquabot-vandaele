@@ -12,7 +12,7 @@
       document.documentElement.setAttribute('data-theme', theme);
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=107">
+  <link rel="stylesheet" href="css/style.css?v=108">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" crossorigin=""/>
 </head>
@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v107</span>
+        <span class="logo-version" id="appVersion">v108</span>
       </div>
     </div>
     <div class="header-status">
@@ -884,13 +884,26 @@
                 <button class="btn btn-ghost btn-sm" onclick="resetRobotView()" title="Réinitialiser le zoom/déplacement">⊙ Recentrer</button>
               </span>
             </div>
-            <p class="energy-disclaimer" style="padding-top:6px">Glissez pour pivoter, molette/pincement pour zoomer, cliquez sur une pièce pour voir sa fiche technique. Cliquez sur la caisse électrique pour l'ouvrir et voir chaque composant à l'intérieur. En mode édition, sélectionnez une pièce pour la repositionner/redimensionner précisément, ou ajoutez-en une nouvelle.</p>
+            <p class="energy-disclaimer" style="padding-top:6px">Un doigt pour pivoter, deux doigts pour déplacer/zoomer, double-tap pour réinitialiser la vue (souris : molette pour zoomer, double-clic pour réinitialiser). Cliquez sur une pièce pour voir sa fiche technique, sur la caisse électrique pour l'ouvrir et voir chaque composant à l'intérieur. En mode édition, sélectionnez une pièce pour la repositionner/redimensionner précisément, ou ajoutez-en une nouvelle.</p>
             <div class="robot-canvas-wrap" id="robotCanvasWrap">
               <canvas id="robotCanvas"></canvas>
             </div>
           </div>
 
           <div class="robot-side-col">
+            <div class="card robot-recap-card">
+              <div class="card-header">Suivi du projet</div>
+              <div class="robot-recap-stats">
+                <div class="robot-recap-stat"><span>Budget total</span><b id="robotRecapTotal">— €</b></div>
+                <div class="robot-recap-stat"><span>Déjà en stock</span><b id="robotRecapOwned">— €</b></div>
+                <div class="robot-recap-stat accent"><span>Reste à acheter</span><b id="robotRecapRemaining">— €</b></div>
+              </div>
+              <div class="robot-recap-progress">
+                <div class="robot-recap-progress-track"><div class="robot-recap-progress-fill" id="robotRecapProgressFill" style="width:0%"></div></div>
+                <span id="robotRecapProgressLabel">0 / 15 composants en stock</span>
+              </div>
+            </div>
+
             <div class="card robot-detail-card" id="robotDetailPanel" style="display:none">
               <div class="card-header">
                 <span>Détail du composant</span>
@@ -997,6 +1010,6 @@
     window.db = firebase.firestore();
   } catch(e) { console.warn("Firebase init failed:", e.message); }
 </script>
-<script src="js/app.js?v=107"></script>
+<script src="js/app.js?v=108"></script>
 </body>
 </html>
