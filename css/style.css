@@ -978,6 +978,7 @@ svg { display: block; }
   padding: 16px 18px; border-bottom: 1px solid var(--border);
 }
 .modal-header h3 { font-size: 15px; font-weight: 800; color: var(--text-1); margin: 0; }
+.modal-subtitle { font-size: 11px; color: var(--text-2); margin-top: 2px; }
 .modal-close {
   background: none; border: none; color: var(--text-2); font-size: 14px;
   cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm); line-height: 1;

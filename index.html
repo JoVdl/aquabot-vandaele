@@ -12,7 +12,7 @@
       document.documentElement.setAttribute('data-theme', theme);
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=93">
+  <link rel="stylesheet" href="css/style.css?v=94">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" crossorigin=""/>
 </head>
@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v93</span>
+        <span class="logo-version" id="appVersion">v94</span>
       </div>
     </div>
     <div class="header-status">
@@ -405,6 +405,7 @@
                 <div class="vol-row"><span class="vol-lbl">Volume vase total</span><span class="vol-val" id="pondTotalMud">—</span></div>
                 <div class="vol-row"><span class="vol-lbl">Temps de travail</span><span class="vol-val" id="pondTotalTime">00:00:00</span></div>
               </div>
+              <button class="btn btn-secondary btn-sm" id="btnLastJobRecap" onclick="showLastJobRecap()" style="width:100%;margin-top:8px;display:none">🧾 Voir le récap du dernier chantier</button>
             </div>
           </div>
         </div><!-- /dash-action-bar -->
@@ -871,7 +872,10 @@
   <div id="jobRecapOverlay" class="modal-overlay" style="display:none" onclick="if(event.target===this) closeJobRecap()">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>✅ Chantier terminé</h3>
+        <div>
+          <h3>✅ Chantier terminé</h3>
+          <div class="modal-subtitle" id="recapDate"></div>
+        </div>
         <button class="modal-close" onclick="closeJobRecap()" aria-label="Fermer">✕</button>
       </div>
       <div class="modal-body">
@@ -935,6 +939,6 @@
     window.db = firebase.firestore();
   } catch(e) { console.warn("Firebase init failed:", e.message); }
 </script>
-<script src="js/app.js?v=93"></script>
+<script src="js/app.js?v=94"></script>
 </body>
 </html>

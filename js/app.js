@@ -197,6 +197,7 @@ function pondToFirestore(pond) {
     bathySurveys: (pond.bathySurveys || []).map(s => ({ ...s, readings: encodeBathyReadings(s.readings) })),
     lastUsed:   pond.lastUsed   || Date.now(),
     lastResetAt: pond.lastResetAt || 0,
+    lastJobRecap: pond.lastJobRecap || null,
     work: {
       completedCells: pond.work?.completedCells || [],
       volumePumped:   pond.work?.volumePumped   || 0,
@@ -4560,8 +4561,11 @@ function computeJobRecap() {
   };
 }
 
-function showJobRecap() {
-  const r = computeJobRecap();
+// `recap` : passer un objet déjà calculé (ex. state.pond.lastJobRecap, pour rouvrir le récap
+// d'un chantier déjà terminé) ; à défaut, recalculé à la volée depuis l'état courant (cas du
+// chantier qui vient tout juste de se terminer, voir finishSimulation).
+function showJobRecap(recap) {
+  const r = recap || computeJobRecap();
   setText('recapSurface',          `${r.cellCount} case${r.cellCount > 1 ? 's' : ''} · ${r.surfaceM2.toFixed(1)} m²`);
   setText('recapDuration',         formatTime(r.durationSec));
   setText('recapVolumePumped',     formatVolM3(r.volumePumpedM3));
@@ -4570,8 +4574,15 @@ function showJobRecap() {
   setText('recapMudAfter',         r.mudAfterAvg  != null ? r.mudAfterAvg.toFixed(2)  + ' m' : '—');
   setText('recapEnergy',           formatEnergyWh(r.energyWhJob));
   setText('recapCost',             formatEnergyCost(r.energyWhJob, params.elecTariff || 0));
+  setText('recapDate',             r.date ? `Terminé le ${new Date(r.date).toLocaleString('fr-FR')}` : '');
   const overlay = document.getElementById('jobRecapOverlay');
   if (overlay) overlay.style.display = 'flex';
+}
+
+function showLastJobRecap() {
+  const recap = state.pond?.lastJobRecap;
+  if (!recap) { showToast('Aucun récap de chantier disponible pour cet étang.', 'error'); return; }
+  showJobRecap(recap);
 }
 
 function closeJobRecap() {
@@ -5839,11 +5850,23 @@ function finishSimulation() {
   // continue simplement d'être la dernière bathymétrie de l'étang, prête à être mise à jour au
   // prochain chantier. Une bathymétrie "après travaux" figée reste possible à tout moment, mais
   // en tant qu'action manuelle distincte (relevé complet ou génération rapide), pas automatique.
+  // Le récap est figé ici (plutôt que recalculé à chaque ouverture) et attaché à l'étang, pour
+  // rester consultable plus tard — ex. si le chantier s'est terminé pendant que l'app n'était
+  // pas au premier plan (voir bouton "Voir le dernier récap", popover Progression) — alors que
+  // les baselines dont il dépend (state.sim.jobVolumeAtStart etc.) sont, elles, réinitialisées
+  // au prochain démarrage de chantier.
+  const jobRecap = computeJobRecap();
+  if (state.pond) state.pond.lastJobRecap = { ...jobRecap, date: Date.now() };
   saveWork();
   updatePondsList();
   showToast('Curage terminé ! Résultats enregistrés.', 'success');
-  showJobRecap();
+  showJobRecap(jobRecap);
   saveSimState();
+  // simulationTick() appelle normalement updateUI() en fin de tick, mais la toute dernière tick
+  // d'un chantier retourne tôt vers finishSimulation() (voir plus haut) sans jamais l'atteindre —
+  // sans cet appel explicite, le bouton "Voir le dernier récap" (entre autres) resterait affiché
+  // avec son état d'avant la fin du chantier jusqu'au prochain rafraîchissement fortuit.
+  updateUI();
   renderAllPondCanvases();
   renderSectionCanvas();
 }
@@ -5900,6 +5923,8 @@ function updateUI() {
   const dashEmpty = document.getElementById('dashCanvasEmptyState');
   if (dashEmpty) dashEmpty.style.display = state.pond ? 'none' : 'flex';
   updateEnergyTab();
+  const recapBtn = document.getElementById('btnLastJobRecap');
+  if (recapBtn) recapBtn.style.display = state.pond?.lastJobRecap ? '' : 'none';
 
   const robot = state.robot, path = state.plannedPath;
   const total = path.length;
