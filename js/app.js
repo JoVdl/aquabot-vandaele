@@ -6767,15 +6767,15 @@ document.addEventListener('click', e => {
 // n'ont pas de produit du commerce équivalent identifié avec confiance.
 const ROBOT_PARTS = {
   hull: {
-    name: 'Flotteurs (×4)', category: 'Structure',
-    desc: "Plateforme flottante en 4 flotteurs rectangulaires, un à chaque coin, laissant l'espace central libre pour l'armature de levage de la pompe — répartit la flottaison et facilite le transport et l'entretien (un flotteur endommagé se remplace seul, sans démonter tout le châssis).",
-    specs: [['Quantité', '4'], ['Disposition', 'Un par coin'], ['Assemblage', 'Boulonné sur cadre aluminium']],
+    name: 'Flotteurs Rotax (×4)', category: 'Structure',
+    desc: "4 flotteurs Rotax rectangulaires montés par paires à l'avant et à l'arrière de la plateforme, leur longueur (106cm) suivant la LARGEUR du robot — laissant l'espace central libre, entre les deux paires, pour l'armature de levage de la pompe. Répartit la flottaison et facilite le transport/l'entretien (un flotteur endommagé se remplace seul).",
+    specs: [['Marque', 'Rotax'], ['Dimensions', '106 × 54 × 30 cm (L × l × H)'], ['Quantité', '4'], ['Robot (l × L)', '≈ 2 × 2,5 m']],
     buyLabel: 'Fabrication sur mesure',
   },
   frame: {
-    name: 'Armature centrale (tube carré)', category: 'Structure',
-    desc: "Châssis en tube d'acier carré, au centre de la plateforme, entre les 4 flotteurs — guide la crémaillère verticale de la pompe (voir « Pompe de relevage ») du fond de l'eau jusqu'à la surface sans qu'elle ne heurte les flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait librement.",
-    specs: [['Matériau', 'Tube acier carré'], ['Rôle', 'Guidage vertical de la pompe']],
+    name: 'Armature centrale (échelle acier)', category: 'Structure',
+    desc: "Châssis en échelle (rails + traverses en acier), dans l'espace libre entre les flotteurs avant et arrière — porte le motoréducteur et guide la crémaillère verticale de la pompe (voir « Pompe de relevage ») du fond de l'eau jusqu'à la surface sans qu'elle ne heurte les flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait librement.",
+    specs: [['Matériau', 'Acier (rails + traverses soudées)'], ['Rôle', 'Guidage vertical de la pompe']],
     buyLabel: 'Fabrication sur mesure',
   },
   mast: {
@@ -6841,14 +6841,14 @@ const ROBOT_PARTS = {
   },
   pump: {
     name: 'Pompe de relevage + mécanisme de levage', category: 'Curage',
-    desc: "Pompe fixée au bout d'une crémaillère verticale, entraînée par un motoréducteur de type moteur de portail (avec pignon) monté en haut de l'armature centrale (voir « Armature centrale ») — la fait descendre dans la vase puis remonter jusqu'à la surface, guidée sans à-coups. Détection du fond par pic de courant (voir config.h).",
-    specs: [['Puissance pompe', '1800 W'], ['Alimentation pompe', '230V AC'], ['Débit', '≈ 500 L/min (paramétrable)'], ['Mécanisme de levage', 'Motoréducteur 12V (type portail) + pignon/crémaillère']],
+    desc: "Pompe submersible cylindrique en inox, avec poignée de transport et cage de protection en acier autour de la crépine (comme sur la pompe réelle), fixée au bout d'une crémaillère verticale entraînée par un motoréducteur de type moteur de portail (avec pignon) monté en haut de l'armature centrale (voir « Armature centrale ») — la fait descendre dans la vase puis remonter jusqu'à la surface, guidée sans à-coups. Détection du fond par pic de courant (voir config.h).",
+    specs: [['Puissance pompe', '1800 W'], ['Alimentation pompe', '230V AC'], ['Débit', '≈ 500 L/min (paramétrable)'], ['Mécanisme de levage', 'Motoréducteur 12V (type portail) + pignon/crémaillère'], ['Protection', 'Cage acier autour de la crépine']],
     priceLabel: '≈ 180 € (pompe, indicatif)', buyUrl: 'https://www.vevor.fr/pompes-a-eau-c_11090', buyLabel: 'Pompes eaux chargées — VEVOR',
   },
   hose: {
-    name: 'Tuyau de refoulement', category: 'Curage',
-    desc: "Achemine la vase pompée jusqu'à la zone de dépôt définie sur la berge (voir onglet Étangs) — posé au sol, sans flotter, contrairement au segment robot→ancre.",
-    specs: [['Diamètre', '≈ Ø32-40 mm']],
+    name: 'Tuyau de refoulement (plat toile)', category: 'Curage',
+    desc: "Tuyau plat en toile (type tuyau incendie, comme sur la pompe réelle), enroulable pour le stockage — achemine la vase pompée jusqu'à la zone de dépôt définie sur la berge (voir onglet Étangs), posé au sol, sans flotter.",
+    specs: [['Type', 'Tuyau plat toile (layflat)'], ['Diamètre', '≈ Ø32-40 mm']],
     buyLabel: 'Fourni avec la pompe / tuyau standard du commerce',
   },
   bathyprobe: {
@@ -6893,34 +6893,40 @@ function buildRobotBoxes(boxOpen) {
   const boxes = [];
   const push = (cx, cy, cz, hx, hy, hz, color, partId) => boxes.push({ cx, cy, cz, hx, hy, hz, color, partId });
 
-  // 4 flotteurs RECTANGULAIRES aux 4 coins (pas une grille modulaire) — laissent un espace
-  // central libre pour l'armature (voir 'frame' plus bas), corrigé d'après le retour du client.
-  const fHalf = 0.27, fGap = 0.10; // fGap = demi-espace central libre au milieu de la plateforme
-  const fCenter = fGap + fHalf;
-  const floatPos = [[fCenter, fCenter], [-fCenter, fCenter], [fCenter, -fCenter], [-fCenter, -fCenter]];
-  for (const [fx, fy] of floatPos) push(fx, fy, -0.03, fHalf, fHalf, 0.07, '#1e293b', 'hull');
+  // 4 flotteurs Rotax rectangulaires (106 × 54 × 30 cm), montés PAR PAIRES à l'avant et à
+  // l'arrière — pas aux 4 coins d'une grille — leur longueur (106cm) suivant la LARGEUR du
+  // robot (2m), leur largeur (54cm) suivant sa LONGUEUR (2,5m). L'espace central entre les deux
+  // paires (voir 'frame' plus bas) reste libre pour l'armature de levage de la pompe.
+  const fHalfX = 0.53, fHalfY = 0.27, fHalfZ = 0.15; // 106×54×30 cm
+  const fCenterX = fHalfX + 0.01, fCenterY = 1.25 - fHalfY; // robot ≈ 2,12 × 2,5 m
+  const floatPos = [[fCenterX, fCenterY], [-fCenterX, fCenterY], [fCenterX, -fCenterY], [-fCenterX, -fCenterY]];
+  for (const [fx, fy] of floatPos) push(fx, fy, -0.05, fHalfX, fHalfY, fHalfZ, '#1e293b', 'hull');
 
-  // Armature centrale en tube carré : 4 montants + cadre haut/bas — guide la pompe (fixée à la
-  // crémaillère verticale, voir 'pump') du fond jusqu'à la surface sans qu'elle ne heurte les
-  // flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait librement.
-  const armHalf = 0.11, postT = 0.014;
-  const postZTop = 0.95, postZBot = -0.65;
-  const postCz = (postZTop + postZBot) / 2, postHz = (postZTop - postZBot) / 2;
-  const armCorners = [[armHalf, armHalf], [-armHalf, armHalf], [armHalf, -armHalf], [-armHalf, -armHalf]];
-  for (const [ax, ay] of armCorners) push(ax, ay, postCz, postT, postT, postHz, '#64748b', 'frame');
-  for (const z of [postZTop, 0]) { // cadre haut (sous le motoréducteur) + cadre bas (niveau pont)
-    push(0, armHalf, z, armHalf, postT, postT, '#64748b', 'frame');
-    push(0, -armHalf, z, armHalf, postT, postT, '#64748b', 'frame');
-    push(armHalf, 0, z, postT, armHalf, postT, '#64748b', 'frame');
-    push(-armHalf, 0, z, postT, armHalf, postT, '#64748b', 'frame');
+  // Armature centrale en échelle (2 rails + traverses), dans l'espace libre entre les flotteurs
+  // avant/arrière — porte en haut le motoréducteur + pignon qui entraîne la crémaillère verticale
+  // au bout de laquelle la pompe est fixée, la guidant du fond jusqu'à la surface sans qu'elle ne
+  // heurte les flotteurs ni ne se coince, contrairement à un simple câble qui se balancerait.
+  const railX = 0.09, railT = 0.014;
+  const armZTop = 0.95, armZBot = -0.65;
+  const armCz = (armZTop + armZBot) / 2, armHz = (armZTop - armZBot) / 2;
+  push(railX, 0, armCz, railT, railT, armHz, '#64748b', 'frame');
+  push(-railX, 0, armCz, railT, railT, armHz, '#64748b', 'frame');
+  for (const z of [0.75, 0.4, 0.05, -0.3]) { // traverses de l'échelle, à intervalles réguliers
+    push(0, 0, z, railX, railT, railT, '#64748b', 'frame');
   }
 
-  // Mécanisme de levage de la pompe : moteur de portail (motoréducteur + pignon) fixé en haut de
-  // l'armature, entraînant une crémaillère verticale au bout de laquelle la pompe est attachée.
-  push(0, 0, postZTop + 0.06, 0.05, 0.05, 0.055, '#1e293b', 'pump'); // motoréducteur
-  push(0, 0, (postZTop - 0.6) / 2, 0.016, 0.016, (postZTop + 0.6) / 2, '#94a3b8', 'pump'); // crémaillère
-  push(0, 0, -0.28, 0.065, 0.065, 0.11, '#2563eb', 'pump'); // corps de la pompe, position de repos illustrative
-  push(0.12, 0.02, -0.18, 0.05, 0.012, 0.012, '#93c5fd', 'hose'); // amorce de tuyau de refoulement
+  // Mécanisme de levage de la pompe : motoréducteur type moteur de portail (avec pignon), en haut
+  // de l'armature, entraînant la crémaillère verticale au bout de laquelle la pompe est fixée.
+  push(0, 0, armZTop + 0.06, 0.05, 0.05, 0.055, '#1e293b', 'pump'); // motoréducteur
+  push(0, 0, (armZTop - 0.6) / 2, 0.016, 0.016, (armZTop + 0.6) / 2, '#94a3b8', 'pump'); // crémaillère
+  // Pompe submersible cylindrique en inox (photo réelle), position de repos illustrative — plus
+  // trapue qu'une simple boîte pour se rapprocher d'un corps de pompe.
+  push(0, 0, -0.32, 0.07, 0.07, 0.14, '#c4c9d1', 'pump'); // corps de pompe (inox)
+  // Cage de protection en acier autour de la crépine (photo réelle), sous le corps de pompe.
+  for (const [cx, cy] of [[0.07, 0.07], [-0.07, 0.07], [0.07, -0.07], [-0.07, -0.07]]) {
+    push(cx, cy, -0.5, 0.01, 0.01, 0.09, '#8a8f98', 'pump');
+  }
+  push(0.1, 0.02, -0.2, 0.05, 0.012, 0.012, '#8a7a52', 'hose'); // amorce de tuyau plat toile (refoulement)
 
   // Mât GPS — sur l'un des flotteurs (le centre étant occupé par l'armature)
   const [mx, my] = floatPos[0];
@@ -6931,7 +6937,7 @@ function buildRobotBoxes(boxOpen) {
   // Grosse caisse en fer (batteries + composants électriques) — sur le flotteur opposé au mât.
   // Coque fermée, OU PCB + batterie + sous-composants une fois "ouverte".
   const [bx0, by0] = floatPos[3];
-  const bz = 0.13, bhx = 0.16, bhy = 0.13, bhz = 0.09;
+  const bz = 0.2, bhx = 0.16, bhy = 0.13, bhz = 0.09;
   if (!boxOpen) {
     push(bx0, by0, bz, bhx, bhy, bhz, '#3f4a5a', 'controlbox');
   } else {
@@ -6944,18 +6950,18 @@ function buildRobotBoxes(boxOpen) {
     push(bx0 - bhx * 0.2, by0 + bhy * 0.55,  bz - bhz * 0.5, 0.011, 0.011, 0.006, '#7c3aed', 'compass');
   }
 
-  // 4 propulseurs — petits moteurs de barque électriques 12V, montés aux 4 coins (voir config.h :
-  // montage en X, AV-G/AV-D/AR-G/AR-D)
+  // 4 propulseurs — petits moteurs de barque électriques 12V, un sous chaque flotteur (voir
+  // config.h : montage en X, AV-G/AV-D/AR-G/AR-D)
   for (const [tx, ty] of floatPos) {
-    push(tx, ty, -0.12, 0.045, 0.045, 0.055, '#334155', 'thrusters'); // corps moteur
-    push(tx, ty, -0.30, 0.014, 0.014, 0.13,  '#475569', 'thrusters'); // arbre immergé
-    push(tx, ty, -0.46, 0.06, 0.016, 0.06,   '#0ea5e9', 'thrusters'); // hélice
+    push(tx, ty, -0.24, 0.045, 0.045, 0.055, '#334155', 'thrusters'); // corps moteur
+    push(tx, ty, -0.42, 0.014, 0.014, 0.13,  '#475569', 'thrusters'); // arbre immergé
+    push(tx, ty, -0.58, 0.06, 0.016, 0.06,   '#0ea5e9', 'thrusters'); // hélice
   }
 
   // Sonde bathymétrique — même principe (motoréducteur + crémaillère verticale) que le
   // mécanisme de la pompe, mais un actionneur dédié plus petit, en porte-à-faux au bord de la
   // plateforme (pas sous un flotteur, pour rester bien visible/dégagé).
-  const px = floatPos[2][0] + fHalf + 0.06, py = floatPos[2][1];
+  const px = floatPos[2][0] + fHalfX + 0.06, py = floatPos[2][1];
   push(px, py, 0.35, 0.014, 0.014, 0.3, '#78716c', 'bathyprobe');
   push(px, py, -0.05, 0.06, 0.06, 0.008, '#a8a29e', 'bathyprobe');
 
