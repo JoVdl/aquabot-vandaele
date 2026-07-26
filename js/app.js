@@ -1361,20 +1361,22 @@ function computeHoseCurvePoints(anchor, robot, segments = 24, targetLen = null) 
   } else {
     amp = _clampHoseAmpToPolygon(buildPoints, amp);
   }
-  return buildPoints(amp);
+  // Filet de sécurité GARANTI, quelle que soit la forme du contour (y compris un étang tout en
+  // longueur légèrement courbe, où même la ligne droite ancre-robot peut ressortir par endroits
+  // du polygone — la seule réduction d'amplitude ci-dessus ne suffisait pas dans ce cas, laissant
+  // le tuyau déborder sur la berge/un bâtiment voisin, comme signalé) : tout point qui tombe hors
+  // de l'étang est ramené sur le bord le plus proche du polygone, jamais laissé hors de l'eau.
+  return _clampHosePointsToPolygon(buildPoints(amp));
 }
 
-// Le tuyau flotte À LA SURFACE DE L'ÉTANG : ses ondulations ne doivent jamais le faire dessiner
-// hors du plan d'eau (sur la berge/un bâtiment voisin), ce qui pouvait arriver avec beaucoup de
-// mou près de l'ancre sur un étang étroit. Réduit l'amplitude par dichotomie jusqu'à ce que TOUS
-// les points de la courbe retombent dans le polygone de l'étang — seulement si la ligne droite
-// (amplitude 0) elle-même y est déjà (sinon, étang concave/en U où même une ligne droite sort du
-// contour : cas hors-scope ici, on n'y touche pas plutôt que de deviner un contournement).
+// Réduit l'amplitude d'ondulation par dichotomie jusqu'à ce que TOUS les points de la courbe
+// retombent dans le polygone de l'étang — un premier passage qui garde la courbe lisse quand
+// c'est possible ; voir _clampHosePointsToPolygon pour la garantie finale (qui s'applique même
+// quand ce premier passage n'y arrive pas complètement).
 function _clampHoseAmpToPolygon(buildPoints, ampCap) {
   const poly = state.pond?.polygon;
   if (!poly || poly.length < 3) return ampCap;
   const fits = pts => pts.every(p => pointInPolygon(p.x, p.y, poly));
-  if (!fits(buildPoints(0))) return ampCap; // ligne droite déjà hors polygone : hors scope
   if (fits(buildPoints(ampCap))) return ampCap;
   let lo = 0, hi = ampCap;
   for (let i = 0; i < 14; i++) {
@@ -1382,6 +1384,65 @@ function _clampHoseAmpToPolygon(buildPoints, ampCap) {
     if (fits(buildPoints(mid))) lo = mid; else hi = mid;
   }
   return lo;
+}
+
+// true si poly est parcouru dans le sens direct (anti-horaire, aire signée positive) — détermine
+// quel côté de chaque arête est "l'intérieur" (voir _clampHosePointsToPolygon).
+function _polygonIsCCW(poly) {
+  let area2 = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    area2 += a.x * b.y - b.x * a.y;
+  }
+  return area2 > 0;
+}
+
+// Point le plus proche de (px,py) sur le contour de poly, ramené d'un peu (inset, mètres) vers
+// l'INTÉRIEUR réel du polygone — pas juste pile sur le bord, qui peut encore échouer au test
+// point-dans-polygone (précision flottante du ray-casting sur les bords), ni vers le centroïde
+// (qui peut lui-même tomber hors d'un étang tout en longueur/coudé, où la moyenne des sommets
+// n'est pas dans l'eau). Le "bon côté" (gauche ou droite de chaque arête) dépend du sens de
+// parcours du polygone (voir _polygonIsCCW), déterminé une seule fois par appel.
+function _nearestInsidePointOnPolygon(poly, px, py, inset, ccw) {
+  let best = null, bestDist = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 > 0 ? ((px - a.x) * dx + (py - a.y) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const qx = a.x + t * dx, qy = a.y + t * dy;
+    const d = Math.hypot(px - qx, py - qy);
+    if (d < bestDist) {
+      bestDist = d;
+      const segLen = Math.hypot(dx, dy) || 1;
+      // Perpendiculaire gauche (-dy,dx) si CCW, droite (dy,-dx) sinon — voir _polygonIsCCW.
+      const nx = ccw ? -dy / segLen : dy / segLen;
+      const ny = ccw ?  dx / segLen : -dx / segLen;
+      best = { x: qx + nx * inset, y: qy + ny * inset };
+    }
+  }
+  return best || { x: px, y: py };
+}
+
+// Ramène tout point hors du polygone de l'étang à l'intérieur, près du bord le plus proche —
+// garantie finale, fonctionne quelle que soit la forme du contour (contrairement à
+// _clampHoseAmpToPolygon, qui suppose implicitement une ligne droite ancre-robot déjà dans
+// l'étang pour rester lisse).
+function _clampHosePointsToPolygon(pts) {
+  const poly = state.pond?.polygon;
+  if (!poly || poly.length < 3) return pts;
+  const ccw = _polygonIsCCW(poly);
+  const inset = 0.15; // m
+  return pts.map(p => {
+    if (pointInPolygon(p.x, p.y, poly)) return p;
+    let inner = _nearestInsidePointOnPolygon(poly, p.x, p.y, inset, ccw);
+    if (!pointInPolygon(inner.x, inner.y, poly)) {
+      // Bord anguleux/concave où même ce point nudgé rate encore (rare) : on pousse davantage.
+      inner = _nearestInsidePointOnPolygon(poly, p.x, p.y, inset * 4, ccw);
+    }
+    return inner;
+  });
 }
 
 // Longueur réelle de la courbe (pas la distance à vol d'oiseau) entre deux points —
@@ -8085,21 +8146,39 @@ function _depositZoneLatLngs(depositZone) {
   return { polyLL, centroidLL };
 }
 
-// Coins (carré non tourné, comme sur le schéma) de ROBOT_SIZE mètres centré en (cx,cy) —
-// en coordonnées géographiques, pour que Leaflet le mette à l'échelle en continu pendant le
-// zoom (contrairement à une icône de marqueur en pixels, qui reste figée pendant l'animation
-// et ne se corrige qu'au relâchement, donnant l'impression que le robot ne suit pas l'échelle).
-function _robotSquareLatLngs(cx, cy) {
-  const h = ROBOT_SIZE / 2;
-  return [[cx-h,cy-h],[cx+h,cy-h],[cx+h,cy+h],[cx-h,cy+h]]
-    .map(([x,y]) => { const ll = metersToLatLng(x,y); return ll ? [ll.lat, ll.lng] : null; })
-    .filter(Boolean);
+// Coins des 4 flotteurs Rotax (2 pontons gauche/droite séparés par le couloir central, mêmes
+// proportions réelles que le modèle détaillé de l'onglet Robot), tournés selon le cap — pas un
+// simple carré. En coordonnées géographiques, pour que Leaflet le mette à l'échelle en continu
+// pendant le zoom (contrairement à une icône de marqueur en pixels, qui reste figée pendant
+// l'animation et ne se corrige qu'au relâchement, donnant l'impression que le robot ne suit pas
+// l'échelle). Renvoie plusieurs anneaux (un par flotteur) pour un seul L.polygon multi-parties,
+// aussi simple à mettre à jour (un seul setLatLngs) qu'un carré unique.
+function _robotSquareLatLngs(cx, cy, headingDeg) {
+  const hRad = (headingDeg || 0) * Math.PI / 180;
+  function toWorld(lx, ly) {
+    return {
+      x: cx + lx * Math.cos(hRad) + ly * Math.sin(hRad),
+      y: cy - lx * Math.sin(hRad) + ly * Math.cos(hRad),
+    };
+  }
+  const rings = [];
+  for (const [fx, fy] of [
+    [ROBOT_REAL_FLOAT_CENTER_X, ROBOT_REAL_FLOAT_CENTER_Y], [-ROBOT_REAL_FLOAT_CENTER_X, ROBOT_REAL_FLOAT_CENTER_Y],
+    [ROBOT_REAL_FLOAT_CENTER_X, -ROBOT_REAL_FLOAT_CENTER_Y], [-ROBOT_REAL_FLOAT_CENTER_X, -ROBOT_REAL_FLOAT_CENTER_Y],
+  ]) {
+    const ring = [
+      [fx - ROBOT_REAL_FLOAT_HALF_X, fy - ROBOT_REAL_FLOAT_HALF_Y], [fx + ROBOT_REAL_FLOAT_HALF_X, fy - ROBOT_REAL_FLOAT_HALF_Y],
+      [fx + ROBOT_REAL_FLOAT_HALF_X, fy + ROBOT_REAL_FLOAT_HALF_Y], [fx - ROBOT_REAL_FLOAT_HALF_X, fy + ROBOT_REAL_FLOAT_HALF_Y],
+    ].map(([lx, ly]) => { const w = toWorld(lx, ly); const ll = metersToLatLng(w.x, w.y); return ll ? [ll.lat, ll.lng] : null; });
+    if (ring.every(Boolean)) rings.push(ring);
+  }
+  return rings;
 }
 
-// Segment du centre vers la pointe de la flèche de cap, à ROBOT_SIZE*0.7 mètres
+// Segment du centre vers la pointe de la flèche de cap, un peu au-delà de l'avant du robot
 function _robotArrowLatLngs(cx, cy, headingDeg) {
   const rad = (headingDeg || 0) * Math.PI / 180;
-  const len = ROBOT_SIZE * 0.7;
+  const len = ROBOT_REAL_HALF_Y * 1.3;
   const tipX = cx + Math.sin(rad) * len, tipY = cy + Math.cos(rad) * len;
   const a = metersToLatLng(cx, cy), b = metersToLatLng(tipX, tipY);
   return (a && b) ? [[a.lat, a.lng], [b.lat, b.lng]] : null;
@@ -8213,7 +8292,7 @@ function _rebuildDynamicLayersDash() {
 
   // Robot — polygone/cercle/ligne géographiques, mis à l'échelle réelle en continu par Leaflet
   // pendant le zoom (une icône en pixels resterait figée pendant l'animation).
-  const sq = _robotSquareLatLngs(state.robot.x, state.robot.y);
+  const sq = _robotSquareLatLngs(state.robot.x, state.robot.y, state.robot.heading);
   if (sq.length > 2) {
     _robotSquareDash = L.polygon(sq, { color: '#fff', weight: 3, fillColor: '#f59e0b', fillOpacity: 0.55 }).addTo(_leafletMapDash);
     _dynamicLayersDash.push(_robotSquareDash);
@@ -8260,7 +8339,7 @@ function _updateDynamicLayersDashPosition() {
   const robotLL = metersToLatLng(r.x, r.y);
   if (!robotLL) return;
 
-  const sq = _robotSquareLatLngs(r.x, r.y);
+  const sq = _robotSquareLatLngs(r.x, r.y, r.heading);
   if (sq.length > 2) _robotSquareDash.setLatLngs(sq);
   if (_robotPumpDash) {
     _robotPumpDash.setLatLng([robotLL.lat, robotLL.lng]);
