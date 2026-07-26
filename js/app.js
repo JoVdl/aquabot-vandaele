@@ -2549,22 +2549,29 @@ function resetBathy3DView() {
   renderBathyCanvas();
 }
 
+// Renvoie le point en pixels CSS/logiques (pas les pixels du bitmap du canevas) — le repère
+// utilisé par tout le calcul de layout 3D (fitScale/offX/offY, pan3D...). Sans cette distinction,
+// un canevas dont le bitmap est mis à l'échelle DPR (voir dash3DPixelRatio) ferait dériver tout
+// le hit-test/pan/zoom d'un facteur dpr par rapport au repère réellement utilisé pour le rendu.
 function _bathyCanvasPoint(e, canvas) {
   const rect = canvas.getBoundingClientRect();
   return {
-    x: (e.clientX - rect.left) * (canvas.width / rect.width),
-    y: (e.clientY - rect.top)  * (canvas.height / rect.height),
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top,
   };
 }
 
 // Zoom centré sur un point écran donné (curseur ou milieu du pincement) — recalcule le pan
 // pour que ce point reste visuellement fixe pendant le zoom, comme une carte/visionneuse photo.
-// Point écran (coordonnées canevas déjà mises à l'échelle DPR) → coordonnées "locales", c'est-
-// à-dire dans le repère utilisé par computeBathyIsoLayout/renderBathy3DMesh AVANT la transform
-// zoom/pan utilisateur appliquée par renderBathyCanvas — inverse exact de cette transform.
+// Point écran (en pixels CSS/logiques) → coordonnées "locales", c'est-à-dire dans le repère
+// utilisé par computeBathyIsoLayout/renderBathy3DMesh AVANT la transform zoom/pan utilisateur
+// appliquée par renderBathyCanvas — inverse exact de cette transform. W/H viennent de la taille
+// CSS affichée (getBoundingClientRect), pas de canvas.width/height qui peuvent être mis à
+// l'échelle DPR (voir dash3DPixelRatio) et ne représentent alors plus ce même repère logique.
 function _bathy3DScreenToLocal(sx, sy, canvas) {
   const { zoom3D, pan3D } = state.bathy;
-  const W = canvas.width, H = canvas.height;
+  const rect = canvas.getBoundingClientRect();
+  const W = rect.width, H = rect.height;
   return {
     x: (sx - W / 2 - pan3D.x) / zoom3D + W / 2,
     y: (sy - H / 2 - pan3D.y) / zoom3D + H / 2,
@@ -2631,11 +2638,11 @@ function _bathyHitTest3DMesh(px, py) {
 function _handleBathy3DClick(clientX, clientY, canvas) {
   if (!state.pond) return;
   const rect = canvas.getBoundingClientRect();
-  const raw = { x: (clientX - rect.left) * (canvas.width / rect.width), y: (clientY - rect.top) * (canvas.height / rect.height) };
+  const raw = { x: clientX - rect.left, y: clientY - rect.top };
   const local = _bathy3DScreenToLocal(raw.x, raw.y, canvas);
   const idx = state.bathy.style3D === 'mesh'
     ? _bathyHitTest3DMesh(local.x, local.y)
-    : _bathyHitTest3DColumns(local.x, local.y, canvas.width, canvas.height);
+    : _bathyHitTest3DColumns(local.x, local.y, rect.width, rect.height);
   if (idx != null) showBathyCellInfo(idx); else closeBathyCellInfo();
 }
 
@@ -2644,7 +2651,8 @@ function _zoomBathy3DAt(px, py, canvas, factor, renderFn = renderBathyCanvas) {
   const oldZoom = b.zoom3D;
   const newZoom = Math.max(BATHY_ZOOM_MIN, Math.min(BATHY_ZOOM_MAX, oldZoom * factor));
   if (newZoom === oldZoom) return;
-  const W = canvas.width, H = canvas.height;
+  const rect = canvas.getBoundingClientRect();
+  const W = rect.width, H = rect.height;
   const wx = (px - W / 2 - b.pan3D.x) / oldZoom;
   const wy = (py - H / 2 - b.pan3D.y) / oldZoom;
   b.pan3D.x = px - W / 2 - wx * newZoom;
@@ -2674,10 +2682,8 @@ function _initBathy3DPanZoomEvents() {
   });
   window.addEventListener('mousemove', e => {
     if (!_bathy3DDrag) return;
-    const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
-    state.bathy.pan3D.x = _bathy3DDrag.panX + (e.clientX - _bathy3DDrag.startX) * sx;
-    state.bathy.pan3D.y = _bathy3DDrag.panY + (e.clientY - _bathy3DDrag.startY) * sy;
+    state.bathy.pan3D.x = _bathy3DDrag.panX + (e.clientX - _bathy3DDrag.startX);
+    state.bathy.pan3D.y = _bathy3DDrag.panY + (e.clientY - _bathy3DDrag.startY);
     renderBathyCanvas();
   });
   window.addEventListener('mouseup', e => {
@@ -2713,12 +2719,10 @@ function _initBathy3DPanZoomEvents() {
 
   canvas.addEventListener('touchmove', e => {
     if (state.bathy.mode !== '3d' || !_bathy3DTouch) return;
-    const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
     if (_bathy3DTouch.mode === 'pan' && e.touches.length === 1) {
       const t = e.touches[0];
-      state.bathy.pan3D.x = _bathy3DTouch.panX + (t.clientX - _bathy3DTouch.x) * sx;
-      state.bathy.pan3D.y = _bathy3DTouch.panY + (t.clientY - _bathy3DTouch.y) * sy;
+      state.bathy.pan3D.x = _bathy3DTouch.panX + (t.clientX - _bathy3DTouch.x);
+      state.bathy.pan3D.y = _bathy3DTouch.panY + (t.clientY - _bathy3DTouch.y);
       renderBathyCanvas();
     } else if (_bathy3DTouch.mode === 'pinch' && e.touches.length === 2) {
       const [a, b] = e.touches;
@@ -3904,6 +3908,14 @@ function renderBathy3DMesh(ctx, W, H, values, min, range) {
 // justement de rendus coûteux répétés sans nécessité.
 const DASH3D_THROTTLE_MS = 200;
 
+// Résolution du canevas 3D vs résolution physique de l'écran — sans ce facteur, canvas.width en
+// pixels CSS produit un bitmap basse résolution que le navigateur doit ensuite ré-échantillonner
+// pour remplir les pixels physiques d'un écran Retina/mobile, ce qui rend le maillage 3D flou et
+// crénelé (chaque arête de triangle devient un escalier visible — signalé sur téléphone). Plafonné
+// à 2 : au-delà, le gain de netteté est imperceptible mais le coût de triangulation/remplissage
+// du maillage (des milliers de facettes) augmente avec le carré de la résolution.
+function dash3DPixelRatio() { return Math.min(window.devicePixelRatio || 1, 2); }
+
 function toggleDash3D() {
   state.dash3D.active = !state.dash3D.active;
   document.getElementById('btnDash3D')?.classList.toggle('active', state.dash3D.active);
@@ -3992,8 +4004,11 @@ function renderDash3DBackdropCached(W, H, raw, thetaRad, tiltRad, cs) {
   }
   if (!state.dash3D._bgCanvas) state.dash3D._bgCanvas = document.createElement('canvas');
   const bgCanvas = state.dash3D._bgCanvas;
-  bgCanvas.width = W; bgCanvas.height = H;
+  const dpr = dash3DPixelRatio();
+  bgCanvas.width  = Math.round(W * dpr);
+  bgCanvas.height = Math.round(H * dpr);
   const bctx = bgCanvas.getContext('2d');
+  bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   bctx.clearRect(0, 0, W, H);
   state.bathy._floorTilesDrawn = 0;
   renderBathy3DMeshStacked(bctx, W, H, raw, thetaRad, tiltRad, cs);
@@ -4017,9 +4032,18 @@ function renderDash3D() {
   if (now - state.dash3D._lastRenderAt < DASH3D_THROTTLE_MS) return;
   state.dash3D._lastRenderAt = now;
 
-  canvas.width = wrap.clientWidth; canvas.height = wrap.clientHeight;
+  // W/H restent le repère logique (pixels CSS) utilisé par tout le reste de cette fonction
+  // (fitScale, offX/offY, dessin du robot...) — seul le bitmap réel du canevas (canvas.width/
+  // height) est agrandi d'un facteur dpr, via une transform posée une fois ici, pour un rendu
+  // net sur écran Retina/mobile (voir dash3DPixelRatio).
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  const dpr = dash3DPixelRatio();
+  canvas.width  = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
   const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#0d1424'; ctx.fillRect(0, 0, W, H);
 
   const pond = state.pond;
@@ -4054,7 +4078,11 @@ function renderDash3D() {
     // signalé par l'utilisateur, qui disparaissait dès que ce second passage ne se déclenchait
     // plus, une fois la zone terminée). Un seul passage, comme l'onglet Bathymétrie.
     const bg = renderDash3DBackdropCached(W, H, raw, thetaRad, tiltRad, cs);
-    ctx.drawImage(bg.canvas, 0, 0);
+    // Taille de destination explicite (W,H logiques) : bg.canvas a un bitmap dpr× plus grand
+    // (voir renderDash3DBackdropCached) — sans ces arguments, drawImage utiliserait sa taille
+    // intrinsèque comme taille de destination dans notre repère déjà mis à l'échelle par dpr,
+    // ce qui dessinerait l'image dpr fois trop grande.
+    ctx.drawImage(bg.canvas, 0, 0, W, H);
     state.bathy._floorTilesDrawn = state.bathy._floorTilesDrawn || bg.floorTilesDrawn;
     const layout = state.bathy._meshLayout;
     if (layout) {
@@ -4339,7 +4367,7 @@ function closeDashCellInfo() {
 function _handleDash3DClick(clientX, clientY, canvas) {
   if (!state.pond) return;
   const rect = canvas.getBoundingClientRect();
-  const raw = { x: (clientX - rect.left) * (canvas.width / rect.width), y: (clientY - rect.top) * (canvas.height / rect.height) };
+  const raw = { x: clientX - rect.left, y: clientY - rect.top };
   const local = _bathy3DScreenToLocal(raw.x, raw.y, canvas);
   const idx = _dash3DHitTest(local.x, local.y);
   if (idx != null) showDashCellInfo(idx); else closeDashCellInfo();
@@ -4370,10 +4398,8 @@ function _initDash3DPanZoomEvents() {
   });
   window.addEventListener('mousemove', e => {
     if (!_dash3DDrag) return;
-    const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
-    state.bathy.pan3D.x = _dash3DDrag.panX + (e.clientX - _dash3DDrag.startX) * sx;
-    state.bathy.pan3D.y = _dash3DDrag.panY + (e.clientY - _dash3DDrag.startY) * sy;
+    state.bathy.pan3D.x = _dash3DDrag.panX + (e.clientX - _dash3DDrag.startX);
+    state.bathy.pan3D.y = _dash3DDrag.panY + (e.clientY - _dash3DDrag.startY);
     renderDash3D();
   });
   window.addEventListener('mouseup', e => {
@@ -4404,12 +4430,10 @@ function _initDash3DPanZoomEvents() {
 
   canvas.addEventListener('touchmove', e => {
     if (!state.dash3D.active || !_dash3DTouch) return;
-    const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
     if (_dash3DTouch.mode === 'pan' && e.touches.length === 1) {
       const t = e.touches[0];
-      state.bathy.pan3D.x = _dash3DTouch.panX + (t.clientX - _dash3DTouch.x) * sx;
-      state.bathy.pan3D.y = _dash3DTouch.panY + (t.clientY - _dash3DTouch.y) * sy;
+      state.bathy.pan3D.x = _dash3DTouch.panX + (t.clientX - _dash3DTouch.x);
+      state.bathy.pan3D.y = _dash3DTouch.panY + (t.clientY - _dash3DTouch.y);
       renderDash3D();
     } else if (_dash3DTouch.mode === 'pinch' && e.touches.length === 2) {
       const [a, b] = e.touches;
