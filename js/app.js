@@ -3986,22 +3986,27 @@ function renderDash3DFlatFallback(ctx, W, H, thetaRad, tiltRad, cs, bbox) {
   drawDashRobot3D(ctx, thetaRad, tiltRad, 1, cs, bbox, fitScale, offX, offY, 0, null);
 }
 
-// Offsets (en "cases") des flotteurs individuels de la plateforme réelle du robot — plusieurs
-// pontons rectangulaires séparés par un fin espace (photo fournie par le client : plateforme
-// modulaire, pas un simple carré plein) — 2 rangées de 3 flotteurs.
-const DASH_ROBOT_PONTOONS = (() => {
-  const half = 0.55, gap = 0.06, cols = 3, rows = 2;
-  const cellW = (2 * half - gap * (cols - 1)) / cols;
-  const cellH = (2 * half - gap * (rows - 1)) / rows;
+// Dimensions RÉELLES du robot (mètres) — mêmes valeurs que le modèle détaillé de l'onglet Robot
+// (buildRobotBoxes) : 4 flotteurs Rotax rectangulaires (106×54cm) formant 2 pontons gauche/droite,
+// séparés par le couloir central de 92cm où se trouve l'armature/pompe.
+const ROBOT_REAL_FLOAT_HALF_X = 0.27, ROBOT_REAL_FLOAT_HALF_Y = 0.53;
+const ROBOT_REAL_FLOAT_CENTER_X = 0.73, ROBOT_REAL_FLOAT_CENTER_Y = 0.72;
+const ROBOT_REAL_HALF_X = ROBOT_REAL_FLOAT_CENTER_X + ROBOT_REAL_FLOAT_HALF_X; // 1.00m (largeur/2)
+const ROBOT_REAL_HALF_Y = ROBOT_REAL_FLOAT_CENTER_Y + ROBOT_REAL_FLOAT_HALF_Y; // 1.25m (longueur/2)
+
+// Offsets (en "cases", donc dépendant de cellSize) des 4 flotteurs — recalculé à chaque appel
+// plutôt qu'une constante figée, car la taille réelle du robot (mètres) ne dépend pas de
+// cellSize alors que ces offsets si (voir robotOffset/screenAt, qui raisonnent en cases comme le
+// maillage bathymétrique).
+function dashRobotFloatPolys(cs) {
+  const hx = ROBOT_REAL_FLOAT_HALF_X / cs, hy = ROBOT_REAL_FLOAT_HALF_Y / cs;
+  const cx = ROBOT_REAL_FLOAT_CENTER_X / cs, cy = ROBOT_REAL_FLOAT_CENTER_Y / cs;
   const out = [];
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const dcMin = -half + i * (cellW + gap), drMin = -half + j * (cellH + gap);
-      out.push([[dcMin, drMin], [dcMin + cellW, drMin], [dcMin + cellW, drMin + cellH], [dcMin, drMin + cellH]]);
-    }
+  for (const [fx, fy] of [[cx, cy], [-cx, cy], [cx, -cy], [-cx, -cy]]) {
+    out.push([[fx - hx, fy - hy], [fx + hx, fy - hy], [fx + hx, fy + hy], [fx - hx, fy + hy]]);
   }
   return out;
-})();
+}
 
 // Modélise le robot en 3D à la surface de l'eau (plateforme modulaire à flotteurs + mât/antenne,
 // d'après la photo du robot réel) + pompe qui descend/remonte en direct, projetée dans le MÊME
@@ -4043,8 +4048,11 @@ function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale
   // jamais faire disparaître le robot. `platformPxHalf` dérive de cs*fitScale (taille d'une case à
   // l'écran), une mesure stable qui ne dépend pas de l'inclinaison — donc mât/pompe restent
   // proportionnés à une plateforme qui, elle, ne disparaît plus.
-  const cellPx = cs * fitScale;
-  const platformPxHalf = Math.max(4, cellPx * 0.55);
+  // platformPxHalf dérive maintenant de la vraie demi-largeur du robot (mètres) × fitScale (px
+  // par mètre, voir robotOffset ci-dessous), pas d'une fraction arbitraire d'une case — la
+  // plateforme est donc à la bonne taille RÉELLE par rapport au maillage/quadrillage, pas juste
+  // "à peu près une case".
+  const platformPxHalf = Math.max(4, ROBOT_REAL_HALF_X * fitScale);
   const tiltSquash = 0.55 + 0.45 * Math.sin(tiltRad);
   function robotOffset(dc, dr) {
     const wx = dc * cs, wy = dr * cs;
@@ -4056,17 +4064,33 @@ function drawDashRobot3D(ctx, thetaRad, tiltRad, heightScale, cs, bbox, fitScale
 
   ctx.save();
 
-  // Plateforme modulaire (flotteurs sombres séparés, comme sur la photo du robot réel), pas un
-  // simple carré plein.
+  // 4 flotteurs Rotax formant 2 pontons gauche/droite séparés par le couloir central (mêmes
+  // proportions réelles que le modèle détaillé de l'onglet Robot), pas un simple carré plein.
   ctx.fillStyle = '#334155';
   ctx.strokeStyle = '#94a3b8';
   ctx.lineWidth = lw(0.05);
-  for (const corners of DASH_ROBOT_PONTOONS) {
+  for (const corners of dashRobotFloatPolys(cs)) {
     const pontoon = corners.map(([dc, dr]) => robotOffset(dc, dr));
     ctx.beginPath();
     pontoon.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
     ctx.closePath();
     ctx.fill(); ctx.stroke();
+  }
+
+  // Propulseurs — nord/sud (couloir central, au-delà des flotteurs) et est/ouest (espace entre
+  // les 2 flotteurs de chaque ponton), comme sur le modèle détaillé de l'onglet Robot — pas sous
+  // les flotteurs eux-mêmes.
+  ctx.fillStyle = '#0b0f19';
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = lw(0.04);
+  const thrusterR = Math.max(1.5, platformPxHalf * 0.1);
+  const thrusterOffsets = [
+    [0, ROBOT_REAL_HALF_Y / cs], [0, -ROBOT_REAL_HALF_Y / cs],
+    [ROBOT_REAL_FLOAT_CENTER_X / cs, 0], [-ROBOT_REAL_FLOAT_CENTER_X / cs, 0],
+  ];
+  for (const [dc, dr] of thrusterOffsets) {
+    const p = robotOffset(dc, dr);
+    ctx.beginPath(); ctx.arc(p.x, p.y, thrusterR, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   }
 
   // Mât central (boîtier électronique + antenne GPS, comme sur la photo) — trait simple en
@@ -5347,43 +5371,78 @@ function renderPondCanvas(canvas) {
     }
   }
 
-  // Robot
+  // Robot — silhouette réelle (4 flotteurs Rotax formant 2 pontons gauche/droite séparés par le
+  // couloir central, mêmes proportions que le modèle détaillé de l'onglet Robot), tournée selon
+  // le cap — pas un simple carré fixe à l'écran.
   const rr = worldToScreen(state.robot.x, state.robot.y);
-  const hr  = (ROBOT_SIZE/2) * state.view.scale;
+  const s = state.view.scale;
+  const hRad = (state.robot.heading || 0) * Math.PI / 180;
+  // Repère robot (x=droite, y=avant) -> décalage écran, tourné par le cap ; mêmes conventions que
+  // worldToScreen (nord = +y monde = haut écran) pour rester cohérent avec la flèche de cap.
+  function toScreen(lx, ly) {
+    const wx = lx * Math.cos(hRad) + ly * Math.sin(hRad);
+    const wy = -lx * Math.sin(hRad) + ly * Math.cos(hRad);
+    return { x: rr.x + wx * s, y: rr.y - wy * s };
+  }
+  const hr = ROBOT_REAL_HALF_X * s; // pour le label/dimensionnement du texte, voir plus bas
+
   ctx.save();
-  ctx.shadowColor = 'rgba(245,158,11,0.9)'; ctx.shadowBlur = Math.max(8, hr*0.8);
-  ctx.fillStyle   = 'rgba(245,158,11,0.35)';
-  ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.rect(rr.x-hr, rr.y-hr, hr*2, hr*2); ctx.fill(); ctx.stroke();
+  ctx.shadowColor = 'rgba(245,158,11,0.9)'; ctx.shadowBlur = Math.max(6, hr * 0.35);
+  ctx.fillStyle   = 'rgba(245,158,11,0.32)';
+  ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2;
+  for (const [fx, fy] of [
+    [ROBOT_REAL_FLOAT_CENTER_X, ROBOT_REAL_FLOAT_CENTER_Y], [-ROBOT_REAL_FLOAT_CENTER_X, ROBOT_REAL_FLOAT_CENTER_Y],
+    [ROBOT_REAL_FLOAT_CENTER_X, -ROBOT_REAL_FLOAT_CENTER_Y], [-ROBOT_REAL_FLOAT_CENTER_X, -ROBOT_REAL_FLOAT_CENTER_Y],
+  ]) {
+    const poly = [
+      [fx - ROBOT_REAL_FLOAT_HALF_X, fy - ROBOT_REAL_FLOAT_HALF_Y], [fx + ROBOT_REAL_FLOAT_HALF_X, fy - ROBOT_REAL_FLOAT_HALF_Y],
+      [fx + ROBOT_REAL_FLOAT_HALF_X, fy + ROBOT_REAL_FLOAT_HALF_Y], [fx - ROBOT_REAL_FLOAT_HALF_X, fy + ROBOT_REAL_FLOAT_HALF_Y],
+    ].map(([lx, ly]) => toScreen(lx, ly));
+    ctx.beginPath();
+    poly.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
   ctx.restore();
-  ctx.fillStyle = '#f59e0b'; ctx.beginPath(); ctx.arc(rr.x,rr.y,Math.max(3,hr*0.18),0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#f59e0b'; ctx.beginPath(); ctx.arc(rr.x, rr.y, Math.max(3, hr * 0.09), 0, Math.PI * 2); ctx.fill();
   // Pump indicator
   const pr = Math.max(3, (params.cellSize/2)*state.view.scale);
   const pumping = state.robot.pumpState === 'pumping';
   ctx.fillStyle   = pumping ? 'rgba(16,185,129,0.9)' : 'rgba(16,185,129,0.38)';
   ctx.strokeStyle = '#10b981'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(rr.x,rr.y,pr,0,Math.PI*2); ctx.fill(); ctx.stroke();
-  // Propulseurs — 4 coins, intensité = poussée courante
+  // Propulseurs — nord/sud/est/ouest (espaces libres du robot), comme sur le modèle détaillé.
+  ctx.fillStyle = '#0b0f19'; ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
+  const thrusterR = Math.max(1.5, hr * 0.06);
+  for (const [lx, ly] of [
+    [0, ROBOT_REAL_HALF_Y], [0, -ROBOT_REAL_HALF_Y],
+    [ROBOT_REAL_FLOAT_CENTER_X, 0], [-ROBOT_REAL_FLOAT_CENTER_X, 0],
+  ]) {
+    const p = toScreen(lx, ly);
+    ctx.beginPath(); ctx.arc(p.x, p.y, thrusterR, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  // Moteurs (poussée courante) — même donnée qu'avant (AV-G/AV-D/AR-G/AR-D), affichée aux 4
+  // coins réels du robot plutôt qu'un carré arbitraire.
   const motors = state.robot.motors || [0,0,0,0];
-  const corners = [{dx:-hr,dy:-hr}, {dx:hr,dy:-hr}, {dx:-hr,dy:hr}, {dx:hr,dy:hr}]; // AV-G, AV-D, AR-G, AR-D
-  corners.forEach((c, i) => {
+  const motorCorners = [[-ROBOT_REAL_HALF_X, ROBOT_REAL_HALF_Y], [ROBOT_REAL_HALF_X, ROBOT_REAL_HALF_Y], [-ROBOT_REAL_HALF_X, -ROBOT_REAL_HALF_Y], [ROBOT_REAL_HALF_X, -ROBOT_REAL_HALF_Y]]; // AV-G, AV-D, AR-G, AR-D
+  motorCorners.forEach(([lx, ly], i) => {
     const m = motors[i] || 0;
     const r = Math.max(2, Math.min(6, Math.abs(m) / 100 * 6 + 2));
+    const p = toScreen(lx, ly);
     ctx.fillStyle   = m >= 0 ? 'rgba(14,165,233,0.9)' : 'rgba(245,158,11,0.9)';
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(rr.x + c.dx, rr.y + c.dy, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
   });
-  // Cap — flèche depuis le centre
-  const hRad = (state.robot.heading || 0) * Math.PI / 180;
-  const ax = rr.x + Math.sin(hRad) * hr * 1.4, ay = rr.y - Math.cos(hRad) * hr * 1.4;
+  // Cap — flèche depuis le centre, dans le prolongement de l'avant du robot
+  const tip = toScreen(0, ROBOT_REAL_HALF_Y * 1.3);
   ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(rr.x, rr.y); ctx.lineTo(ax, ay); ctx.stroke();
-  ctx.beginPath(); ctx.arc(ax, ay, 3, 0, Math.PI*2); ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(rr.x, rr.y); ctx.lineTo(tip.x, tip.y); ctx.stroke();
+  ctx.beginPath(); ctx.arc(tip.x, tip.y, 3, 0, Math.PI*2); ctx.fillStyle = '#fff'; ctx.fill();
   // Label
   if (state.view.scale > 6) {
-    ctx.font = `bold ${Math.max(9,hr*0.5)}px sans-serif`;
+    ctx.font = `bold ${Math.max(9,hr*0.22)}px sans-serif`;
     ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-    ctx.fillText('ROBOT', rr.x, rr.y - hr - 4);
+    const labelPos = toScreen(0, ROBOT_REAL_HALF_Y + 0.25);
+    ctx.fillText('ROBOT', labelPos.x, labelPos.y);
   }
 
   // Boussole nord
