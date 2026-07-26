@@ -3912,9 +3912,11 @@ const DASH3D_THROTTLE_MS = 200;
 // pixels CSS produit un bitmap basse résolution que le navigateur doit ensuite ré-échantillonner
 // pour remplir les pixels physiques d'un écran Retina/mobile, ce qui rend le maillage 3D flou et
 // crénelé (chaque arête de triangle devient un escalier visible — signalé sur téléphone). Plafonné
-// à 2 : au-delà, le gain de netteté est imperceptible mais le coût de triangulation/remplissage
-// du maillage (des milliers de facettes) augmente avec le carré de la résolution.
-function dash3DPixelRatio() { return Math.min(window.devicePixelRatio || 1, 2); }
+// à 3 (la plupart des téléphones, iPhone compris) : au-delà le gain de netteté est imperceptible
+// mais le coût de remplissage du maillage augmente avec le carré de la résolution. Un plafond de 2
+// laissait les écrans à devicePixelRatio 3 (la plupart des iPhones) sensiblement moins nets que le
+// bureau (où devicePixelRatio vaut typiquement 1, donc déjà "natif" sans aucune mise à l'échelle).
+function dash3DPixelRatio() { return Math.min(window.devicePixelRatio || 1, 3); }
 
 function toggleDash3D() {
   state.dash3D.active = !state.dash3D.active;
@@ -4887,7 +4889,14 @@ function renderJobRecap3D(beforeReadingsRaw, afterReadingsRaw) {
       canvas.height = canvas.clientHeight || 150;
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      renderBathy3DMesh(ctx, canvas.width, canvas.height, values, min, range);
+      // Style "Colonnes" (renderBathy3D), pas "Surface lisse" (renderBathy3DMesh) : ce dernier
+      // triangule des quads de 4 cases voisines et laisse un trou dès qu'un coin manque — un
+      // chantier qui ne couvre qu'une bande étroite (1 case de large, courante sur un étang
+      // allongé/en L) n'a alors JAMAIS ses 4 coins réunis, donc AUCUN triangle : le canevas restait
+      // silencieusement vide (signalé par l'utilisateur). Les colonnes dessinent chaque case
+      // traitée indépendamment de ses voisines, donc restent visibles quelle que soit la forme
+      // du chantier.
+      renderBathy3D(ctx, canvas.width, canvas.height, values, min, range);
     });
   } finally {
     state.bathy.metric = saved.metric;
