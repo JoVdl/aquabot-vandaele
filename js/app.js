@@ -7705,7 +7705,8 @@ function _initRobotPanZoomEvents() {
       _robotTouch.dist = dist;
       renderRobotScene();
     }
-  }, { passive: true });
+    e.preventDefault();
+  }, { passive: false });
   canvas.addEventListener('touchend', e => {
     if (_robotTouch && _robotTouch.mode === 'rotate' && e.changedTouches.length) {
       const t = e.changedTouches[0];
