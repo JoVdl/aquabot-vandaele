@@ -1148,11 +1148,13 @@ let params = {
   pumpDescentSpeed: 0.05, pumpAscentSpeed: 0.08,
   pumpFlow: 500, robotSpeed: 0.20, cellSize: 0.4,
   workMode: 'mini-cycles',   // standard | mini-cycles | double-pass | intensive
-  // Forme du parcours planifié (voir planPath) : 'lines' = balayage en lignes (boustrophedon,
-  // existant) ; 'spiral' = anneaux concentriques depuis l'ancre du tuyau, vers l'extérieur. Les
-  // deux respectent la même contrainte physique (distance à l'ancre toujours croissante, jamais
-  // de retour en arrière côté tuyau) — seule la manière de parcourir la sélection change.
-  routeType: 'lines',        // lines | spiral
+  // Forme du parcours planifié (voir planPath) : 'lines' = balayage en lignes (boustrophedon) ;
+  // 'spiral' = anneaux concentriques depuis l'ANCRE du tuyau (berge), vers l'extérieur — respecte
+  // la contrainte physique du tuyau (distance à l'ancre toujours croissante, jamais de retour en
+  // arrière) ; 'spiral-center' = anneaux concentriques depuis le CENTRE de la sélection, vers
+  // l'extérieur — ne suit plus forcément cette contrainte (le centre n'est pas l'ancre), à
+  // réserver aux cas où la longueur de tuyau n'est pas le facteur limitant.
+  routeType: 'lines',        // lines | spiral | spiral-center
   // Objectif de curage — voir getCellBathyBaseline()/simulationTick : si un relevé bathymétrique
   // existe pour une case, le robot cible désormais sa profondeur RÉELLEMENT mesurée plutôt que la
   // profondeur globale uniforme ci-dessus (waterDepth/mudDepth, qui restent le repli pour les
@@ -1501,7 +1503,9 @@ function generateGrid(polygon) {
 // l'ancre, sans jamais revenir en arrière — sous peine d'enrouler/emmêler le tuyau autour du
 // robot ou d'un obstacle déjà dépassé.
 function planPath(cells) {
-  return params.routeType === 'spiral' ? planPathSpiral(cells) : planPathLines(cells);
+  if (params.routeType === 'spiral') return planPathSpiral(cells);
+  if (params.routeType === 'spiral-center') return planPathSpiralCenter(cells);
+  return planPathLines(cells);
 }
 
 // Balayage en lignes (boustrophedon) — forme par défaut. On choisit l'axe de balayage (rangées
@@ -1576,6 +1580,42 @@ function planPathSpiral(cells) {
     const group = byRing[ring].sort((a, b) => {
       const angA = Math.atan2(a.cy - anchor.y, a.cx - anchor.x);
       const angB = Math.atan2(b.cy - anchor.y, b.cx - anchor.x);
+      return forward ? angA - angB : angB - angA;
+    });
+    path.push(...group.map(c => cells.indexOf(c)));
+    forward = !forward;
+  }
+  return path.filter(i => i !== -1);
+}
+
+// Spirale depuis le CENTRE de la sélection (et non l'ancre du tuyau) — même principe que
+// planPathSpiral (anneaux de distance, balayés par angle en alternant le sens), mais autour du
+// centroïde des cases sélectionnées : le robot part du milieu de la zone à nettoyer et s'en
+// éloigne en spirale, anneau après anneau. Ne respecte plus forcément la contrainte "distance à
+// l'ancre toujours croissante" du tuyau (le centre de la sélection n'est en général pas l'ancre)
+// — à utiliser quand la longueur de tuyau n'est pas le facteur limitant.
+function planPathSpiralCenter(cells) {
+  const selected = cells.filter(c => c.selected && !c.completed);
+  if (!selected.length) return [];
+
+  const cx = selected.reduce((s, c) => s + c.cx, 0) / selected.length;
+  const cy = selected.reduce((s, c) => s + c.cy, 0) / selected.length;
+
+  const cs = params.cellSize;
+  const byRing = {};
+  for (const c of selected) {
+    const ring = Math.floor(Math.hypot(c.cx - cx, c.cy - cy) / cs);
+    if (!byRing[ring]) byRing[ring] = [];
+    byRing[ring].push(c);
+  }
+  const ringIdxs = Object.keys(byRing).map(Number).sort((a, b) => a - b);
+
+  const path = [];
+  let forward = true;
+  for (const ring of ringIdxs) {
+    const group = byRing[ring].sort((a, b) => {
+      const angA = Math.atan2(a.cy - cy, a.cx - cx);
+      const angB = Math.atan2(b.cy - cy, b.cx - cx);
       return forward ? angA - angB : angB - angA;
     });
     path.push(...group.map(c => cells.indexOf(c)));

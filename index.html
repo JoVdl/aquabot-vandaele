@@ -12,7 +12,7 @@
       document.documentElement.setAttribute('data-theme', theme);
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=109">
+  <link rel="stylesheet" href="css/style.css?v=110">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" crossorigin=""/>
 </head>
@@ -33,7 +33,7 @@
         <span class="logo-title">AquaBot <span class="logo-company">Vandaele</span></span>
         <!-- Numéro de version — à incrémenter de 1 à chaque push vers main (voir CLAUDE.md),
              pour que l'utilisateur voie en un coup d'œil si son appareil a la dernière version. -->
-        <span class="logo-version" id="appVersion">v109</span>
+        <span class="logo-version" id="appVersion">v110</span>
       </div>
     </div>
     <div class="header-status">
@@ -316,9 +316,10 @@
                 <button class="btn btn-secondary btn-sm" id="btnSelectRemaining" onclick="selectRemainingCells()" disabled>☑ Restantes</button>
                 <button class="btn btn-secondary btn-sm" id="btnDeselectAll"     onclick="deselectAllCells()"     disabled>☐ Aucune</button>
               </div>
-              <div class="view-toggle-group" title="Forme du parcours planifié — les deux respectent la contrainte du tuyau (distance à l'ancre toujours croissante)">
-                <button class="view-toggle-btn route-type-btn active" data-route-type="lines"  onclick="setRouteType('lines')">📏 Lignes</button>
-                <button class="view-toggle-btn route-type-btn"        data-route-type="spiral" onclick="setRouteType('spiral')">🌀 Spirale</button>
+              <div class="view-toggle-group" title="Forme du parcours planifié — Lignes et Spirale (berge) respectent la contrainte du tuyau (distance à l'ancre toujours croissante) ; Spirale (centre) part du milieu de la sélection, sans cette garantie">
+                <button class="view-toggle-btn route-type-btn active" data-route-type="lines"         onclick="setRouteType('lines')">📏 Lignes</button>
+                <button class="view-toggle-btn route-type-btn"        data-route-type="spiral"        onclick="setRouteType('spiral')">🌀 Spirale (berge)</button>
+                <button class="view-toggle-btn route-type-btn"        data-route-type="spiral-center" onclick="setRouteType('spiral-center')">🎯 Spirale (centre)</button>
               </div>
               <div class="sel-buttons">
                 <button class="btn btn-accent    btn-sm" id="btnPlanRoute"       onclick="planRoute()"            disabled style="width:100%">↪ Planifier</button>
@@ -1010,6 +1011,6 @@
     window.db = firebase.firestore();
   } catch(e) { console.warn("Firebase init failed:", e.message); }
 </script>
-<script src="js/app.js?v=109"></script>
+<script src="js/app.js?v=110"></script>
 </body>
 </html>
