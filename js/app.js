@@ -676,7 +676,9 @@ function pondFromFirestore(data) {
   cells.forEach((c, i) => { c.completed = completedSet.has(i); });
   // Restore live selection state from remote
   const selectedSet = decodeSelection(data.currentSelectedIndices, cells.length);
-  if (selectedSet && selectedSet.size > 0) cells.forEach((c, i) => { c.selected = selectedSet.has(i); });
+  // Une case inatteignable ne doit jamais être resélectionnée par une synchronisation distante
+  // (ex. sélection encodée par un ancien client sans cette notion de portée du robot).
+  if (selectedSet && selectedSet.size > 0) cells.forEach((c, i) => { c.selected = selectedSet.has(i) && c.reachable; });
   return {
     ...data,
     cells,
@@ -986,7 +988,7 @@ function updateEnergyTab() {
   // Estimations — étang complet / zone actuellement sélectionnée, à partir du modèle de
   // puissance théorique (pas d'un rythme mesuré) : utile dès avant le premier coup de pompe.
   const cellWh        = hasPond ? computeCellCycleEnergyWh() : 0;
-  const totalCells    = state.cells.length;
+  const totalCells    = state.cells.filter(c => c.reachable !== false).length;
   const selectedCells = state.cells.filter(c => c.selected).length;
   setText('energyEstPondCells', hasPond ? totalCells.toLocaleString('fr-FR') : '—');
   setText('energyEstPondWh',    hasPond ? formatEnergyWh(cellWh * totalCells) : '—');
@@ -1559,6 +1561,16 @@ function parseKML(text) {
 // ============================================================
 // GRID
 // ============================================================
+// Une case est physiquement atteignable seulement si son centre est à au moins
+// ROBOT_REAL_HALF_X (demi-largeur du robot, la plus petite des deux dimensions — on suppose
+// qu'il peut orienter son côté étroit vers la berge) de la berge : la pompe est centrée sur le
+// robot, donc les flotteurs/la coque touchent la berge avant que la pompe (le centre) n'atteigne
+// une case trop proche du bord. Pas de calcul d'orientation : simple rayon de dégagement uniforme.
+function isCellReachable(cx, cy, polygon) {
+  const q = nearestPointOnPolygon(polygon, cx, cy);
+  return Math.hypot(cx - q.x, cy - q.y) >= ROBOT_REAL_HALF_X;
+}
+
 function generateGrid(polygon) {
   const cs = params.cellSize;
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -1572,8 +1584,10 @@ function generateGrid(polygon) {
     for (let col = 0; col < cols; col++) {
       const cx = minX + col*cs + cs/2;
       const cy = minY + row*cs + cs/2;
-      if (pointInPolygon(cx, cy, polygon))
-        cells.push({ col, row, cx, cy, selected: true, completed: false });
+      if (pointInPolygon(cx, cy, polygon)) {
+        const reachable = isCellReachable(cx, cy, polygon);
+        cells.push({ col, row, cx, cy, selected: reachable, completed: false, reachable });
+      }
     }
   }
   return cells;
@@ -1596,7 +1610,7 @@ function planPath(cells) {
 // ou colonnes) selon que l'ancre est plutôt sur un bord haut/bas ou gauche/droite de l'étang,
 // puis on ordonne les lignes de la plus proche de l'ancre à la plus lointaine.
 function planPathLines(cells) {
-  const selected = cells.filter(c => c.selected && !c.completed);
+  const selected = cells.filter(c => c.selected && !c.completed && c.reachable !== false);
   if (!selected.length) return [];
 
   const anchor = state.pond?.hoseAnchor;
@@ -1646,7 +1660,7 @@ function planPathLines(cells) {
 function planPathSpiral(cells) {
   const anchor = state.pond?.hoseAnchor;
   if (!anchor) return planPathLines(cells);
-  const selected = cells.filter(c => c.selected && !c.completed);
+  const selected = cells.filter(c => c.selected && !c.completed && c.reachable !== false);
   if (!selected.length) return [];
 
   const cs = params.cellSize;
@@ -1679,7 +1693,7 @@ function planPathSpiral(cells) {
 // l'ancre toujours croissante" du tuyau (le centre de la sélection n'est en général pas l'ancre)
 // — à utiliser quand la longueur de tuyau n'est pas le facteur limitant.
 function planPathSpiralCenter(cells) {
-  const selected = cells.filter(c => c.selected && !c.completed);
+  const selected = cells.filter(c => c.selected && !c.completed && c.reachable !== false);
   if (!selected.length) return [];
 
   const cx = selected.reduce((s, c) => s + c.cx, 0) / selected.length;
@@ -1753,6 +1767,15 @@ function loadPond(pond) {
     }
   } catch (e) { console.warn('bbox/hoseAnchor backfill:', e.message); }
   state.cells = pond.cells.map(c => ({ ...c }));
+  // Reprise défensive : un étang enregistré avant l'ajout de `reachable` n'a pas ce champ —
+  // on le calcule à la volée, et on désélectionne au passage les cases devenues inatteignables
+  // (une sélection persistée ne doit jamais faire survivre une case hors de portée du robot).
+  if (state.cells.length && state.cells.some(c => c.reachable === undefined)) {
+    for (const c of state.cells) {
+      c.reachable = isCellReachable(c.cx, c.cy, pond.polygon);
+      if (!c.reachable) c.selected = false;
+    }
+  }
 
   // Restore completed cells
   for (const idx of (pond.work.completedCells || [])) {
@@ -3089,6 +3112,7 @@ function _initBathyCanvasSelectionEvents() {
     }
     if (state.view.mode !== 'select' || idx === -1) return;
     const cell = state.cells[idx];
+    if (cell.reachable === false) return;
     cell.selected = !cell.selected;
     renderBathyCanvas();
     renderAllPondCanvases();
@@ -4555,6 +4579,7 @@ function _addSelectionHandlersBathy() {
       const ne = latLngToMeters(neLL.lat, neLL.lng, origin.lat, origin.lng);
       let changed = false;
       for (const cell of state.cells) {
+        if (cell.reachable === false) continue;
         if (cell.cx + hcs > sw.x && cell.cx - hcs < ne.x && cell.cy + hcs > sw.y && cell.cy - hcs < ne.y) {
           cell.selected = true; changed = true;
         }
@@ -4563,7 +4588,7 @@ function _addSelectionHandlersBathy() {
     } else {
       const local = latLngToMeters(e.latlng.lat, e.latlng.lng, origin.lat, origin.lng);
       const cell = state.cells.find(c => Math.abs(c.cx - local.x) <= hcs && Math.abs(c.cy - local.y) <= hcs);
-      if (cell) { cell.selected = !cell.selected; _updateBathyCellStyles(); renderAllPondCanvases(); if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash(); debouncedSaveSelection(); }
+      if (cell && cell.reachable !== false) { cell.selected = !cell.selected; _updateBathyCellStyles(); renderAllPondCanvases(); if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash(); debouncedSaveSelection(); }
     }
     _startLL = null; _startPt = null;
   });
@@ -5005,12 +5030,13 @@ function renderSelectionHistory() {
 // ============================================================
 function selectAllCells() {
   if (!state.cells.length) return;
-  state.cells.forEach(c => { c.selected = true; });
+  state.cells.forEach(c => { c.selected = c.reachable !== false; });
   renderAllPondCanvases();
   if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash();
   renderBathyCanvas();
   debouncedSaveSelection();
-  showToast(`${state.cells.length} cases sélectionnées`);
+  const count = state.cells.filter(c => c.selected).length;
+  showToast(`${count} cases sélectionnées`);
 }
 
 function deselectAllCells() {
@@ -5025,8 +5051,8 @@ function selectRemainingCells() {
   if (!state.cells.length) return;
   let count = 0;
   state.cells.forEach(c => {
-    c.selected = !c.completed;
-    if (!c.completed) count++;
+    c.selected = !c.completed && c.reachable !== false;
+    if (c.selected) count++;
   });
   renderAllPondCanvases();
   if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash();
@@ -5373,14 +5399,20 @@ function renderPondCanvas(canvas) {
   if (cpx > 1.2) {
     for (const cell of state.cells) {
       const sx = worldToScreen(cell.cx - cs/2, cell.cy + cs/2);
-      if (cell.completed)    ctx.fillStyle = 'rgba(16,185,129,0.72)';
-      else if (cell.selected) ctx.fillStyle = cpx > 4 ? 'rgba(14,165,233,0.28)' : 'rgba(14,165,233,0.18)';
-      else                    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+      if (cell.completed)         ctx.fillStyle = 'rgba(16,185,129,0.72)';
+      else if (cell.selected)     ctx.fillStyle = cpx > 4 ? 'rgba(14,165,233,0.28)' : 'rgba(14,165,233,0.18)';
+      // Case physiquement inatteignable (bord de robot butant sur la berge avant que la pompe,
+      // centrée, ne l'atteigne) — teinte rouge discrète pour la distinguer d'une case simplement
+      // non sélectionnée.
+      else if (cell.reachable === false) ctx.fillStyle = 'rgba(239,68,68,0.12)';
+      else                         ctx.fillStyle = 'rgba(255,255,255,0.04)';
       ctx.fillRect(sx.x, sx.y, cpx, cpx);
       if (cpx > 5) {
         ctx.strokeStyle = cell.completed
           ? 'rgba(16,185,129,0.5)'
-          : cell.selected ? 'rgba(14,165,233,0.3)' : 'rgba(255,255,255,0.06)';
+          : cell.selected ? 'rgba(14,165,233,0.3)'
+          : cell.reachable === false ? 'rgba(239,68,68,0.3)'
+          : 'rgba(255,255,255,0.06)';
         ctx.lineWidth = 0.5;
         ctx.strokeRect(sx.x, sx.y, cpx, cpx);
       }
@@ -6348,9 +6380,11 @@ function updateUI() {
     }
   }
 
-  // Bottom bar — cumulative pond totals
-  const pondDone  = state.cells.filter(c => c.completed).length;
-  const pondTotal = state.cells.length;
+  // Bottom bar — cumulative pond totals (cases inatteignables exclues : sinon 100% ne serait
+  // jamais atteignable, ces cases ne pouvant jamais être marquées `completed`)
+  const reachableCells = state.cells.filter(c => c.reachable !== false);
+  const pondDone  = reachableCells.filter(c => c.completed).length;
+  const pondTotal = reachableCells.length;
   const pondPct   = pondTotal > 0 ? (pondDone / pondTotal) * 100 : 0;
   const allMudVol = mudVolumeForCells(pondTotal);
   const pondTargetVol = totalVolumeForCells(pondTotal);
@@ -6620,7 +6654,7 @@ function initCanvasEvents() {
 
       // Cell selection
       const cell = getCellAt(world.x, world.y);
-      if (cell) {
+      if (cell && cell.reachable !== false) {
         state.drag.mode = cell.selected ? 'remove' : 'add';
         cell.selected = !cell.selected;
         renderAllPondCanvases();
@@ -6652,7 +6686,7 @@ function initCanvasEvents() {
       if (e.buttons === 1 && state.drag.active && state.view.mode === 'select') {
         const world = screenToWorld(mx, my);
         const cell  = getCellAt(world.x, world.y);
-        if (cell) {
+        if (cell && cell.reachable !== false) {
           const newState = state.drag.mode === 'add';
           if (cell.selected !== newState) { cell.selected = newState; renderAllPondCanvases(); }
         }
@@ -6696,7 +6730,7 @@ function initCanvasEvents() {
         if (state.view.mode === 'select') {
           const world = screenToWorld(mx, my);
           const cell  = getCellAt(world.x, world.y);
-          if (cell) {
+          if (cell && cell.reachable !== false) {
             state.drag.mode = cell.selected ? 'remove' : 'add';
             cell.selected = !cell.selected;
             renderAllPondCanvases();
@@ -6732,7 +6766,7 @@ function initCanvasEvents() {
           const rect = canvas.getBoundingClientRect();
           const world = screenToWorld(tx - rect.left, ty - rect.top);
           const cell  = getCellAt(world.x, world.y);
-          if (cell) {
+          if (cell && cell.reachable !== false) {
             const ns = state.drag.mode === 'add';
             if (cell.selected !== ns) { cell.selected = ns; renderAllPondCanvases(); }
           }
@@ -7917,7 +7951,7 @@ function setActiveTab(tab) {
     // masque les relevés tant qu'on n'a pas cliqué "Aucune". On ne l'efface QUE si elle
     // correspond encore exactement à ce défaut intouché (jamais une sélection partielle
     // volontaire faite pour un relevé) — l'effet est le même qu'un clic manuel sur "Aucune".
-    if (state.cells.length && state.cells.every(c => c.selected)) {
+    if (state.cells.length && state.cells.every(c => c.selected || c.reachable === false)) {
       state.cells.forEach(c => { c.selected = false; });
       renderAllPondCanvases();
       if (_satModeDash && typeof L !== 'undefined') _rebuildCellLayersDash();
@@ -8190,6 +8224,9 @@ function _robotArrowLatLngs(cx, cy, headingDeg) {
 function _cellStyle(cell) {
   if (cell.completed) return { color: '#10b981', fillColor: '#10b981', fillOpacity: 0.65, opacity: 0.4 };
   if (cell.selected)  return { color: '#0ea5e9', fillColor: '#0ea5e9', fillOpacity: 0.25, opacity: 0.15 };
+  // Case physiquement inatteignable (trop proche de la berge pour la pompe centrée du robot) —
+  // hachures rouges discrètes pour la distinguer d'une simple case non sélectionnée.
+  if (cell.reachable === false) return { color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.12, opacity: 0.35, dashArray: '3,3' };
   return { color: '#ffffff', fillColor: '#ffffff', fillOpacity: 0.05, opacity: 0.03 };
 }
 
@@ -8425,6 +8462,7 @@ function _addSelectionHandlersDash() {
       const ne = latLngToMeters(neLL.lat, neLL.lng, origin.lat, origin.lng);
       let changed = false;
       for (const cell of state.cells) {
+        if (cell.reachable === false) continue;
         if (cell.cx + hcs > sw.x && cell.cx - hcs < ne.x && cell.cy + hcs > sw.y && cell.cy - hcs < ne.y) {
           cell.selected = true; changed = true;
         }
@@ -8434,7 +8472,7 @@ function _addSelectionHandlersDash() {
       // Clic simple — bascule une case
       const local = latLngToMeters(e.latlng.lat, e.latlng.lng, origin.lat, origin.lng);
       const cell = state.cells.find(c => Math.abs(c.cx - local.x) <= hcs && Math.abs(c.cy - local.y) <= hcs);
-      if (cell) { cell.selected = !cell.selected; _rebuildCellLayersDash(); renderAllPondCanvases(); debouncedSaveSelection(); }
+      if (cell && cell.reachable !== false) { cell.selected = !cell.selected; _rebuildCellLayersDash(); renderAllPondCanvases(); debouncedSaveSelection(); }
     }
     _startLL = null; _startPt = null;
   });
