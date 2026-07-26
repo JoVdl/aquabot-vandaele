@@ -1346,7 +1346,8 @@ function computeHoseCurvePoints(anchor, robot, segments = 24, targetLen = null) 
     // longueur totale visée (donc l'échelle de l'étang), pas la distance actuelle au robot —
     // c'est justement quand le robot est proche de l'ancre (distance actuelle minime) qu'il
     // faut le plus de mou pour représenter la longueur déployée.
-    const ampCap = Math.min(Math.max(targetLen * 0.2, L * 0.9 + 2), 15);
+    let ampCap = Math.min(Math.max(targetLen * 0.2, L * 0.9 + 2), 15);
+    ampCap = _clampHoseAmpToPolygon(buildPoints, ampCap);
     if (pointsLen(buildPoints(ampCap)) < targetLen) {
       amp = ampCap;
     } else {
@@ -1357,8 +1358,30 @@ function computeHoseCurvePoints(anchor, robot, segments = 24, targetLen = null) 
       }
       amp = (lo + hi) / 2;
     }
+  } else {
+    amp = _clampHoseAmpToPolygon(buildPoints, amp);
   }
   return buildPoints(amp);
+}
+
+// Le tuyau flotte À LA SURFACE DE L'ÉTANG : ses ondulations ne doivent jamais le faire dessiner
+// hors du plan d'eau (sur la berge/un bâtiment voisin), ce qui pouvait arriver avec beaucoup de
+// mou près de l'ancre sur un étang étroit. Réduit l'amplitude par dichotomie jusqu'à ce que TOUS
+// les points de la courbe retombent dans le polygone de l'étang — seulement si la ligne droite
+// (amplitude 0) elle-même y est déjà (sinon, étang concave/en U où même une ligne droite sort du
+// contour : cas hors-scope ici, on n'y touche pas plutôt que de deviner un contournement).
+function _clampHoseAmpToPolygon(buildPoints, ampCap) {
+  const poly = state.pond?.polygon;
+  if (!poly || poly.length < 3) return ampCap;
+  const fits = pts => pts.every(p => pointInPolygon(p.x, p.y, poly));
+  if (!fits(buildPoints(0))) return ampCap; // ligne droite déjà hors polygone : hors scope
+  if (fits(buildPoints(ampCap))) return ampCap;
+  let lo = 0, hi = ampCap;
+  for (let i = 0; i < 14; i++) {
+    const mid = (lo + hi) / 2;
+    if (fits(buildPoints(mid))) lo = mid; else hi = mid;
+  }
+  return lo;
 }
 
 // Longueur réelle de la courbe (pas la distance à vol d'oiseau) entre deux points —
