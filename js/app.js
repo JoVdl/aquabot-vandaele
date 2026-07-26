@@ -7118,7 +7118,12 @@ function buildRobotBoxes(boxOpen) {
   // l'utilisateur.
   const edits = state.robotEdits || { overrides: {}, custom: [] };
   for (const [partId, ov] of Object.entries(edits.overrides)) {
-    const group = boxes.filter(b => b.partId === partId);
+    // Une pièce composite (ex. la caisse électrique) déplacée/redimensionnée doit emporter avec
+    // elle ses sous-composants — sans quoi ils gardent leurs coordonnées d'origine, tagués avec
+    // leur PROPRE partId (ex. 'battery'), pas 'controlbox' : ils "restaient sur place" alors que
+    // la caisse (elle bien taguée 'controlbox') se déplaçait, les deux se retrouvant disjoints.
+    const childIds = ROBOT_PARTS[partId]?.subParts || [];
+    const group = boxes.filter(b => b.partId === partId || childIds.includes(b.partId));
     if (!group.length) continue;
     const gcx = (Math.min(...group.map(b => b.cx - b.hx)) + Math.max(...group.map(b => b.cx + b.hx))) / 2;
     const gcy = (Math.min(...group.map(b => b.cy - b.hy)) + Math.max(...group.map(b => b.cy + b.hy))) / 2;
